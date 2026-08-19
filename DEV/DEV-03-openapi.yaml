@@ -1449,6 +1449,210 @@ paths:
         '200':
           description: Оценка принята (1–2 порождает тикет диспетчеру)
 
+
+  # ============================================================
+  # КОНТУР «ДОМ» (DEV-15, M7/M8)
+  # ============================================================
+
+  /buildings/resolve:
+    get:
+      tags: [buildings]
+      summary: Определить объект и помещение по адресу или гео
+      parameters:
+        - { name: address, in: query, schema: { type: string } }
+        - { name: lat, in: query, schema: { type: number } }
+        - { name: lon, in: query, schema: { type: number } }
+      responses:
+        '200':
+          description: Совпадение найдено или список кандидатов для подтверждения клиентом
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildingResolveResult' }
+
+  /buildings/{buildingId}/claim:
+    post:
+      tags: [buildings]
+      summary: Заявка оператора на подключение объекта (self-serve)
+      parameters: [{ $ref: '#/components/parameters/BuildingId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuildingClaimRequest' }
+      responses:
+        '202': { description: Заявка принята, объект в статусе claimed, кабинет в демо-режиме }
+        '409': { description: Объект уже заявлен другим оператором — обе заявки заморожены }
+
+  /buildings/{buildingId}/shutdowns:
+    post:
+      tags: [buildings]
+      summary: Создать отключение ресурса (плановое или аварийное)
+      parameters: [{ $ref: '#/components/parameters/BuildingId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourceShutdownCreate' }
+      responses:
+        '201': { description: Создано; жителям зоны влияния отправлено оповещение }
+        '409': { description: Конфликт — на этом стояке уже есть отключение в пересекающемся окне }
+
+  /buildings/{buildingId}/announcements:
+    post:
+      tags: [buildings]
+      summary: Объявление жителям объекта
+      parameters: [{ $ref: '#/components/parameters/BuildingId' }]
+      responses:
+        '201': { description: Опубликовано }
+
+  /units/{unitId}/residents:
+    post:
+      tags: [buildings]
+      summary: Привязка жителя к помещению и верификация проживания
+      parameters: [{ name: unitId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '201': { description: Житель привязан }
+
+  /orders/{orderId}/permits:
+    post:
+      tags: [access]
+      summary: Создать наряд-допуск по заявке
+      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccessPermitCreate' }
+      responses:
+        '201': { description: Наряд создан в статусе draft }
+        '403': { description: 'QualificationRequired — мастер без квалификации; лицензируемая зона мастеру платформы запрещена всегда' }
+
+  /permits/{permitId}/transitions:
+    post:
+      tags: [access]
+      summary: Переход по графу наряда-допуска (DEV-10 §7)
+      parameters: [{ $ref: '#/components/parameters/PermitId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermitTransitionRequest' }
+      responses:
+        '200':
+          description: Переход выполнен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccessPermit' }
+        '409': { $ref: '#/components/responses/StateMachineViolation' }
+
+  /passes:
+    post:
+      tags: [access]
+      summary: Выпуск пропуска в здание (система, оператор или житель)
+      responses:
+        '201': { description: Пропуск выпущен; QR и резервный код возвращены }
+
+  /public/passes/{token}:
+    get:
+      tags: [public]
+      summary: Проверка пропуска охраной (расширение страницы верификации L-07)
+      security: []
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          description: Данные пропуска без персональных данных клиента (ТЗ 17.5)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PassVerification' }
+        '410': { description: Пропуск аннулирован или истёк }
+
+  /public/permits/{token}/approve:
+    post:
+      tags: [public]
+      summary: Согласование наряда по одноразовой SMS-ссылке (W-06, без регистрации)
+      security: []
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision: { type: string, enum: [approve, reject, propose_window] }
+                window: { $ref: '#/components/schemas/TimeWindow' }
+                reason: { type: string }
+      responses:
+        '200': { description: Решение принято }
+        '410': { description: Ссылка использована или истекла }
+
+  /operator/permits:
+    get:
+      tags: [operator]
+      summary: Очередь нарядов на согласование (U-02)
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PermitStatus' } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+        - { name: building_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Список нарядов оператора со SLA-таймерами }
+
+  /operator/orders/{orderId}/claim:
+    post:
+      tags: [operator]
+      summary: Забрать заявку своей службой в окне первой руки (U-04)
+      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      responses:
+        '200': { description: Заявка закреплена за службой оператора }
+        '409': { description: Окно первой руки истекло, заявка ушла в общий пул }
+
+  /operator/orders/{orderId}/release:
+    post:
+      tags: [operator]
+      summary: Отпустить заявку в общий пул с причиной
+      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      responses:
+        '200': { description: Отпущено; причина записана в статистику отказов }
+
+  /operator/observations:
+    get:
+      tags: [operator]
+      summary: Замечания и обходы объекта (U-16)
+      responses:
+        '200': { description: Список замечаний с фильтрами по зоне, категории и статусу }
+    post:
+      tags: [operator]
+      summary: Зафиксировать замечание (обход M-49 или заявка жителя C-52)
+      responses:
+        '201': { description: Замечание создано }
+        '200': { description: Присоединено к существующему замечанию по этой зоне (дедупликация) }
+
+  /operator/sla/policies:
+    get:
+      tags: [operator]
+      summary: SLA-политики оператора (Pro)
+      responses:
+        '200': { description: Список политик }
+        '402': { description: Требуется тариф Pro }
+
+  /operator/defects:
+    get:
+      tags: [operator]
+      summary: Техдолг объекта (Pro)
+      responses:
+        '200': { description: Реестр дефектов с суммами и решениями }
+        '402': { description: Требуется тариф Pro }
+
+  /operator/finance:
+    get:
+      tags: [operator]
+      summary: Финансы оператора — нетто-расчёт месяца (U-11)
+      responses:
+        '200':
+          description: Одна нетто-сумма с детализацией (подписка + претензии − сервисный сбор)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorSettlement' }
+
 # ============================================================
 # COMPONENTS
 # ============================================================
@@ -1463,6 +1667,16 @@ components:
         В claims: user_id, role, organization_id?, location_id?, tenant_id.
 
   parameters:
+    BuildingId:
+      name: buildingId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PermitId:
+      name: permitId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     OrderId:
       name: orderId
       in: path
@@ -2341,6 +2555,166 @@ components:
 # ============================================================
 # СОБЫТИЯ (informative, не проверяется валидатором)
 # ============================================================
+
+    # ---------- Контур «Дом» (DEV-15) ----------
+
+    PermitStatus:
+      type: string
+      description: Статусы наряда-допуска (DEV-10 §7.1)
+      enum: [draft, requested, approved, rescheduled, rejected, scheduled, opened, closed, expired, cancelled]
+
+    PermitAction:
+      type: string
+      description: Действия графа наряда-допуска (DEV-10 §7.2)
+      enum: [submit, approve, auto_approve, reject, propose_window, accept_window, decline_window,
+             schedule, open, close, expire, cancel]
+
+    ShutdownStatus:
+      type: string
+      enum: [draft, scheduled, active, restored, cancelled]
+
+    ResourceType:
+      type: string
+      enum: [cold_water, hot_water, heating, electricity, gas, sewage, lift, ventilation]
+
+    ZoneType:
+      type: string
+      description: Справочник типов зон (A-41); флаг критичности — в справочнике, не в enum
+      enum: [electrical_panel, water_riser, sewage_riser, basement, roof, technical_floor,
+             lift_machine_room, ventilation_chamber, heat_point, gas_equipment, fire_system, yard]
+
+    TenantKind:
+      type: string
+      description: Тип арендатора подписки (DEV-15 §3.1)
+      enum: [hoa, bc, inhouse, fm]
+
+    BuildingConnectionStatus:
+      type: string
+      enum: [unmanaged, claimed, verified, active, degraded]
+
+    OrderScope:
+      type: string
+      description: private — помещение собственника; common_area — общее имущество (сбор не начисляется)
+      enum: [private, common_area]
+
+    LaborSettlement:
+      type: string
+      description: Выводится из владельца смены, а не из типа мастера (DEV-15 §7.8.3)
+      enum: [salary, share]
+
+    SlaBreachFlag:
+      type: string
+      enum: [response, arrival, resolution]
+
+    ObservationSeverity:
+      type: string
+      enum: [emergency, work_required, housekeeping, info]
+
+    TimeWindow:
+      type: object
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+
+    BuildingResolveResult:
+      type: object
+      properties:
+        match: { type: string, enum: [exact, candidates, none] }
+        building_id: { type: string, format: uuid, nullable: true }
+        unit_id: { type: string, format: uuid, nullable: true }
+        connection_status: { $ref: '#/components/schemas/BuildingConnectionStatus' }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              building_id: { type: string, format: uuid }
+              name: { type: string }
+              address: { type: string }
+
+    BuildingClaimRequest:
+      type: object
+      required: [operator_org_id, document_id, tenant_kind]
+      properties:
+        operator_org_id: { type: string, format: uuid }
+        tenant_kind: { $ref: '#/components/schemas/TenantKind' }
+        document_id: { type: string, format: uuid, description: Договор управления или иное основание }
+        contact_phone: { type: string }
+
+    AccessPermitCreate:
+      type: object
+      required: [zone_types, window]
+      properties:
+        zone_types:
+          type: array
+          items: { $ref: '#/components/schemas/ZoneType' }
+        common_zone_ids: { type: array, items: { type: string, format: uuid } }
+        requires_shutdown: { type: boolean }
+        window: { $ref: '#/components/schemas/TimeWindow' }
+        escort_required: { type: boolean }
+
+    AccessPermit:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        building_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/PermitStatus' }
+        zone_types: { type: array, items: { $ref: '#/components/schemas/ZoneType' } }
+        is_critical_zone: { type: boolean, description: Запрещает auto_approve всегда }
+        requires_shutdown: { type: boolean }
+        affected_unit_ids: { type: array, items: { type: string, format: uuid } }
+        window: { $ref: '#/components/schemas/TimeWindow' }
+        sla_deadline: { type: string, format: date-time }
+        approval_kind: { type: string, enum: [manual, auto_silence, emergency_override], nullable: true }
+        approver_name: { type: string, nullable: true }
+        opened_at: { type: string, format: date-time, nullable: true }
+        closed_at: { type: string, format: date-time, nullable: true }
+
+    PermitTransitionRequest:
+      type: object
+      required: [action, client_op_uuid]
+      properties:
+        action: { $ref: '#/components/schemas/PermitAction' }
+        client_op_uuid: { type: string, format: uuid, description: Идемпотентность офлайн-синка мастера }
+        reason: { type: string }
+        window: { $ref: '#/components/schemas/TimeWindow' }
+        photo_id: { type: string, format: uuid }
+
+    ResourceShutdownCreate:
+      type: object
+      required: [resource_type, scope, planned, reason]
+      properties:
+        resource_type: { $ref: '#/components/schemas/ResourceType' }
+        scope: { type: string, enum: [building, entrance, riser, units] }
+        riser_id: { type: string, nullable: true }
+        unit_ids: { type: array, items: { type: string, format: uuid } }
+        planned: { $ref: '#/components/schemas/TimeWindow' }
+        reason: { type: string }
+        is_emergency: { type: boolean }
+
+    PassVerification:
+      type: object
+      description: Публичная проверка пропуска охраной; персональные данные клиента не раскрываются
+      properties:
+        valid: { type: boolean }
+        master_name: { type: string }
+        master_photo_url: { type: string, format: uri }
+        building_name: { type: string }
+        valid_until: { type: string, format: date-time }
+        order_number: { type: string }
+        pass_type: { type: string, enum: [master, helper, guest, resident_contractor, operator_contractor] }
+
+    OperatorSettlement:
+      type: object
+      description: Нетто-расчёт месяца с оператором (DEV-15 §11.5)
+      properties:
+        period: { $ref: '#/components/schemas/TimeWindow' }
+        subscription_tiyin: { type: integer, format: int64 }
+        claims_tiyin: { type: integer, format: int64, description: Холостые выезды и претензии по ущербу }
+        service_fee_tiyin: { type: integer, format: int64, description: Начисленный сервисный сбор }
+        net_tiyin: { type: integer, format: int64, description: Отрицательное — выплата оператору }
+
 x-events:
   description: >
     Доменные события внутренней шины (PRD-05). Внешних подписчиков в MVP нет;
@@ -2369,6 +2743,34 @@ x-events:
     - loyalty.points_accrued
     - loyalty.voucher_issued
     - webcard.estimate_approved
+    # --- контур «Дом» (DEV-15) ---
+    - permit.requested
+    - permit.approved
+    - permit.auto_approved
+    - permit.rejected
+    - permit.rescheduled
+    - permit.scheduled
+    - permit.opened
+    - permit.closed
+    - permit.expired
+    - permit.cancelled
+    - permit.sla_breached
+    - shutdown.scheduled
+    - shutdown.started
+    - shutdown.restored
+    - pass.issued
+    - pass.revoked
+    - pass.entry_registered
+    - building.claimed
+    - building.verified
+    - building.status_changed
+    - observation.created
+    - observation.resolved
+    - first_refusal.claimed
+    - first_refusal.released
+    - service_fee.accrued
+    - subscription.plan_changed
+    - sla.breached
   consumed_webhooks:
     - POST /billing/webhooks/payme
     - POST /billing/webhooks/click

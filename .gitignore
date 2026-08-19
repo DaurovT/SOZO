@@ -31,3 +31,7 @@ DerivedData/
 coverage/
 .idea/
 .vscode/
+
+# Дизайн-канва: исходники — *.dc.html и canvas.json, собранный файл (2+ МБ) артефакт
+design-home/*.html
+!design-home/*.dc.html

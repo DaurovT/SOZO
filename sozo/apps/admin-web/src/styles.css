@@ -544,7 +544,7 @@ textarea.cell-input {
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--surface);
+  color: var(--on-accent);
 }
 
 .btn--primary:hover {

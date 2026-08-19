@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root{
+      --bg:#F6F6F8; --surface:#FFFFFF; --text:#141518; --textSecondary:#8A8A93; --textTertiary:#B4B4BD;
+      --accent:#FEB70F; --onAccent:#141518; --success:#2FA36B; --warning:#F08C1E; --error:#E0483D;
+      --info:#3D6BF5; --fresh:#7A5AF8; --border:#ECECF0; --divider:#F2F2F5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;line-height:1.4}
+    a{color:var(--accent)} a:hover{color:#E0A00A}
+    .h1{font-size:24px;font-weight:600} .h2{font-size:20px;font-weight:600}
+    .body{font-size:16px} .dense{font-size:14px} .cap{font-size:13px;color:var(--textSecondary)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 8px;font-size:13px}
+    .side{width:240px;background:var(--surface);border-right:1px solid var(--border)}
+    .navitem{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:14px;color:var(--textSecondary)}
+    .navitem--active{background:rgba(254,183,15,.10);color:var(--text);font-weight:600}
+    table{border-collapse:collapse;width:100%}
+    th{font-size:13px;font-weight:600;color:var(--textSecondary);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+    td{font-size:14px;padding:10px 12px}
+    tbody tr:nth-child(even){background:var(--bg)}
+
+<div style="display:flex;min-height:900px">
+  <div class="side" style="padding:16px">
+    <div class="cap" style="font-weight:600;color:var(--text)">УК «Сокол»</div>
+    <div class="cap" style="margin-top:4px">ЖК Сокол · Амира Темура, 15</div>
+  </div>
+
+  <div style="flex-grow:1;padding:24px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:flex-end;gap:16px">
+      <div>
+        <div class="h1">Наряды-допуски</div>
+        <div class="cap" style="margin-top:4px">Согласуйте доступ мастера в общие зоны объекта</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button style="height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Все</button>
+        <button style="height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--error);background:var(--surface);font-size:14px;color:var(--error);font-weight:600">Просроченные · 1</button>
+        <button style="height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Критичные зоны · 1</button>
+      </div>
+    </div>
+
+    <!-- просроченный -->
+    <div class="card" style="padding:16px;border-left:3px solid var(--error)">
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        <div style="flex-grow:1;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="chip" style="background:rgba(224,72,61,.12);color:var(--error);font-weight:600">Просрочено на 40 мин</span>
+            <span class="chip" style="background:var(--border);color:var(--textSecondary)">Стояк ХВС, подъезд 1</span>
+            <span class="chip" style="background:rgba(240,140,30,.14);color:#8a5200">Требуется отключение воды</span>
+          </div>
+          <div>
+            <div class="h2">Замена участка стояка · кв. 12</div>
+            <div class="cap" style="margin-top:4px">Заявка Z-2026-000412 · окно 19 августа, 14:00–16:00</div>
+          </div>
+          <div class="card" style="padding:12px;background:var(--bg);border:none;display:flex;align-items:center;gap:12px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8A93" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+            <div class="dense">Отключение затронет <b>3 помещения</b> на стояке R1 — жителей предупредим автоматически</div>
+          </div>
+        </div>
+
+        <div style="width:220px;display:flex;flex-direction:column;gap:12px">
+          <div class="card" style="padding:12px;background:var(--bg);border:none;display:flex;gap:12px;align-items:center">
+            <div style="width:40px;height:40px;border-radius:999px;background:var(--border)"></div>
+            <div>
+              <div class="dense" style="font-weight:600">Алишер Каримов</div>
+              <div class="cap">Мастер платформы · <a href="#">проверить</a></div>
+            </div>
+          </div>
+          <button style="height:44px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:15px;font-weight:600">Согласовать</button>
+          <button style="height:40px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Предложить другое время</button>
+          <button style="height:40px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px;color:var(--error)">Отклонить</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- критичная зона -->
+    <div class="card" style="padding:16px">
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        <div style="flex-grow:1;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="chip" style="background:rgba(254,183,15,.16);color:#8a6200;font-weight:600">Осталось 2 ч 10 мин</span>
+            <span class="chip" style="background:var(--border);color:var(--textSecondary)">Электрощитовая</span>
+          </div>
+          <div>
+            <div class="h2">Ревизия вводного автомата · подъезд 2</div>
+            <div class="cap" style="margin-top:4px">Заявка Z-2026-000418 · окно 20 августа, 09:00–12:00</div>
+          </div>
+          <div class="card" style="padding:12px;background:rgba(224,72,61,.06);border:1px solid rgba(224,72,61,.25);display:flex;align-items:flex-start;gap:12px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E0483D" stroke-width="2" style="flex-shrink:0"><path d="M12 8v5M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+            <div class="dense"><b>Критичная зона.</b> Авто-согласия по истечении срока не будет — наряд ждёт вашего решения столько, сколько потребуется.</div>
+          </div>
+        </div>
+        <div style="width:220px;display:flex;flex-direction:column;gap:12px">
+          <div class="card" style="padding:12px;background:var(--bg);border:none;display:flex;gap:12px;align-items:center">
+            <div style="width:40px;height:40px;border-radius:999px;background:var(--border)"></div>
+            <div>
+              <div class="dense" style="font-weight:600">Собственная служба</div>
+              <div class="cap">Квалификация подтверждена</div>
+            </div>
+          </div>
+          <button style="height:44px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:15px;font-weight:600">Согласовать</button>
+          <button style="height:40px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Предложить другое время</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- обычный, с таймером бесплатного отзыва -->
+    <div class="card" style="padding:16px">
+      <div style="display:flex;gap:16px;align-items:center">
+        <div style="flex-grow:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span class="chip" style="background:rgba(47,163,107,.12);color:var(--success);font-weight:600">Согласован</span>
+            <span class="chip" style="background:var(--border);color:var(--textSecondary)">Подвал</span>
+          </div>
+          <div class="h2" style="font-size:17px">Осмотр запорной арматуры</div>
+          <div class="cap" style="margin-top:4px">Отзыв бесплатен ещё <b style="color:var(--text)">1 ч 12 мин</b> — позже холостой выезд будет выставлен вам</div>
+        </div>
+        <button style="height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px;color:var(--error)">Отозвать допуск</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic { renderVals(){ return {}; } }
+</script>
+</body>
+</html>

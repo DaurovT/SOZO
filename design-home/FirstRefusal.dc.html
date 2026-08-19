@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root{
+      --bg:#F6F6F8; --surface:#FFFFFF; --text:#141518; --textSecondary:#8A8A93; --textTertiary:#B4B4BD;
+      --accent:#FEB70F; --onAccent:#141518; --success:#2FA36B; --warning:#F08C1E; --error:#E0483D;
+      --info:#3D6BF5; --fresh:#7A5AF8; --border:#ECECF0; --divider:#F2F2F5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;line-height:1.4}
+    a{color:var(--accent)} a:hover{color:#E0A00A}
+    .h1{font-size:24px;font-weight:600} .h2{font-size:20px;font-weight:600}
+    .body{font-size:16px} .dense{font-size:14px} .cap{font-size:13px;color:var(--textSecondary)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 8px;font-size:13px}
+    .side{width:240px;background:var(--surface);border-right:1px solid var(--border)}
+    .navitem{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:14px;color:var(--textSecondary)}
+    .navitem--active{background:rgba(254,183,15,.10);color:var(--text);font-weight:600}
+    table{border-collapse:collapse;width:100%}
+    th{font-size:13px;font-weight:600;color:var(--textSecondary);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+    td{font-size:14px;padding:10px 12px}
+    tbody tr:nth-child(even){background:var(--bg)}
+
+<div style="padding:24px;display:flex;flex-direction:column;gap:16px;min-height:760px">
+  <div>
+    <div class="h1">Первая рука</div>
+    <div class="cap" style="margin-top:4px">Заявки жителей в ваших домах. Если не возьмёте — уйдут мастерам платформы</div>
+  </div>
+
+  <div class="card" style="padding:16px;border-left:3px solid var(--accent)">
+    <div style="display:flex;gap:24px;align-items:flex-start">
+      <div style="flex-grow:1;display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="chip" style="background:rgba(254,183,15,.16);color:#8a6200;font-weight:600">Осталось 18:42</span>
+          <span class="chip" style="background:var(--border);color:var(--textSecondary)">В квартире жителя</span>
+        </div>
+        <div class="h2">Течёт смеситель на кухне</div>
+        <div class="cap">ЖК Сокол · кв. 12, подъезд 1, 3 этаж · сегодня, 14:12</div>
+        <div style="display:flex;gap:8px">
+          <div style="width:88px;height:88px;border-radius:12px;background:var(--border);display:flex;align-items:center;justify-content:center">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#B4B4BD" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 15l-5-5-6 6"/></svg>
+          </div>
+          <div style="width:88px;height:88px;border-radius:12px;background:var(--border)"></div>
+        </div>
+        <div class="dense" style="color:var(--textSecondary)">Оценка платформы: 150 000 – 220 000 сум</div>
+      </div>
+
+      <div style="width:260px;display:flex;flex-direction:column;gap:8px">
+        <button style="height:48px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:15px;font-weight:600">Взять своей службой</button>
+        <button style="height:44px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Отпустить в общий пул</button>
+        <div class="card" style="padding:12px;background:var(--bg);border:none;margin-top:8px">
+          <div class="cap">Если отпустите — житель получит мастера платформы, а вы <b style="color:var(--text)">5% с заявки</b>.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:16px">
+    <div style="display:flex;gap:24px;align-items:center">
+      <div style="flex-grow:1">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span class="chip" style="background:rgba(224,72,61,.12);color:var(--error);font-weight:600">Осталось 04:11</span>
+        </div>
+        <div class="h2" style="font-size:17px">Не открывается пластиковое окно</div>
+        <div class="cap" style="margin-top:4px">ЖК Чинор · кв. 47 · сегодня, 14:26</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button style="height:40px;padding:0 16px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:14px;font-weight:600">Взять</button>
+        <button style="height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px">Отпустить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:24px;display:flex;flex-direction:column;align-items:center;gap:8px;background:var(--surface)">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#8A8A93" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    <div class="body" style="color:var(--textSecondary)">Больше заявок в окне первой руки нет</div>
+  </div>
+
+  <div class="card" style="padding:16px;background:var(--bg);border-style:dashed">
+    <div class="dense" style="font-weight:600;margin-bottom:4px">За последние 30 дней</div>
+    <div class="cap">Взято своей службой — 24 · отпущено — 9 · причина отказа чаще всего «нет свободных мастеров»</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic { renderVals(){ return {}; } }
+</script>
+</body>
+</html>

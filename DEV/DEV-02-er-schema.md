@@ -581,3 +581,80 @@ erDiagram
 3. **Статусы — только из графа.** `Order.status` меняется единственным сервисом статусных машин; каждый переход — строка в `OrderStatusLog` (append-only) с актором и причиной. Недопустимый переход — 409 на API, включая админа. Идемпотентность: UNIQUE(order_id, from_status, to_status, client_op_uuid); конкурирующие переходы — оптимистичная блокировка по версии заявки.
 4. **Демо-флаг.** `is_demo = true` (заявки, организации демо-контура): не порождает проводок, исключается из всех отчётов, реестров, СФ, рейтингов и метрик — фильтр на уровне представлений/репозиториев, а не UI.
 5. Дополнительно: `tenant_id` входит во все уникальные ключи и индексы; телефон клиента открывается мастеру только в интервале «Назначена → Закрыта» (контроль на API); ни одна платная работа без записи утверждения в AuditLog (критерий приёмки №2).
+
+---
+
+## 4. Контур «Дом» (DEV-15) — сущности M7/M8
+
+**Основание:** DEV-15 v0.9. Раздел добавляется целиком в M7-E0; до него ни одна таблица контура не создаётся (решение владельца, DEV-15 §14).
+
+### 4.1. Диаграмма контура
+
+```mermaid
+erDiagram
+    ORGANIZATION ||--o{ BUILDING : "управляет (roles ∋ operator)"
+    BUILDING ||--o{ UNIT : содержит
+    BUILDING ||--o{ COMMON_ZONE : содержит
+    BUILDING ||--o{ BUILDING_EQUIPMENT : оснащён
+    BUILDING ||--o{ BUILDING_STAFF : персонал
+    BUILDING ||--o{ BUILDING_ANNOUNCEMENT : публикует
+    BUILDING ||--o{ RESOURCE_SHUTDOWN : отключения
+    BUILDING ||--o{ BUILDING_OBSERVATION : замечания
+    UNIT ||--o{ UNIT_RESIDENT : жители
+    UNIT ||--o{ ORDER : "адрес заявки"
+    ORDER ||--o| ACCESS_PERMIT : "требует допуска"
+    ORDER ||--o{ VISIT_PASS : пропуска
+    ACCESS_PERMIT }o--|| COMMON_ZONE : вскрывает
+    ACCESS_PERMIT }o--o| RESOURCE_SHUTDOWN : "требует отключения"
+    MASTER_PROFILE ||--o{ MASTER_AFFILIATION : аффилиации
+    ORGANIZATION ||--o{ MASTER_AFFILIATION : "нанимает"
+    ORGANIZATION ||--o| OPERATOR_SUBSCRIPTION : подписка
+    ORGANIZATION ||--o{ SLA_POLICY : политики
+    BUILDING_EQUIPMENT ||--o{ SERVICE_INTERVAL : регламент
+    BUILDING_OBSERVATION }o--o| DEFECT : "перерос в"
+```
+
+### 4.2. Новые сущности
+
+| Сущность | Ключевые поля | Примечания |
+|---|---|---|
+| **Building** | operator_org_id FK?, city_id, name, address, geo_polygon, building_type (`residential`/`business_center`/`mixed`), connection_status (`unmanaged`/`claimed`/`verified`/`active`/`degraded`), work_hours tstzrange, noise_hours tstzrange, has_service_lift bool, parking_rules, waste_rules, internal_buffer_min SMALLINT, emergency_phone, dispatch_phone, service_fee_bps SMALLINT DEFAULT 500, verified_by, verified_at, connected_at | `service_fee_bps` ограничен CHECK 0…1000 (потолок 10%, DEV-15 §8.2). `internal_buffer_min` — проход охрана/лифт, добавляется к дорожному буферу планировщика |
+| **Unit** | building_id FK, entrance, floor, number, unit_type (`apartment`/`office`/`storage`/`parking`), area_m2, riser_ids text[] | UNIQUE(building_id, entrance, number). `riser_ids` нужен для расчёта зоны влияния отключения |
+| **UnitResident** | unit_id FK, user_id FK, resident_role (`owner`/`tenant`/`family`), verified_by (`operator`/`document`/`self`/`crowd`), valid_until? | Арендатор ограничен в правах по общему имуществу (DEV-15 §12 п.6) |
+| **CommonZone** | building_id FK, zone_type FK (справочник A-41), label, riser_id?, is_critical bool, access_note, key_holder | `is_critical` наследуется из справочника типов, но может быть ужесточён на объекте; ослаблен — нет |
+| **AccessPermit** | order_id FK, building_id FK, requested_by, zone_types text[], common_zone_ids uuid[], requires_shutdown bool, shutdown_id FK?, affected_unit_ids uuid[], window tstzrange, status, approver_user_id?, approved_at, approval_kind (`manual`/`auto_silence`/`emergency_override`), reject_reason, escort_required bool, escort_user_id?, opened_at, closed_at, photo_before_id, photo_after_id, sla_deadline, is_emergency bool | Граф — DEV-10 §7. `approval_kind = auto_silence` невозможен при `is_critical` любой из зон |
+| **ResourceShutdown** | building_id FK, resource_type (`cold_water`/`hot_water`/`heating`/`electricity`/`gas`/`sewage`/`lift`/`ventilation`), scope (`building`/`entrance`/`riser`/`units`), riser_id?, affected_unit_ids uuid[], planned tstzrange, actual tstzrange?, reason, initiator (`operator`/`platform`/`utility`), order_id?, status (`draft`/`scheduled`/`active`/`restored`/`cancelled`), notified_at | Пересечение по (riser_id, planned) для `scheduled`/`active` запрещено — инвариант 9 |
+| **VisitPass** | order_id FK?, building_id FK, master_id FK?, guest_name?, valid tstzrange, pass_type (`master`/`helper`/`guest`/`resident_contractor`/`operator_contractor`), issued_by (`system`/`operator`/`resident`), qr_token UNIQUE, fallback_code, vehicle_plate?, entered_at, exited_at, checked_by, status | Парная заявка → пропуск **на каждого** участника. Блокировка мастера аннулирует все активные пропуска каскадом |
+| **MasterAffiliation** | master_id FK, org_id FK, status (`active`/`suspended`/`terminated`), since, until?, skill_tags text[], hourly_cost_tiyin BIGINT, object_ids uuid[] | Отменяет прежнюю идею единственного работодателя. У разных операторов у одного мастера **разная** себестоимость нормо-часа |
+| **BuildingStaff** | building_id FK, user_id FK, staff_role (`master`/`approver`/`dispatcher`/`engineer`/`head`/`admin`), is_duty bool, skill_tags text[] | Роль `approver` — намеренно узкая: выдаётся консьержу, работает через W-06 без кабинета |
+| **BuildingEquipment** | building_id FK, common_zone_id?, equipment_type, model, serial, commissioned_at, service_interval_id FK? | Pro. Переиспользует существующий `ServiceInterval` |
+| **BuildingObservation** | building_id FK, common_zone_id?, unit_id?, author_user_id, source (`walkthrough`/`resident`/`master`/`complaint`), category_id FK (A-44), severity (`emergency`/`work_required`/`housekeeping`/`info`), photo_ids uuid[], geo, comment, status, routed_to, routed_entity_id, resolved_at, resolved_photo_id | Шире, чем `Defect`: грязь во дворе не дефект оборудования. Закрытие только с `resolved_photo_id` |
+| **BuildingAnnouncement** | building_id FK, kind (`notice`/`shutdown`/`emergency`), audience (`building`/`entrance`/`riser`/`units`), unit_ids uuid[], publish_at, body, author_user_id | Канал оператор → жители; идёт профилем массовых рассылок вне частотных потолков |
+| **SlaPolicy** | operator_org_id FK, building_id?, category_id?, priority (`critical`/`high`/`normal`/`low`), response_min, arrival_min, resolution_min, working_hours_only bool, calendar_id FK, escalation_chain jsonb, penalty_tiyin?, applies_to_scope (`private`/`common_area`/`both`) | Каскад подбора: категория+здание → категория+оператор → приоритет+здание → дефолт оператора → системный |
+| **OperatorSubscription** | operator_org_id FK, plan (`free`/`pro`/`enterprise`), tenant_kind (`hoa`/`bc`/`inhouse`/`fm`), units_billed, price_per_unit_tiyin, period tstzrange, status | Биллинг подписок отделён от биллинга заявок (DEV-15 §8.4). `price_per_unit_tiyin` без дефолта — блокирует активацию Pro |
+
+### 4.3. Изменения в существующих сущностях
+
+| Сущность | Изменение |
+|---|---|
+| **Organization** | `+ roles text[]` (`client` / `operator` / `contractor`) — множество, не единственное значение; одна организация может быть и заказчиком, и оператором |
+| **Location** | `+ building_id FK?` — точка B2B-заказчика может физически находиться в подключённом объекте; работают оба контура |
+| **Order** | `+ building_id FK?`, `+ unit_id FK?`, `+ access_permit_id FK?`, `+ first_refusal_until`, `+ service_fee_tiyin BIGINT DEFAULT 0`, `+ order_scope` (`private`/`common_area`), `+ labor_settlement` (`salary`/`share`), `+ sla_policy_id FK?`, `+ sla_response_due`, `+ sla_arrival_due`, `+ sla_resolution_due`, `+ sla_breach_flags`, `+ sla_paused_ms` |
+| **PriceItem** | `+ requires_permit bool`, `+ permit_zone_types text[]`, `+ affects_common_property bool` |
+| **MasterProfile** | `+ platform_status bool` (свободный мастер платформы), `+ qualifications jsonb` (тип, номер удостоверения, срок действия). **Поля `employer_org_id` и `master_kind` не вводятся** — принадлежность не единична, см. `MasterAffiliation` |
+| **Shift** | `+ employer_org_id FK?` — чья это смена; определяет, кто вправе ставить заявки и как считается труд (DEV-15 §7.8.3) |
+| **Defect** | `+ building_id?`, `+ common_zone_id?`, `+ equipment_id?`, `+ severity`, `+ estimated_cost_tiyin`, `+ budget_period`, `+ deadline`, `+ responsible_user_id`, `+ source`, `+ decision`, `+ decision_reason`, `+ decision_by`, `+ decision_at`, `+ observation_id?` |
+| **UserRole** | новые роли: житель, согласующий доступ, диспетчер оператора, инженер оператора, руководитель службы, администратор оператора |
+| **AuditLog** | новые типы событий: выдача и отзыв допуска, авто-согласие молчанием, вскрытие зоны, отключение и восстановление ресурса, вход по пропуску, самодекларация квалификации, верификация объекта |
+
+### 4.4. Инварианты БД контура (продолжение §3)
+
+6. **Заявка и помещение согласованы.** `Order.unit_id IS NOT NULL ⇒ Order.building_id = Unit.building_id`. Заявка не может ссылаться на помещение чужого объекта.
+7. **Сервисный сбор только с частных заявок.** `Order.order_scope = 'common_area' ⇒ Order.service_fee_tiyin = 0`. Проверяется триггером, не кодом: это одновременно комплаенс-требование (бюджет общего имущества подотчётен собственникам) и защита от ошибки в биллинге.
+8. **Вскрытие только по пропуску.** `AccessPermit.status = 'opened' ⇒ EXISTS активный VisitPass того же мастера на тот же объект`.
+9. **Один стояк — одно отключение.** Отсутствие пересечений по (`riser_id`, `planned`) среди `ResourceShutdown` в статусах `scheduled`/`active` — exclusion constraint. Защита от двух бригад на одном стояке.
+10. **Условия статуса `active`.** `Building.connection_status = 'active' ⇒ EXISTS ≥1 BuildingStaff(staff_role = 'approver') AND emergency_phone IS NOT NULL`.
+11. **Смены разных работодателей не пересекаются.** Exclusion constraint по (`master_id`, `hours`) среди `Shift` с непустым `employer_org_id`. Мастер не может продать одно и то же время дважды — система не даёт это записать (DEV-15 §7.8.4).
+12. **Изоляция арендаторов — RLS.** На всех таблицах контура включён Row-Level Security; политики опираются на контекст `app.tenant_org_id`, устанавливаемый `SET LOCAL` в транзакции запроса. `BYPASSRLS` не выдаётся никому, включая сервисную роль приложения. Роли платформы получают доступ отдельной политикой, а не обходом. **Тест-страж:** появление арендаторской таблицы без политики роняет CI (DEV-15 §11.7).
+13. **Замечание закрывается только фото.** `BuildingObservation.status = 'resolved' ⇒ resolved_photo_id IS NOT NULL` — перенос продуктового принципа №2 ТЗ на содержание объекта.
+14. **Ставка сбора в границах.** CHECK `Building.service_fee_bps BETWEEN 0 AND 1000`; попытка записи выше отклоняется на API как `ServiceFeeAboveCap`.

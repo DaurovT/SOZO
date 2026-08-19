@@ -64,6 +64,7 @@
 6. **Конкуренция:** оптимистичная блокировка по `version` заявки; проигравший получает 409.
 7. **Офлайн не обходит графы:** операции синка проходят ту же валидацию в порядке монотонных часов (PRD-05 §10).
 8. Каждый переход — запись в append-only `OrderStatusLog` + событие `order.status_changed{type, from, to, actor, reason}`.
+9. **Допуск (контур «Дом», DEV-15).** Если `ORDER.building_id` указывает на объект в статусе `active` и хотя бы одна позиция заявки имеет `PRICE_ITEM.requires_permit = true`, переход `start` запрещён без `ACCESS_PERMIT` в статусе `opened` — 409 `AccessPermitRequired`. Переход `complete` при `requires_shutdown = true` запрещён без `ACCESS_PERMIT` в статусе `closed` — нельзя закрыть заявку, оставив ресурс отключённым. Для `is_emergency = true` оба правила снимаются (DEV-15 §4.5). Для объектов вне статуса `active` правила не применяются, пауза `blocked_third_party` работает без изменений.
 
 ---
 
@@ -337,3 +338,159 @@ types:
 ---
 
 *Конец DEV-10. Изменение графа — только правкой этого файла и PRD-05 §1.4 синхронно, со ссылкой на раздел ТЗ.*
+
+
+---
+
+## 7. Граф наряда-допуска (`ACCESS_PERMIT`)
+
+**Основание:** DEV-15 §4. Отдельная сущность со своей машиной состояний, исполняемая тем же `StateMachine` из `kernel`. Переход вне графа отклоняется на API с 409 `StateMachineViolation` для любой роли, включая админа платформы и администратора оператора.
+
+### 7.1. Словарь статусов
+
+| Статус (рус) | API-код | Терминальный | Примечание |
+|---|---|---|---|
+| Черновик | `draft` | нет | создан вместе с заявкой, окно ещё не выбрано |
+| Запрошен | `requested` | нет | ушёл согласующему; тикает `sla_deadline` |
+| Согласован | `approved` | нет | окно зафиксировано, планировщик может превратить холд в бронь |
+| Перенесён | `rescheduled` | нет | оператор предложил другое окно; ждёт подтверждения клиента или диспетчера |
+| Отклонён | `rejected` | да | причина из справочника обязательна |
+| Запланирован | `scheduled` | нет | слот мастера забронирован на согласованное окно |
+| Открыт | `opened` | нет | зона физически вскрыта; гейт — фото до вскрытия + действующий пропуск |
+| Закрыт | `closed` | да | зона восстановлена, ресурс включён; гейт — фото после |
+| Просрочен | `expired` | да | окно прошло, зона не вскрыта |
+| Аннулирован | `cancelled` | да | заявка отменена, мастер заблокирован, объект вышел из `active` |
+
+### 7.2. Словарь действий (`PermitAction`)
+
+| Действие | Переход | Кто |
+|---|---|---|
+| `submit` | draft → requested | система (при выборе окна клиентом) / диспетчер |
+| `approve` | requested / rescheduled → approved | согласующий оператора (U-02 или W-06) |
+| `auto_approve` | requested → approved | система по истечении SLA и цепочки эскалации; **запрещено для критичных зон** |
+| `reject` | requested → rejected | согласующий оператора; причина обязательна |
+| `propose_window` | requested → rescheduled | согласующий оператора |
+| `accept_window` | rescheduled → approved | клиент (C-14) / диспетчер |
+| `decline_window` | rescheduled → rejected | клиент / диспетчер |
+| `schedule` | approved → scheduled | планировщик (холд превращён в бронь) |
+| `open` | scheduled → opened | мастер (M-43) |
+| `close` | opened → closed | мастер (M-43) |
+| `expire` | scheduled → expired | система (окно прошло) |
+| `cancel` | draft / requested / rescheduled / approved / scheduled → cancelled | система / диспетчер |
+
+### 7.3. Диаграмма
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> requested : submit
+    requested --> approved : approve
+    requested --> approved : auto_approve · SLA истёк, не критичная зона
+    requested --> rejected : reject · причина обязательна
+    requested --> rescheduled : propose_window
+    rescheduled --> approved : accept_window
+    rescheduled --> rejected : decline_window
+    approved --> scheduled : schedule · бронь создана
+    scheduled --> opened : open · фото до вскрытия + пропуск
+    opened --> closed : close · фото после + ресурс включён
+    scheduled --> expired : expire
+    draft --> cancelled : cancel
+    requested --> cancelled : cancel
+    rescheduled --> cancelled : cancel
+    approved --> cancelled : cancel
+    scheduled --> cancelled : cancel
+    closed --> [*]
+    rejected --> [*]
+    expired --> [*]
+    cancelled --> [*]
+```
+
+### 7.4. Связь с графом заявки
+
+| Событие наряда | Влияние на заявку |
+|---|---|
+| `submit` | слот переходит в **мягкий холд** с TTL = SLA согласования (PRD-05 §2, DEV-15 §11.4.1) |
+| `approve` | холд становится бронью; окно наряда — **якорное** (PRD-05 §2.3 п.3) |
+| `reject` / `decline_window` / `expire` | холд снят, слот освобождён → `slot.freed`; заявка возвращается к выбору окна |
+| `opened` | снимается блокировка перехода `start` заявки |
+| `closed` | снимается блокировка перехода `complete` при `requires_shutdown` |
+| `cancelled` | заявка не отменяется автоматически — уходит к диспетчеру с причиной |
+
+**Сдвиг заявки с нарядом** в статусе `approved`/`scheduled` автоматикой запрещён; диспетчер вручную инициирует `propose_window`, наряд уходит в `rescheduled`, а не аннулируется (DEV-15 §11.4.5).
+
+### 7.5. Машиночитаемое описание
+
+```yaml
+# Источник: DEV-15 §4, §7.1.2, §9.3. Guards — коды проверок API.
+entity: access_permit
+statuses: [draft, requested, approved, rescheduled, rejected, scheduled, opened, closed, expired, cancelled]
+terminal: [rejected, closed, expired, cancelled]
+
+overlays:
+  cancel:
+    from: [draft, requested, rescheduled, approved, scheduled]
+    to: cancelled
+    action: cancel
+    guards: [reason_from_dictionary]        # каскад: пропуска аннулируются, заявка — диспетчеру
+
+transitions:
+  - {from: null,        to: draft,       guards: [order_has_permit_required_item, building_active]}
+  - {from: draft,       to: requested,   action: submit,
+     guards: [window_selected, zones_selected, approver_assigned, sla_deadline_set]}
+  - {from: requested,   to: approved,    action: approve,
+     guards: [actor_is_operator_approver, actor_scoped_to_building]}
+  - {from: requested,   to: approved,    action: auto_approve,
+     guards: [sla_expired, escalation_chain_exhausted, zone_not_critical, operator_active]}
+  - {from: requested,   to: rejected,    action: reject,      guards: [reason_from_dictionary]}
+  - {from: requested,   to: rescheduled, action: propose_window, guards: [alternative_window_valid]}
+  - {from: rescheduled, to: approved,    action: accept_window,  guards: [client_or_dispatcher_confirmed]}
+  - {from: rescheduled, to: rejected,    action: decline_window, guards: [reason_from_dictionary]}
+  - {from: approved,    to: scheduled,   action: schedule,
+     guards: [booking_created_within_permit_window, master_qualified_for_zones, building_work_hours_respected]}
+  - {from: scheduled,   to: opened,      action: open,
+     guards: [photo_before_opening_min1_camera_only, active_visit_pass_for_master,
+              within_permit_window_or_dispatcher_override, shutdown_scheduled_if_required]}
+  - {from: opened,      to: closed,      action: close,
+     guards: [photo_after_restore_min1, resource_restored_if_shutdown, zone_secured_confirmed]}
+  - {from: scheduled,   to: expired,     action: expire,      guards: [permit_window_passed]}
+
+guard_notes:
+  master_qualified_for_zones: >
+    Мастер платформы: действующая квалификация под каждый тип зоны (DEV-15 §7.1.2).
+    Мастер оператора: самодекларация оператора, записанная в аудит; платформа не проверяет.
+    Лицензируемые зоны (газ, лифты, пожарные системы): мастерам платформы запрещено всегда — ТЗ 17.8.
+  zone_not_critical: >
+    Критичные зоны (справочник A-41, флаг is_critical): газ, электрощитовые и ВРУ, лифтовое
+    оборудование, кровля и высотные работы, пожарная сигнализация и пожаротушение, ИТП,
+    камеры дымоудаления. Для них auto_approve запрещён без исключений.
+  within_permit_window_or_dispatcher_override: >
+    Вскрытие вне согласованного окна допускается только санкцией диспетчера с причиной в аудит.
+
+emergency_override:
+  applies_when: order.is_emergency == true
+  effect: >
+    Наряд создаётся системой сразу в статусе opened с пометкой emergency_override, минуя
+    submit/approve. Обязательные побочные эффекты: фото зоны до вскрытия, автозвонок и SMS
+    на building.emergency_phone, оповещение всех affected_units, запись в аудит,
+    событие первого приоритета в кабинет оператора.
+
+events:
+  emits: [permit.requested, permit.approved, permit.auto_approved, permit.rejected,
+          permit.rescheduled, permit.scheduled, permit.opened, permit.closed,
+          permit.expired, permit.cancelled, permit.sla_breached]
+  listens: [order.created, order.cancelled, order.status_changed, master.blocked,
+            building.status_changed, slot.freed]
+```
+
+### 7.6. Критерии приёмки графа
+
+1. Переход вне графа отклоняется 409 `StateMachineViolation` для любой роли, включая админа платформы.
+2. `auto_approve` на зоне с `is_critical = true` отклоняется всегда, даже при истёкшем SLA и исчерпанной эскалации.
+3. `open` без действующего `VISIT_PASS` того же мастера отклоняется — инвариант DEV-02 §4.4 п.8.
+4. `open` мастером платформы без действующей квалификации под зону отклоняется `QualificationRequired`; тот же мастер оператора проходит при наличии самодекларации.
+5. Наряд в лицензируемую зону мастеру платформы не создаётся вообще — отклонение на этапе `draft`.
+6. `close` при `requires_shutdown = true` без отметки восстановления ресурса отклоняется.
+7. Идемпотентность: повтор перехода с тем же `client_op_uuid` (офлайн-синк мастера) возвращает исходный результат.
+8. Конкуренция: два мастера офлайн, открывающие одну зону, разрешаются по монотонным часам при синке; проигравший получает 409 и попадает в разбор диспетчера (D-22).
+9. Аварийная заявка проходит `start` без наряда; наряд `emergency_override` создан пост-фактум и виден оператору.
+10. Все переходы пишутся в append-only журнал и порождают события §7.5.

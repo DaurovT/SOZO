@@ -13,9 +13,14 @@
     "test": "npm run test -w @sozo/kernel",
     "build": "npm run build -w @sozo/contracts && npm run build -w @sozo/kernel && npm run build -w @sozo/api",
     "prisma:validate": "prisma validate --schema prisma/schema.prisma",
-    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "test:home": "node apps/api/test/home-contour-e2e.mjs",
+    "db:check": "node tools/dbcheck.mjs",
+    "db:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/migrations/000_init/migration.sql",
+    "operator": "npm run dev --prefix apps/operator-web"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.5",
     "typescript": "^5.6.0"
   },
   "engines": {

@@ -16,6 +16,7 @@ import { DisputesPage } from './pages/Disputes';
 import { HandoverPage } from './pages/Handover';
 import { KpiPage } from './pages/Kpi';
 import { MapPage } from './pages/Map';
+import { PermitsPage } from './pages/Permits';
 
 export function App() {
   return (
@@ -38,6 +39,7 @@ export function App() {
             <Route path="/disputes" element={<DisputesPage />} />
             <Route path="/handover" element={<HandoverPage />} />
             <Route path="/kpi" element={<KpiPage />} />
+            <Route path="/permits" element={<PermitsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

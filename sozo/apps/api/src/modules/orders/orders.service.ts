@@ -4,6 +4,9 @@ import { createOrderStateMachine, emptyContext, uuidv7, type TransitionContext }
 import { ORDER_REPOSITORY, type OrderRecord, type OrderRepository } from './order.repository';
 import { PricingService } from '../pricing/pricing.service';
 import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
+import { AccessService } from '../access/access.service';
+import { BuildingsService } from '../buildings/buildings.service';
+import { SlaService } from '../sla/sla.service';
 import { CrmService } from '../crm/crm.service';
 import { PromoService } from '../promo/promo.module';
 import { ParametersService } from '../platform/parameters.service';
@@ -33,6 +36,13 @@ export interface CreateOrderDto {
   addressDetails?: OrderRecord['addressDetails'];
   /** Мастер, которого клиент попросил запомнить (C-21) — мягкий приоритет */
   preferredMasterId?: string;
+  // ---- контур «Дом» (M7) ----
+  /** Развилка первого шага C-07: «в моей квартире» или «в доме» (общее имущество) */
+  scope?: 'private' | 'common_area';
+  /** Житель выбрал исполнителем службу оператора по её прайсу, а не мастера платформы */
+  providerOperator?: boolean;
+  /** Позиция собственного прайса оператора, если выбран он */
+  operatorPriceItemId?: string;
 }
 
 /** Заглушка геокодера (PRD-05 §12.4): детерминированная точка в пределах Ташкента по хешу адреса */
@@ -60,6 +70,9 @@ export class OrdersService {
     @Inject(ORDER_REPOSITORY) private readonly repo: OrderRepository,
     private readonly pricing: PricingService,
     private readonly bus: EventBus,
+    private readonly access: AccessService,
+    private readonly buildings: BuildingsService,
+    private readonly sla: SlaService,
     private readonly promo: PromoService,
     private readonly params: ParametersService,
     private readonly crm: CrmService,
@@ -163,7 +176,7 @@ export class OrdersService {
       this.seq = existing.reduce((max, o) => Math.max(max, Number(o.number.split('-').pop()) || 0), 0);
     }
     this.seq += 1;
-    return this.repo.create({
+    const created = await this.repo.create({
       id: uuidv7(),
       tenantId,
       number: `Z-${now.getFullYear()}-${String(this.seq).padStart(6, '0')}`,
@@ -199,7 +212,118 @@ export class OrdersService {
       totalMaterialTiyin: 0,
       statusLog: [{ from: null, to: res.def.to, action: 'create', actorPhone, at: now }],
       createdAt: now,
+      ...this.homeContext(tenantId, dto, now),
     });
+    this.startSla(tenantId, created);
+    return created;
+  }
+
+  /**
+   * Привязка заявки к объекту и окно права первой руки (DEV-15 §2, §7.5).
+   *
+   * Матчинг адреса не блокирует создание заявки: при неоднозначности поля остаются
+   * пустыми, привязку делает диспетчер в D-06. Молчаливо угадывать дом нельзя —
+   * ошибка привязки означает наряд не в тот объект.
+   */
+  private homeContext(
+    tenantId: string,
+    dto: CreateOrderDto,
+    now: Date,
+  ): Partial<OrderRecord> {
+    const r = this.buildings.resolve(tenantId, dto.address ?? '');
+    if (r.match !== 'exact' || !r.buildingId) return {};
+
+    // Развилка, которую житель делает на первом шаге (C-07):
+    //   «в моей квартире» → private  — платная работа, исполнителя выбирает житель;
+    //   «в доме»          → common_area — зона ответственности оператора, для жителя бесплатно.
+    const scope: 'private' | 'common_area' = dto.scope === 'common_area' ? 'common_area' : 'private';
+
+    // Объект без подключённого оператора: общего имущества как отдельного контура нет.
+    // Заявка на стояк в таком доме — обычная платная работа, как в v2.25.
+    if (r.connectionStatus !== 'active') {
+      return { buildingId: r.buildingId, orderScope: 'private' };
+    }
+
+    if (scope === 'common_area') {
+      // Общее имущество: окна первой руки нет — заявка ВСЕГДА и только у службы
+      // оператора, в общий пул платформы она не уходит ни при каких условиях
+      // (ТЗ §19.3 п.5). Денег с жителя за неё не берём.
+      return {
+        buildingId: r.buildingId,
+        orderScope: 'common_area',
+        claimedByOperator: this.buildings.get(tenantId, r.buildingId).operatorOrgId ?? undefined,
+        laborSettlement: 'salary',
+      };
+    }
+
+    // Житель выбрал исполнителем службу оператора по её собственному прайсу —
+    // платформа в деньгах не участвует, окно первой руки не нужно: выбор уже сделан.
+    if (dto.providerOperator) {
+      return {
+        buildingId: r.buildingId,
+        orderScope: 'private',
+        claimedByOperator: this.buildings.get(tenantId, r.buildingId).operatorOrgId ?? undefined,
+        laborSettlement: 'salary',
+      };
+    }
+
+    // Окно первой руки: рабочее время — 30 мин, нерабочее — 10 (параметры 129–130).
+    const hour = now.getHours();
+    const working = hour >= 8 && hour < 20;
+    const minutes = working ? 30 : 10;
+    return {
+      buildingId: r.buildingId,
+      orderScope: 'private',
+      firstRefusalUntil: new Date(now.getTime() + minutes * 60_000).toISOString(),
+      laborSettlement: 'share',
+    };
+  }
+
+  /**
+   * Постановка SLA-дедлайнов на заявку подключённого объекта (DEV-15 §7.2).
+   * Политика подбирается каскадом; если у оператора политик нет — SLA не ставится,
+   * и это нормально: Free-тариф SLA-контроля не включает.
+   */
+  private startSla(tenantId: string, order: OrderRecord): void {
+    if (!order.buildingId) return;
+    const b = this.buildings.listBuildings(tenantId).find((x) => x.id === order.buildingId);
+    if (!b?.operatorOrgId) return;
+    const policy = this.sla.resolvePolicy(tenantId, b.operatorOrgId, {
+      buildingId: order.buildingId,
+      priority: order.graphType === 'emergency' ? 'critical' : 'normal',
+      scope: order.orderScope ?? 'private',
+    });
+    if (!policy) return;
+    this.sla.start(tenantId, order.id, policy);
+  }
+
+  /** Служба оператора забирает заявку себе (U-04) */
+  async claimByOperator(tenantId: string, orderId: string, operatorOrgId: string): Promise<OrderRecord> {
+    const order = await this.record(tenantId, orderId);
+    if (!order.firstRefusalUntil) {
+      throw new BadRequestException({ code: 'NO_FIRST_REFUSAL', message: 'По этой заявке окна первой руки нет' });
+    }
+    if (Date.parse(order.firstRefusalUntil) < Date.now()) {
+      throw new ConflictException({ code: 'FIRST_REFUSAL_EXPIRED', message: 'Окно истекло, заявка ушла в общий пул' });
+    }
+    order.claimedByOperator = operatorOrgId;
+    // заявка выполняется своей службой: платформа в деньгах не участвует (DEV-15 §8.5)
+    order.laborSettlement = 'salary';
+    this.touchOrder();
+    this.bus.publish('first_refusal.claimed', { orderId, operatorOrgId });
+    return order;
+  }
+
+  /** Отпустить в общий пул с причиной — статистика «сколько служба не тянет» */
+  async releaseByOperator(tenantId: string, orderId: string, reason: string): Promise<OrderRecord> {
+    const order = await this.record(tenantId, orderId);
+    order.releasedReason = reason;
+    order.firstRefusalUntil = new Date(Date.now() - 1000).toISOString();
+    order.claimedByOperator = undefined;
+    order.laborSettlement = 'share';
+    this.touchOrder();
+    this.bus.publish('first_refusal.released', { orderId, reason });
+    return order;
   }
 
   async list(tenantId: string): Promise<OrderRecord[]> {
@@ -270,8 +394,44 @@ export class OrdersService {
     // которую заказчик не принимал
     ctx.acceptanceFixed = !!order.acceptance;
 
+    // Гейт допуска (DEV-10 §3 правило 9, контур «Дом»): заявку нельзя начать,
+    // пока наряд не открыт. Проверяется ДО графа — нарушение здесь не про статусную
+    // машину заявки, и код ошибки должен быть свой, иначе диспетчер будет искать
+    // проблему не там. Для аварийной заявки правило снято внутри access.
+    if (req.action === 'start') {
+      const gate = this.access.canStartOrder(tenantId, order.id);
+      if (!gate.ok) {
+        throw new ConflictException({ code: 'AccessPermitRequired', message: gate.reason });
+      }
+    }
+
     const res = this.sm.validate(order.graphType, req.action, ctx);
     if (!res.ok) throw new ConflictException(res.violation);
+    // Общее имущество никогда не уходит мастерам платформы (ТЗ §19.3 п.5).
+    // Правило абсолютное: ни по просрочке, ни при деградации объекта, ни в аварии.
+    if (req.action === 'assign' && order.orderScope === 'common_area' && order.buildingId) {
+      throw new ConflictException({
+        code: 'CommonAreaIsOperatorOnly',
+        message:
+          'Работы по общему имуществу выполняет только служба эксплуатирующей организации. ' +
+          'Если у неё нет компетенции, она размещает заказ у платформы отдельной B2B-заявкой',
+      });
+    }
+
+    // Право первой руки (DEV-15 §7.5): пока окно не истекло и служба оператора
+    // не отпустила заявку, мастер платформы на неё не назначается.
+    if (
+      req.action === 'assign' &&
+      order.firstRefusalUntil &&
+      !order.claimedByOperator &&
+      Date.parse(order.firstRefusalUntil) > Date.now()
+    ) {
+      throw new ConflictException({
+        code: 'FirstRefusalWindowOpen',
+        message: `Окно первой руки службы оператора истекает ${order.firstRefusalUntil}`,
+        until: order.firstRefusalUntil,
+      });
+    }
     if (req.action === 'assign' && !extra?.masterId) {
       throw new BadRequestException({ code: 'MASTER_REQUIRED', message: 'Для назначения укажите мастера' });
     }
@@ -325,6 +485,12 @@ export class OrdersService {
     }
     if (applied === 'duplicate') return order;
 
+    // Отметки этапов SLA (DEV-15 §7.2): реакция — принятие в работу, прибытие — старт,
+    // устранение — завершение. Дедлайны считает модуль sla, статусы он не трогает.
+    if (req.action === 'assign') this.sla.markReached(tenantId, applied.id, 'response');
+    if (req.action === 'start') this.sla.markReached(tenantId, applied.id, 'arrival');
+    if (req.action === 'complete') this.sla.markReached(tenantId, applied.id, 'resolution');
+
     // Закрытие → событие для биллинга (DEV-07 §4.В: orders не знает о подписчиках)
     if (req.action === 'close') {
       const payload = (req.payload ?? {}) as { cashPayment?: boolean };
@@ -340,6 +506,19 @@ export class OrdersService {
         baseWorkTiyin: applied.baseFromTiyin, // доля мастера — от базы, скидки её не трогают
         paymentChannel: applied.graphType === 'b2b' ? 'subscription' : payload.cashPayment ? 'cash' : 'online',
         materialsTiyin: applied.totalMaterialTiyin,
+        // Контур «Дом»: параметры сбора едут в событии, чтобы billing не импортировал buildings
+        buildingId: applied.buildingId,
+        operatorOrgId: applied.buildingId
+          ? (this.buildings.listBuildings(tenantId).find((b) => b.id === applied.buildingId)?.operatorOrgId ?? undefined)
+          : undefined,
+        orderScope: applied.orderScope ?? 'private',
+        laborSettlement: applied.laborSettlement ?? 'share',
+        // Эффективная ставка: у Pro-оператора сбор равен нулю (ТЗ §19.3 п.4а)
+        serviceFeeBps: (() => {
+          if (!applied.buildingId) return undefined;
+          const b = this.buildings.listBuildings(tenantId).find((x) => x.id === applied.buildingId);
+          return b ? this.buildings.effectiveServiceFeeBps(tenantId, b) : undefined;
+        })(),
       });
     }
     return applied;

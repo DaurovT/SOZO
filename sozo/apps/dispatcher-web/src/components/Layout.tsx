@@ -40,6 +40,7 @@ const MENU: { section: string; links: { to: string; label: string }[] }[] = [
       { to: '/replacements', label: 'Замены' },
       { to: '/client-requests', label: 'Обращения клиентов' },
       { to: '/incidents', label: 'Инциденты' },
+      { to: '/permits', label: 'Наряды-допуски' },
       { to: '/handover', label: 'Передача смены' },
       { to: '/kpi', label: 'KPI смены' },
     ],

@@ -1,0 +1,32 @@
+/* DEV-06 — дизайн-токены SOZO. Hex-цвета допустимы ТОЛЬКО в этом файле.
+   Значения синхронны с DEV-06 §2 и design_tokens.dart обоих Flutter-приложений.
+   ВНИМАНИЕ: tokens.css в dispatcher-web и admin-web ещё содержат прежнюю
+   терракотовую палитру — при их обновлении брать значения отсюда. */
+:root {
+  --bg: #F6F6F8;
+  --surface: #FFFFFF;
+  --text: #141518;
+  --text-secondary: #8A8A93;
+  --text-tertiary: #B4B4BD;
+  --accent: #FEB70F;
+  --accent-pressed: #E0A00A;
+  --on-accent: #141518;
+  --success: #2FA36B;
+  --warning: #F08C1E;
+  --error: #E0483D;
+  --info: #3D6BF5;
+  --fresh: #7A5AF8;
+  --border: #ECECF0;
+  --divider: #F2F2F5;
+
+  --radius-card: 12px;
+  --radius-button: 8px;
+  --radius-chip: 999px;
+
+  --s4: 4px;
+  --s8: 8px;
+  --s12: 12px;
+  --s16: 16px;
+  --s24: 24px;
+  --s32: 32px;
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root{
+      --bg:#F6F6F8; --surface:#FFFFFF; --text:#141518; --textSecondary:#8A8A93; --textTertiary:#B4B4BD;
+      --accent:#FEB70F; --onAccent:#141518; --success:#2FA36B; --warning:#F08C1E; --error:#E0483D;
+      --info:#3D6BF5; --fresh:#7A5AF8; --border:#ECECF0; --divider:#F2F2F5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;line-height:1.4}
+    a{color:var(--accent)} a:hover{color:#E0A00A}
+    .h1{font-size:24px;font-weight:600} .h2{font-size:20px;font-weight:600}
+    .body{font-size:16px} .dense{font-size:14px} .cap{font-size:13px;color:var(--textSecondary)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 8px;font-size:13px}
+    .side{width:240px;background:var(--surface);border-right:1px solid var(--border)}
+    .navitem{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:14px;color:var(--textSecondary)}
+    .navitem--active{background:rgba(254,183,15,.10);color:var(--text);font-weight:600}
+    table{border-collapse:collapse;width:100%}
+    th{font-size:13px;font-weight:600;color:var(--textSecondary);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+    td{font-size:14px;padding:10px 12px}
+    tbody tr:nth-child(even){background:var(--bg)}
+
+<div style="min-height:844px;display:flex;flex-direction:column;padding:16px;gap:16px">
+  <div style="display:flex;align-items:center;gap:8px;padding-top:8px">
+    <div style="width:24px;height:24px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#141518" stroke-width="2.5"><path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>
+    </div>
+    <div class="cap">Запрос доступа · ЖК Сокол</div>
+  </div>
+
+  <div>
+    <div class="h1" style="font-size:22px">Мастеру нужен доступ к стояку ХВС</div>
+    <div class="body" style="color:var(--textSecondary);margin-top:8px">Сегодня, 14:00 — 16:00</div>
+  </div>
+
+  <div class="card" style="padding:16px;display:flex;gap:12px;align-items:center">
+    <div style="width:52px;height:52px;border-radius:999px;background:var(--border);flex-shrink:0"></div>
+    <div style="flex-grow:1">
+      <div class="body" style="font-weight:600">Алишер Каримов</div>
+      <div class="cap">Мастер платформы · подъезд 1</div>
+    </div>
+    <a href="#" class="cap" style="font-weight:600;white-space:nowrap">Проверить</a>
+  </div>
+
+  <div class="card" style="padding:16px;background:rgba(240,140,30,.08);border:1px solid rgba(240,140,30,.3);display:flex;gap:12px;align-items:flex-start">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F08C1E" stroke-width="2" style="flex-shrink:0"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+    <div>
+      <div class="dense" style="font-weight:600">Потребуется отключение холодной воды</div>
+      <div class="cap" style="margin-top:4px">Затронет 3 квартиры на стояке. Жителей предупредим сами.</div>
+    </div>
+  </div>
+
+  <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+    <div class="cap" style="text-align:center;margin-bottom:4px">Если не ответить до 18:00, доступ согласуется автоматически</div>
+    <button style="height:56px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:17px;font-weight:600">Согласовать</button>
+    <button style="height:52px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:16px">Предложить другое время</button>
+    <button style="height:52px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:16px;color:var(--error)">Отклонить</button>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic { renderVals(){ return {}; } }
+</script>
+</body>
+</html>

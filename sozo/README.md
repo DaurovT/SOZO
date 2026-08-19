@@ -10,6 +10,7 @@ apps/
   admin-web/      React SPA: админ + бухгалтерия (PRD-04)
   dispatcher-web/ React SPA: диспетчерская (PRD-03)
   landing/        Next.js SSR: лендинги + веб-карточка + верификация мастера (PRD-06)
+  operator-web/   React SPA: кабинет эксплуатирующей организации (PRD-07, контур «Дом»)
   client-app/     Flutter: приложение «Клиент» (PRD-01, DEV-08)
   master-app/     Flutter: приложение «Мастер», офлайн-first (PRD-02, DEV-09)
 packages/
@@ -36,6 +37,7 @@ npm test                       # тесты kernel: Money + StateMachine (гра
 npm run api                    # бэкенд      → http://localhost:3000/v1
 npm run admin                  # админка     → http://localhost:5173
 cd apps/dispatcher-web && npm run dev   # диспетчерская → http://localhost:5174
+npm run operator               # кабинет оператора → http://localhost:5176/operator/
 ```
 
 **Dev-вход:** любой телефон `+998XXXXXXXXX`, OTP-код всегда `00000` (заглушка, решение владельца).

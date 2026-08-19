@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { masterShare, roundTo100Soums, uuidv7 } from '@sozo/kernel';
+import { masterShare, roundTo100Soums, uuidv7, serviceFee, SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
 import { StateStore } from '../../common/state-store';
 import { CrmService } from '../crm/crm.service';
@@ -206,6 +206,33 @@ export class BillingService implements OnModuleInit {
         }
       } catch {
         /* организация могла быть удалена — счёт не выставляем */
+      }
+    }
+
+    // ---- Сервисный сбор объекта (DEV-15 §8.2, ТЗ §19.3 п.4) ----
+    // Начисляется ТОЛЬКО с частных заявок жителей подключённого объекта и
+    // ТОЛЬКО если работу выполнила не собственная служба оператора.
+    // База — работы клиента без материалов; сбор идёт из комиссии платформы
+    // и доли мастера не касается (принцип №5 ТЗ 8.1).
+    if (
+      e.buildingId &&
+      e.operatorOrgId &&
+      e.orderScope === 'private' &&
+      e.laborSettlement !== 'salary' &&
+      (e.serviceFeeBps ?? 0) > 0 &&
+      work > 0
+    ) {
+      const bps = BigInt(Math.min(e.serviceFeeBps!, Number(SERVICE_FEE_CAP_BPS)));
+      const fee = Number(serviceFee(BigInt(work), bps));
+      if (fee > 0) {
+        this.bus.publish('service_fee.accrued', {
+          orderId: e.orderId,
+          number: e.number,
+          buildingId: e.buildingId,
+          operatorOrgId: e.operatorOrgId,
+          amountTiyin: fee,
+          bps: Number(bps),
+        });
       }
     }
 

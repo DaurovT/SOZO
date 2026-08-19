@@ -1,0 +1,23 @@
+{
+  "pages": [
+    { "id": "cabinet", "name": "Кабинет оператора" },
+    { "id": "mobile", "name": "Мобильные и SMS" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html",         "title": "U-01 · Дашборд портфеля",   "page": "cabinet", "x": 0,    "y": 0, "w": 1280, "h": 900 },
+    { "file": "Permits.dc.html",      "title": "U-02 · Наряды-допуски",     "page": "cabinet", "x": 1360, "y": 0, "w": 1280, "h": 900 },
+    { "file": "FirstRefusal.dc.html", "title": "U-04 · Первая рука",        "page": "cabinet", "x": 2720, "y": 0, "w": 1000, "h": 760 },
+    { "file": "Settings.dc.html",     "title": "U-13 · Настройки объекта",  "page": "cabinet", "x": 3800, "y": 0, "w": 1000, "h": 980 },
+    { "file": "SmsApprove.dc.html",   "title": "W-06 · Согласование по SMS", "page": "mobile", "x": 0,   "y": 0, "w": 390, "h": 844 },
+    { "file": "MyHome.dc.html",       "title": "C-51 · Мой дом",             "page": "mobile", "x": 460, "y": 0, "w": 390, "h": 844 },
+    { "file": "SimpleMode.dc.html",   "title": "C-57 · Простой режим",       "page": "mobile", "x": 920, "y": 0, "w": 390, "h": 844 },
+    { "file": "MasterPermit.dc.html", "title": "M-43 · Наряд у мастера",     "page": "mobile", "x": 1380, "y": 0, "w": 390, "h": 844 }
+  ],
+  "annotations": [
+    { "id": "note-tokens", "page": "cabinet", "x": 0, "y": -140, "w": 520,
+      "text": "Токены DEV-06: акцент #FEB70F, текст #141518, фон #F6F6F8, радиусы 12/8/999.\nВнимание: tokens.css в dispatcher-web и admin-web устарели — там ещё терракота #C15F3C." },
+    { "id": "note-mobile", "page": "mobile", "x": 0, "y": -120, "w": 520,
+      "text": "W-06 открывается по ссылке из SMS без установки приложения — три крупные кнопки и никакой регистрации.\nC-57: не более трёх действий, шрифт 20+, цель нажатия 64px, статусы словами." }
+  ],
+  "launch": { "view": "canvas", "page": "cabinet" }
+}

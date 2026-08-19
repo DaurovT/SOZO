@@ -23,6 +23,11 @@ import { PublicApiModule } from './modules/public-api/public-api.module';
 import { QualityModule } from './modules/quality/quality.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { MasterApiModule } from './modules/master-api/master-api.module';
+import { BuildingsModule } from './modules/buildings/buildings.module';
+import { AccessModule } from './modules/access/access.module';
+import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { SlaModule } from './modules/sla/sla.module';
+import { OperatorApiModule } from './modules/operator-api/operator-api.module';
 import { FieldModule } from './modules/field/field.module';
 import { ClientApiModule } from './modules/client-api/client-api.module';
 import { ClientB2CModule } from './modules/client-b2c/client-b2c.module';
@@ -44,7 +49,12 @@ class HealthController {
  * billing подписан на события через outbox (kernel).
  */
 @Module({
-  imports: [IdentityModule, PlatformModule, PricingModule, CrmModule, MastersModule, OrdersModule, BillingModule, RegistryModule, DashboardModule, ReserveModule, LeadsModule, StockModule, PromoModule, LoyaltyModule, SchedulerModule, DocumentsModule, SchedulingModule, AssignmentModule, DispatchOpsModule, PublicApiModule, QualityModule, AnalyticsModule, MasterApiModule, FieldModule, ClientApiModule, ClientB2CModule, WebCardModule],
+  imports: [
+    BuildingsModule,
+    AccessModule,
+    SubscriptionsModule,
+    SlaModule,
+    OperatorApiModule,IdentityModule, PlatformModule, PricingModule, CrmModule, MastersModule, OrdersModule, BillingModule, RegistryModule, DashboardModule, ReserveModule, LeadsModule, StockModule, PromoModule, LoyaltyModule, SchedulerModule, DocumentsModule, SchedulingModule, AssignmentModule, DispatchOpsModule, PublicApiModule, QualityModule, AnalyticsModule, MasterApiModule, FieldModule, ClientApiModule, ClientB2CModule, WebCardModule],
   controllers: [HealthController],
 })
 export class AppModule {}

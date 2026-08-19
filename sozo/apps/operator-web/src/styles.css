@@ -1,0 +1,109 @@
+@import './tokens.css';
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+a { color: var(--accent); }
+a:hover { color: var(--accent-pressed); }
+
+.h1 { font-size: 24px; font-weight: 600; margin: 0; }
+.h2 { font-size: 20px; font-weight: 600; margin: 0; }
+.dense { font-size: 14px; }
+.cap { font-size: 13px; color: var(--text-secondary); }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s4);
+  border-radius: var(--radius-chip);
+  padding: var(--s4) var(--s8);
+  font-size: 13px;
+}
+.chip--success { background: rgba(47,163,107,.12); color: var(--success); }
+.chip--warning { background: rgba(240,140,30,.14); color: #8A5200; }
+.chip--error   { background: rgba(224,72,61,.12); color: var(--error); }
+.chip--neutral { background: var(--border); color: var(--text-secondary); }
+
+/* Одна primary-кнопка на экран (DEV-06 §4.1) */
+.btn {
+  height: 36px;
+  padding: 0 var(--s16);
+  border-radius: var(--radius-button);
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--accent-pressed); }
+.btn:disabled { background: var(--border); color: var(--text-secondary); cursor: not-allowed; }
+.btn--secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-weight: 400; }
+.btn--secondary:hover:not(:disabled) { background: rgba(254,183,15,.08); }
+.btn--danger { background: var(--surface); border: 1px solid var(--border); color: var(--error); font-weight: 400; }
+.btn--lg { height: 44px; font-size: 15px; }
+
+.input {
+  height: 36px;
+  width: 100%;
+  padding: 0 var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+}
+.input:focus { outline: none; border: 1.5px solid var(--accent); }
+
+/* Сайдбар (DEV-06 §4.5) */
+.sidebar { width: 240px; background: var(--surface); border-right: 1px solid var(--border); }
+.sidebar__item {
+  display: flex; align-items: center; gap: var(--s8);
+  padding: var(--s8) var(--s12);
+  border-radius: var(--radius-button);
+  font-size: 14px; color: var(--text-secondary);
+  text-decoration: none; cursor: pointer;
+}
+.sidebar__item:hover { background: rgba(254,183,15,.06); color: var(--text); }
+.sidebar__item--active { background: rgba(254,183,15,.10); color: var(--text); font-weight: 600; }
+
+/* Таблицы (DEV-06 §4.8) */
+table { border-collapse: collapse; width: 100%; }
+th {
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  text-align: left; padding: var(--s8) var(--s12);
+  border-bottom: 1px solid var(--border);
+}
+td { font-size: 14px; padding: var(--s12); }
+tbody tr:nth-child(even) { background: var(--bg); }
+tbody tr:hover { background: rgba(254,183,15,.06); }
+
+/* Пустые состояния (DEV-06 §4.6): иконка, одна фраза, одно действие */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--s8); padding: var(--s32); color: var(--text-secondary);
+}
+
+/* Тост (DEV-06 §4.7) */
+.toast {
+  position: fixed; left: 50%; bottom: var(--s24); transform: translateX(-50%);
+  background: var(--text); color: #fff; padding: var(--s12) var(--s16);
+  border-radius: var(--radius-button); font-size: 14px; z-index: 100;
+  display: flex; align-items: center; gap: var(--s12);
+}

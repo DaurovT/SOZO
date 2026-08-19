@@ -45,4 +45,12 @@ export interface OrderClosedEvent {
   paymentChannel: 'online' | 'cash' | 'subscription' | 'invoice';
   /** Материалы по заявке — при `materialsSeparateInvoice` на них свой счёт */
   materialsTiyin?: number;
+  // ---- контур «Дом» (M7, DEV-15 §8.2): всё нужное для сбора приходит В СОБЫТИИ,
+  // чтобы billing не импортировал buildings (правило DEV-07 §3 п.2) ----
+  buildingId?: string;
+  operatorOrgId?: string;
+  orderScope?: 'private' | 'common_area';
+  laborSettlement?: 'salary' | 'share';
+  /** ставка сервисного сбора объекта в базисных пунктах */
+  serviceFeeBps?: number;
 }

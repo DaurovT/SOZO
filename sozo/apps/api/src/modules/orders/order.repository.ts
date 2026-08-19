@@ -30,6 +30,20 @@ export interface OrderRecord {
   description: string;
   organizationId?: string;
   locationId?: string;
+  // ---- контур «Дом» (M7) ----
+  buildingId?: string;
+  unitId?: string;
+  /** private — помещение собственника; common_area — общее имущество (сбор не начисляется) */
+  orderScope?: 'private' | 'common_area';
+  /** окно права первой руки: до этого момента заявка не уходит в общий пул платформы */
+  firstRefusalUntil?: string;
+  /** служба оператора забрала заявку себе */
+  claimedByOperator?: string;
+  /** отпущена в пул с причиной — статистика «сколько служба не тянет» */
+  releasedReason?: string;
+  /** выводится из владельца смены; пока смен нет — share по умолчанию */
+  laborSettlement?: 'salary' | 'share';
+  serviceFeeTiyin?: number;
   masterId?: string;
   masterName?: string;
   /** Парная работа: ведущий + помощник, деньги по ролям (ТЗ 4.5) */

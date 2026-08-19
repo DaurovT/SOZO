@@ -114,14 +114,19 @@ model Organization {
   vatPayer      Boolean  @default(false) @map("vat_payer")
   vatRate       Int?     @map("vat_rate") // проценты; ставку подтверждает бухгалтер (ТЗ 8.10)
   contractType  String   @map("contract_type") // subscription | one_off
+  orgRoles      String[] @map("org_roles") // client | operator | contractor — множество (DEV-15 §1); поле `roles` занято связью UserRole
   status        String   @default("active") // active | suspended | terminated (ТЗ 3.1)
   settingsJson  Json     @default("{}") @map("settings_json")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
-  locations Location[]
-  contracts Contract[]
-  roles     UserRole[]
+  locations     Location[]
+  contracts     Contract[]
+  roles         UserRole[]
+  buildings     Building[]
+  affiliations  MasterAffiliation[]
+  slaPolicies   SlaPolicy[]
+  subscriptions OperatorSubscription[]
 
   @@unique([tenantId, inn])
   @@index([tenantId, status])
@@ -142,12 +147,14 @@ model Location {
   monthlyLimitTiyin BigInt?  @map("monthly_limit_tiyin")
   passportJson      Json     @default("{}") @map("passport_json") // паспорт объекта: м², санузлы, кондиционеры, щитки
   accessJson        Json     @default("{}") @map("access_json") // график доступа, контакты ТСЖ/УК
+  buildingId        String?  @map("building_id") @db.Uuid // точка может находиться в подключённом объекте (M7)
   preferredMasterId String?  @map("preferred_master_id") @db.Uuid
   blacklistMasters  String[] @map("blacklist_masters") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
   organization Organization @relation(fields: [organizationId], references: [id])
+  building     Building?    @relation(fields: [buildingId], references: [id])
   orders       Order[]
 
   @@index([tenantId, organizationId])
@@ -189,6 +196,8 @@ model User {
 
   roles         UserRole[]
   masterProfile MasterProfile?
+  residences    UnitResident[]  // контур «Дом»: житель одного или нескольких помещений
+  buildingStaff BuildingStaff[] // контур «Дом»: роли в эксплуатирующей организации
 
   @@unique([tenantId, phone])
   @@map("user")
@@ -229,11 +238,16 @@ model MasterProfile {
   probationCount Int       @default(0) @map("probation_count")
   qrBadgeCode    String?   @unique @map("qr_badge_code") // неперебираемый код верификации (L-07)
   referrerId     String?   @map("referrer_id") @db.Uuid
+  // ---- контур «Дом» (M7): принадлежность НЕ единична, см. MasterAffiliation (DEV-15 §7.8) ----
+  platformStatus Boolean   @default(true) @map("platform_status") // свободный мастер платформы
+  qualifications Json      @default("[]") // [{type, doc_no, issued_at, valid_until}] — проверяется при выдаче наряда
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
 
-  user   User    @relation(fields: [userId], references: [id])
-  orders Order[]
+  user         User                @relation(fields: [userId], references: [id])
+  orders       Order[]
+  affiliations MasterAffiliation[]
+  passes       VisitPass[]
 
   @@index([tenantId, status])
   @@map("master_profile")
@@ -315,11 +329,29 @@ model Order {
   partiallyDone      Boolean        @default(false) @map("partially_done") // консервация (ТЗ 4.6)
   isDemo             Boolean        @default(false) @map("is_demo") // демо-контур вне биллинга/отчётов (DEV-02 §3.4)
   clientUuid         String?        @map("client_uuid") @db.Uuid // офлайн-идемпотентность
+  // ---- контур «Дом» (M7, DEV-15 §3) ----
+  buildingId         String?        @map("building_id") @db.Uuid
+  unitId             String?        @map("unit_id") @db.Uuid
+  orderScope         OrderScope     @default(private) @map("order_scope") // сбор не начисляется на common_area (инвариант DEV-02 §4.4 п.7)
+  laborSettlement    LaborSettlement @default(share) @map("labor_settlement") // выводится из владельца смены, не из типа мастера
+  serviceFeeTiyin    BigInt         @default(0) @map("service_fee_tiyin")
+  firstRefusalUntil  DateTime?      @map("first_refusal_until") @db.Timestamptz()
+  slaPolicyId        String?        @map("sla_policy_id") @db.Uuid
+  slaResponseDue     DateTime?      @map("sla_response_due") @db.Timestamptz()
+  slaArrivalDue      DateTime?      @map("sla_arrival_due") @db.Timestamptz()
+  slaResolutionDue   DateTime?      @map("sla_resolution_due") @db.Timestamptz()
+  slaBreachFlags     String[]       @map("sla_breach_flags") // response | arrival | resolution
+  slaPausedMs        BigInt         @default(0) @map("sla_paused_ms")
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
 
   location  Location?        @relation(fields: [locationId], references: [id])
   master    MasterProfile?   @relation(fields: [masterId], references: [id])
+  building  Building?        @relation(fields: [buildingId], references: [id])
+  unit      Unit?            @relation(fields: [unitId], references: [id])
+  slaPolicy SlaPolicy?       @relation(fields: [slaPolicyId], references: [id])
+  permits   AccessPermit[]
+  passes    VisitPass[]
   release   PriceListRelease @relation(fields: [priceListReleaseId], references: [id])
   lines     OrderLine[]
   quotes    Quote[]
@@ -332,6 +364,8 @@ model Order {
   @@index([tenantId, status])
   @@index([tenantId, locationId, createdAt]) // дубль-детект за 24 ч
   @@index([tenantId, masterId, status])
+  @@index([tenantId, buildingId, status]) // очереди кабинета оператора
+  @@index([tenantId, firstRefusalUntil]) // окно первой руки
   @@map("order")
 }
 
@@ -597,3 +631,491 @@ model SystemParameter {
   @@unique([tenantId, code])
   @@map("system_parameter")
 }
+
+// ============================================================
+// КОНТУР «ДОМ» (M7/M8) — DEV-15, DEV-02 §4
+// Все таблицы ниже несут арендаторское измерение operator_org_id (прямо или через building)
+// и обязаны получить RLS-политику в той же миграции (DEV-07 §8, тест-страж роняет CI).
+// ============================================================
+
+enum BuildingConnectionStatus {
+  unmanaged
+  claimed
+  verified
+  active
+  degraded
+}
+
+enum BuildingType {
+  residential
+  business_center
+  mixed
+}
+
+enum OrderScope {
+  private
+  common_area
+}
+
+enum LaborSettlement {
+  salary // работа в смене оператора: доля не начисляется, платит оператор (DEV-15 §8.5)
+  share  // свободное время: доля от базового прайса (ТЗ 8.1)
+}
+
+enum PermitStatus {
+  draft
+  requested
+  approved
+  rescheduled
+  rejected
+  scheduled
+  opened
+  closed
+  expired
+  cancelled
+}
+
+enum PermitApprovalKind {
+  manual
+  auto_silence       // запрещено для критичных зон (DEV-15 §9.3)
+  emergency_override // вскрытие без согласования (DEV-15 §4.5)
+}
+
+enum ShutdownStatus {
+  draft
+  scheduled
+  active
+  restored
+  cancelled
+}
+
+enum ResourceType {
+  cold_water
+  hot_water
+  heating
+  electricity
+  gas
+  sewage
+  lift
+  ventilation
+}
+
+enum PassType {
+  master
+  helper
+  guest
+  resident_contractor
+  operator_contractor
+}
+
+enum ResidentRole {
+  owner
+  tenant
+  family
+}
+
+enum StaffRole {
+  master
+  approver
+  dispatcher
+  engineer
+  head
+  admin
+}
+
+enum ObservationSeverity {
+  emergency
+  work_required
+  housekeeping
+  info
+}
+
+enum ObservationSource {
+  walkthrough
+  resident
+  master
+  complaint
+}
+
+enum SubscriptionPlan {
+  free
+  pro
+  enterprise
+}
+
+enum BillingUnit {
+  per_object // действующая единица: плоская ставка за объект (ТЗ 19.3 п.2)
+  per_unit   // за помещение — поддерживается на случай пересмотра
+}
+
+enum TenantKind {
+  hoa
+  bc
+  inhouse
+  fm
+}
+
+model Building {
+  id                 String                   @id @db.Uuid
+  tenantId           String                   @map("tenant_id") @db.Uuid
+  operatorOrgId      String?                  @map("operator_org_id") @db.Uuid
+  cityId             String                   @map("city_id") @db.Uuid
+  name               String
+  address            String
+  geoPolygon         Json                     @default("{}") @map("geo_polygon")
+  buildingType       BuildingType             @default(residential) @map("building_type")
+  connectionStatus   BuildingConnectionStatus @default(unmanaged) @map("connection_status")
+  workHoursJson      Json                     @default("{}") @map("work_hours_json")  // часы работ объекта
+  noiseHoursJson     Json                     @default("{}") @map("noise_hours_json") // часы шумных работ
+  hasServiceLift     Boolean                  @default(false) @map("has_service_lift")
+  parkingRules       String?                  @map("parking_rules")
+  wasteRules         String?                  @map("waste_rules")
+  internalBufferMin  Int                      @default(0) @map("internal_buffer_min") // проход охрана/лифт (DEV-15 §11.4.8)
+  emergencyPhone     String?                  @map("emergency_phone") // обязателен для active
+  dispatchPhone      String?                  @map("dispatch_phone")
+  serviceFeeBps      Int                      @default(500) @map("service_fee_bps") // CHECK 0..1000 в миграции (потолок 10%)
+  verifiedBy         String?                  @map("verified_by") @db.Uuid
+  verifiedAt         DateTime?                @map("verified_at") @db.Timestamptz()
+  connectedAt        DateTime?                @map("connected_at") @db.Timestamptz()
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime                 @updatedAt @map("updated_at") @db.Timestamptz()
+
+  operator      Organization?           @relation(fields: [operatorOrgId], references: [id])
+  units         Unit[]
+  zones         CommonZone[]
+  staff         BuildingStaff[]
+  equipment     BuildingEquipment[]
+  announcements BuildingAnnouncement[]
+  shutdowns     ResourceShutdown[]
+  observations  BuildingObservation[]
+  permits       AccessPermit[]
+  passes        VisitPass[]
+  orders        Order[]
+  locations     Location[]
+  slaPolicies   SlaPolicy[]
+
+  @@index([tenantId, operatorOrgId])
+  @@index([tenantId, connectionStatus])
+  @@index([tenantId, cityId])
+  @@map("building")
+}
+
+model Unit {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  buildingId String   @map("building_id") @db.Uuid
+  entrance   String?
+  floor      Int?
+  number     String
+  unitType   String   @default("apartment") @map("unit_type") // apartment | office | storage | parking
+  areaM2     Decimal? @map("area_m2") @db.Decimal(10, 2)
+  riserIds   String[] @map("riser_ids") // зона влияния отключения считается по стоякам
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  building     Building              @relation(fields: [buildingId], references: [id])
+  residents    UnitResident[]
+  orders       Order[]
+  observations BuildingObservation[]
+
+  @@unique([tenantId, buildingId, entrance, number])
+  @@index([tenantId, buildingId])
+  @@map("unit")
+}
+
+model UnitResident {
+  id           String       @id @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  unitId       String       @map("unit_id") @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  residentRole ResidentRole @default(owner) @map("resident_role")
+  verifiedBy   String       @default("self") @map("verified_by") // operator | document | self | crowd
+  validUntil   DateTime?    @map("valid_until") @db.Timestamptz()
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+
+  unit Unit @relation(fields: [unitId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, unitId, userId])
+  @@index([tenantId, userId])
+  @@map("unit_resident")
+}
+
+model CommonZone {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  buildingId String   @map("building_id") @db.Uuid
+  zoneType   String   @map("zone_type") // справочник A-41
+  label      String
+  riserId    String?  @map("riser_id")
+  isCritical Boolean  @default(false) @map("is_critical") // запрещает auto_silence всегда
+  isLicensed Boolean  @default(false) @map("is_licensed") // мастерам платформы наряд не выдаётся (ТЗ 17.8)
+  accessNote String?  @map("access_note")
+  keyHolder  String?  @map("key_holder")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building @relation(fields: [buildingId], references: [id])
+
+  @@index([tenantId, buildingId])
+  @@map("common_zone")
+}
+
+model AccessPermit {
+  id              String              @id @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+  orderId         String              @map("order_id") @db.Uuid
+  buildingId      String              @map("building_id") @db.Uuid
+  requestedBy     String              @map("requested_by") @db.Uuid
+  status          PermitStatus        @default(draft)
+  version         Int                 @default(0) // оптимистичная блокировка переходов (DEV-10 §7)
+  zoneTypes       String[]            @map("zone_types")
+  commonZoneIds   String[]            @map("common_zone_ids") @db.Uuid
+  requiresShutdown Boolean            @default(false) @map("requires_shutdown")
+  shutdownId      String?             @map("shutdown_id") @db.Uuid
+  affectedUnitIds String[]            @map("affected_unit_ids") @db.Uuid
+  windowFrom      DateTime?           @map("window_from") @db.Timestamptz()
+  windowTo        DateTime?           @map("window_to") @db.Timestamptz()
+  approverUserId  String?             @map("approver_user_id") @db.Uuid
+  approvedAt      DateTime?           @map("approved_at") @db.Timestamptz()
+  approvalKind    PermitApprovalKind? @map("approval_kind")
+  rejectReason    String?             @map("reject_reason")
+  escortRequired  Boolean             @default(false) @map("escort_required")
+  escortUserId    String?             @map("escort_user_id") @db.Uuid
+  openedAt        DateTime?           @map("opened_at") @db.Timestamptz()
+  closedAt        DateTime?           @map("closed_at") @db.Timestamptz()
+  photoBeforeId   String?             @map("photo_before_id") @db.Uuid
+  photoAfterId    String?             @map("photo_after_id") @db.Uuid
+  slaDeadline     DateTime?           @map("sla_deadline") @db.Timestamptz()
+  isEmergency     Boolean             @default(false) @map("is_emergency")
+  clientOpUuid    String?             @map("client_op_uuid") @db.Uuid // идемпотентность офлайн-синка мастера
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+
+  order    Order             @relation(fields: [orderId], references: [id])
+  building Building          @relation(fields: [buildingId], references: [id])
+  shutdown ResourceShutdown? @relation(fields: [shutdownId], references: [id])
+
+  @@unique([tenantId, clientOpUuid])
+  @@index([tenantId, buildingId, status])
+  @@index([tenantId, status, slaDeadline]) // очередь U-02 и D-21 по остатку SLA
+  @@map("access_permit")
+}
+
+model ResourceShutdown {
+  id              String         @id @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  buildingId      String         @map("building_id") @db.Uuid
+  resourceType    ResourceType   @map("resource_type")
+  scope           String         @default("riser") // building | entrance | riser | units
+  riserId         String?        @map("riser_id")
+  affectedUnitIds String[]       @map("affected_unit_ids") @db.Uuid
+  plannedFrom     DateTime       @map("planned_from") @db.Timestamptz()
+  plannedTo       DateTime       @map("planned_to") @db.Timestamptz()
+  actualFrom      DateTime?      @map("actual_from") @db.Timestamptz()
+  actualTo        DateTime?      @map("actual_to") @db.Timestamptz()
+  reason          String
+  initiator       String         @default("operator") // operator | platform | utility
+  orderId         String?        @map("order_id") @db.Uuid
+  status          ShutdownStatus @default(draft)
+  notifiedAt      DateTime?      @map("notified_at") @db.Timestamptz()
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  building Building       @relation(fields: [buildingId], references: [id])
+  permits  AccessPermit[]
+
+  // EXCLUDE-ограничение на пересечение (riser_id, [planned_from, planned_to)) для scheduled|active — в миграции
+  @@index([tenantId, buildingId, plannedFrom])
+  @@index([tenantId, riserId, status])
+  @@map("resource_shutdown")
+}
+
+model VisitPass {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  buildingId   String    @map("building_id") @db.Uuid
+  orderId      String?   @map("order_id") @db.Uuid
+  masterId     String?   @map("master_id") @db.Uuid
+  guestName    String?   @map("guest_name")
+  passType     PassType  @default(master) @map("pass_type")
+  issuedBy     String    @default("system") @map("issued_by") // system | operator | resident
+  qrToken      String    @unique @map("qr_token")
+  fallbackCode String    @map("fallback_code") // на случай отсутствия сети у охраны
+  vehiclePlate String?   @map("vehicle_plate")
+  validFrom    DateTime  @map("valid_from") @db.Timestamptz()
+  validTo      DateTime  @map("valid_to") @db.Timestamptz()
+  enteredAt    DateTime? @map("entered_at") @db.Timestamptz()
+  exitedAt     DateTime? @map("exited_at") @db.Timestamptz()
+  checkedBy    String?   @map("checked_by")
+  status       String    @default("active") // active | used | revoked | expired
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building       @relation(fields: [buildingId], references: [id])
+  order    Order?         @relation(fields: [orderId], references: [id])
+  master   MasterProfile? @relation(fields: [masterId], references: [id])
+
+  @@index([tenantId, buildingId, validFrom])
+  @@index([tenantId, masterId, status])
+  @@map("visit_pass")
+}
+
+model MasterAffiliation {
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  masterId        String    @map("master_id") @db.Uuid
+  orgId           String    @map("org_id") @db.Uuid
+  status          String    @default("active") // active | suspended | terminated
+  since           DateTime  @db.Date
+  until           DateTime? @db.Date
+  skillTags       String[]  @map("skill_tags")
+  hourlyCostTiyin BigInt    @default(0) @map("hourly_cost_tiyin") // у разных операторов разная
+  objectIds       String[]  @map("object_ids") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  master MasterProfile @relation(fields: [masterId], references: [id])
+  org    Organization  @relation(fields: [orgId], references: [id])
+
+  @@unique([tenantId, masterId, orgId])
+  @@index([tenantId, orgId, status])
+  @@map("master_affiliation")
+}
+
+model BuildingStaff {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  buildingId String    @map("building_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  staffRole  StaffRole @map("staff_role")
+  isDuty     Boolean   @default(false) @map("is_duty")
+  isBackup   Boolean   @default(false) @map("is_backup") // резервный согласующий — обязателен для active
+  skillTags  String[]  @map("skill_tags")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building @relation(fields: [buildingId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, buildingId, userId, staffRole])
+  @@index([tenantId, buildingId, staffRole])
+  @@map("building_staff")
+}
+
+model BuildingEquipment {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  buildingId     String    @map("building_id") @db.Uuid
+  commonZoneId   String?   @map("common_zone_id") @db.Uuid
+  equipmentType  String    @map("equipment_type")
+  model          String?
+  serial         String?
+  commissionedAt DateTime? @map("commissioned_at") @db.Date
+  intervalDays   Int?      @map("interval_days") // регламент ТО; полноценный SERVICE_INTERVAL — в своём майлстоуне
+  lastServiceAt  DateTime? @map("last_service_at") @db.Date
+  isLicensed     Boolean   @default(false) @map("is_licensed") // газ, лифты — мастерам платформы не назначается
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building @relation(fields: [buildingId], references: [id])
+
+  @@index([tenantId, buildingId])
+  @@map("building_equipment")
+}
+
+model BuildingObservation {
+  id             String              @id @db.Uuid
+  tenantId       String              @map("tenant_id") @db.Uuid
+  buildingId     String              @map("building_id") @db.Uuid
+  commonZoneId   String?             @map("common_zone_id") @db.Uuid
+  unitId         String?             @map("unit_id") @db.Uuid
+  authorUserId   String              @map("author_user_id") @db.Uuid
+  source         ObservationSource   @default(walkthrough)
+  categoryId     String              @map("category_id") // справочник A-44
+  severity       ObservationSeverity @default(housekeeping)
+  photoIds       String[]            @map("photo_ids") @db.Uuid
+  geoLat         Decimal?            @map("geo_lat") @db.Decimal(9, 6)
+  geoLng         Decimal?            @map("geo_lng") @db.Decimal(9, 6)
+  comment        String?
+  status         String              @default("open") // open | routed | resolved | rejected
+  routedTo       String?             @map("routed_to") // task | defect | order | contractor | journal
+  routedEntityId String?             @map("routed_entity_id") @db.Uuid
+  resolvedAt     DateTime?           @map("resolved_at") @db.Timestamptz()
+  resolvedPhotoId String?            @map("resolved_photo_id") @db.Uuid // CHECK: status=resolved ⇒ NOT NULL
+  clientOpUuid   String?             @map("client_op_uuid") @db.Uuid // офлайн-фиксация на обходе
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+
+  building Building @relation(fields: [buildingId], references: [id])
+  unit     Unit?    @relation(fields: [unitId], references: [id])
+
+  @@unique([tenantId, clientOpUuid])
+  @@index([tenantId, buildingId, status])
+  @@index([tenantId, commonZoneId, createdAt]) // дедупликация по зоне за N дней
+  @@map("building_observation")
+}
+
+model BuildingAnnouncement {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  buildingId   String    @map("building_id") @db.Uuid
+  kind         String    @default("notice") // notice | shutdown | emergency
+  audience     String    @default("building") // building | entrance | riser | units
+  unitIds      String[]  @map("unit_ids") @db.Uuid
+  publishAt    DateTime  @map("publish_at") @db.Timestamptz()
+  body         String
+  authorUserId String    @map("author_user_id") @db.Uuid
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz()
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building @relation(fields: [buildingId], references: [id])
+
+  @@index([tenantId, buildingId, publishAt])
+  @@map("building_announcement")
+}
+
+model SlaPolicy {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  operatorOrgId   String   @map("operator_org_id") @db.Uuid
+  buildingId      String?  @map("building_id") @db.Uuid // null = политика по умолчанию для всех объектов
+  categoryId      String?  @map("category_id")
+  priority        String   @default("normal") // critical | high | normal | low
+  responseMin     Int      @map("response_min")
+  arrivalMin      Int      @map("arrival_min")
+  resolutionMin   Int      @map("resolution_min")
+  workingHoursOnly Boolean @default(true) @map("working_hours_only")
+  escalationChain Json     @default("[]") @map("escalation_chain")
+  penaltyTiyin    BigInt?  @map("penalty_tiyin")
+  appliesToScope  String   @default("both") @map("applies_to_scope") // private | common_area | both
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  operator Organization @relation(fields: [operatorOrgId], references: [id])
+  building Building?    @relation(fields: [buildingId], references: [id])
+  orders   Order[]
+
+  @@index([tenantId, operatorOrgId, buildingId])
+  @@map("sla_policy")
+}
+
+model OperatorSubscription {
+  id                String           @id @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  operatorOrgId     String           @map("operator_org_id") @db.Uuid
+  plan              SubscriptionPlan @default(free)
+  tenantKind        TenantKind       @map("tenant_kind")
+  billingUnit       BillingUnit      @default(per_object) @map("billing_unit") // параметр 139
+  unitsBilled       Int              @default(1) @map("units_billed") // per_object → 1; per_unit → число помещений
+  priceTiyin        BigInt           @default(300000000) @map("price_tiyin") // 3 000 000 сум за единицу тарификации (параметр 138)
+  periodFrom        DateTime         @map("period_from") @db.Timestamptz()
+  periodTo          DateTime         @map("period_to") @db.Timestamptz()
+  status            String           @default("active") // active | past_due | cancelled
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+
+  operator Organization @relation(fields: [operatorOrgId], references: [id])
+
+  @@index([tenantId, operatorOrgId, periodFrom])
+  @@map("operator_subscription")
+}
+
+// ЗАМЕТКА к майлстоуну планировщика: модель Shift ещё не заведена (появляется вместе с планировщиком).
+// При её создании она ОБЯЗАНА содержать employer_org_id (uuid, nullable) — владельца смены,
+// и EXCLUDE-ограничение на пересечение (master_id, hours) среди смен с непустым employer_org_id
+// (DEV-02 §4.4 п.11, DEV-15 §7.8.4). Без этого мультиаффилиация мастера ломается.

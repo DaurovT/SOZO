@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root{
+      --bg:#F6F6F8; --surface:#FFFFFF; --text:#141518; --textSecondary:#8A8A93; --textTertiary:#B4B4BD;
+      --accent:#FEB70F; --onAccent:#141518; --success:#2FA36B; --warning:#F08C1E; --error:#E0483D;
+      --info:#3D6BF5; --fresh:#7A5AF8; --border:#ECECF0; --divider:#F2F2F5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;line-height:1.4}
+    a{color:var(--accent)} a:hover{color:#E0A00A}
+    .h1{font-size:24px;font-weight:600} .h2{font-size:20px;font-weight:600}
+    .body{font-size:16px} .dense{font-size:14px} .cap{font-size:13px;color:var(--textSecondary)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 8px;font-size:13px}
+    .side{width:240px;background:var(--surface);border-right:1px solid var(--border)}
+    .navitem{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:14px;color:var(--textSecondary)}
+    .navitem--active{background:rgba(254,183,15,.10);color:var(--text);font-weight:600}
+    table{border-collapse:collapse;width:100%}
+    th{font-size:13px;font-weight:600;color:var(--textSecondary);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+    td{font-size:14px;padding:10px 12px}
+    tbody tr:nth-child(even){background:var(--bg)}
+
+<div style="padding:24px;display:flex;flex-direction:column;gap:16px;min-height:980px">
+  <div style="display:flex;align-items:flex-end;gap:16px">
+    <div>
+      <div class="h1">Настройки объекта</div>
+      <div class="cap" style="margin-top:4px">ЖК Сокол · Амира Темура, 15</div>
+    </div>
+    <span class="chip" style="background:var(--border);color:var(--textSecondary);margin-left:auto">Проверен · не активирован</span>
+  </div>
+
+  <!-- чек-лист готовности -->
+  <div class="card" style="padding:16px;border:1px solid rgba(240,140,30,.35);background:rgba(240,140,30,.05)">
+    <div class="h2" style="font-size:17px;margin-bottom:12px">Что нужно для активации</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2FA36B" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+        <div class="dense">Назначен согласующий доступ — <b>Пётр Иванов, консьерж</b></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2FA36B" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+        <div class="dense">Заполнен реестр помещений — <b>300 квартир</b></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E0483D" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+        <div class="dense" style="color:var(--error)">Не назначен резервный согласующий</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E0483D" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+        <div class="dense" style="color:var(--error)">Не указан круглосуточный аварийный телефон</div>
+      </div>
+    </div>
+    <button style="height:44px;padding:0 24px;border-radius:8px;border:none;background:var(--border);color:var(--textSecondary);font-size:15px;font-weight:600;margin-top:16px" disabled>Активировать объект</button>
+  </div>
+
+  <!-- контакты -->
+  <div class="card" style="padding:16px">
+    <div class="h2" style="font-size:17px;margin-bottom:16px">Контакты</div>
+    <div style="display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:16px">
+      <div>
+        <div class="cap" style="margin-bottom:4px">Круглосуточный аварийный телефон</div>
+        <div style="height:36px;border:1.5px solid var(--error);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px;color:var(--textSecondary)">+998 __ ___ __ __</div>
+        <div class="cap" style="color:var(--error);margin-top:4px">Обязательно: по нему звонит система при аварийном вскрытии</div>
+      </div>
+      <div>
+        <div class="cap" style="margin-bottom:4px">Диспетчерская</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">+998 71 123 45 67</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- доступ -->
+  <div class="card" style="padding:16px">
+    <div class="h2" style="font-size:17px;margin-bottom:16px">Правила доступа</div>
+    <div style="display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:16px">
+      <div>
+        <div class="cap" style="margin-bottom:4px">Часы работ</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">08:00 — 20:00</div>
+      </div>
+      <div>
+        <div class="cap" style="margin-bottom:4px">Шумные работы</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">09:00 — 19:00</div>
+      </div>
+      <div>
+        <div class="cap" style="margin-bottom:4px">Проход от входа до квартиры</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">12 мин</div>
+        <div class="cap" style="margin-top:4px">Учитывается в планировании выездов</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- первая рука -->
+  <div class="card" style="padding:16px">
+    <div class="h2" style="font-size:17px;margin-bottom:16px">Первая рука</div>
+    <div style="display:grid;grid-template-columns:repeat(2, minmax(0,1fr));gap:16px">
+      <div>
+        <div class="cap" style="margin-bottom:4px">Окно в рабочее время</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">30 минут</div>
+      </div>
+      <div>
+        <div class="cap" style="margin-bottom:4px">Окно в нерабочее время</div>
+        <div style="height:36px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;padding:0 12px;font-size:14px">10 минут</div>
+      </div>
+    </div>
+    <div class="card" style="padding:12px;background:var(--bg);border:none;margin-top:16px">
+      <div class="cap">Работы по общему имуществу окна не имеют — они всегда остаются у вашей службы и мастерам платформы не передаются.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic { renderVals(){ return {}; } }
+</script>
+</body>
+</html>

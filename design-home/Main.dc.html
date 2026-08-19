@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root{
+      --bg:#F6F6F8; --surface:#FFFFFF; --text:#141518; --textSecondary:#8A8A93; --textTertiary:#B4B4BD;
+      --accent:#FEB70F; --onAccent:#141518; --success:#2FA36B; --warning:#F08C1E; --error:#E0483D;
+      --info:#3D6BF5; --fresh:#7A5AF8; --border:#ECECF0; --divider:#F2F2F5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;line-height:1.4}
+    a{color:var(--accent)} a:hover{color:#E0A00A}
+    .h1{font-size:24px;font-weight:600} .h2{font-size:20px;font-weight:600}
+    .body{font-size:16px} .dense{font-size:14px} .cap{font-size:13px;color:var(--textSecondary)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px}
+    .chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 8px;font-size:13px}
+    .side{width:240px;background:var(--surface);border-right:1px solid var(--border)}
+    .navitem{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:14px;color:var(--textSecondary)}
+    .navitem--active{background:rgba(254,183,15,.10);color:var(--text);font-weight:600}
+    table{border-collapse:collapse;width:100%}
+    th{font-size:13px;font-weight:600;color:var(--textSecondary);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+    td{font-size:14px;padding:10px 12px}
+    tbody tr:nth-child(even){background:var(--bg)}
+    .num{font-variant-numeric:tabular-nums;text-align:right}
+  </style>
+</helmet>
+
+<div style="display:flex;min-height:900px">
+  <!-- сайдбар -->
+  <div class="side" style="padding:16px;display:flex;flex-direction:column;gap:24px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="width:28px;height:28px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#141518" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>
+      </div>
+      <div>
+        <div style="font-size:14px;font-weight:600">Кабинет эксплуатации</div>
+        <div class="cap">УК «Сокол»</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="navitem navitem--active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Дашборд
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>
+        Наряды-допуски
+        <span class="chip" style="margin-left:auto;background:rgba(224,72,61,.12);color:var(--error);font-weight:600">3</span>
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        Первая рука
+        <span class="chip" style="margin-left:auto;background:rgba(254,183,15,.14);color:#8a6200;font-weight:600">2</span>
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16"/><path d="M7 20V9l5-4 5 4v11"/></svg>
+        Заявки по дому
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M3 12h18"/></svg>
+        Замечания и обходы
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        Отключения
+      </div>
+      <div class="navitem">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+        Настройки объекта
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:auto;padding:12px;background:var(--bg);border-style:dashed">
+      <div class="cap" style="color:var(--text);font-weight:600">Тариф: Доступ</div>
+      <div class="cap" style="margin-top:4px">Подключение бесплатно. Вы получаете 5% с частных заявок жителей.</div>
+    </div>
+  </div>
+
+  <!-- контент -->
+  <div style="flex-grow:1;padding:24px;display:flex;flex-direction:column;gap:24px">
+    <div style="display:flex;align-items:center;gap:16px">
+      <div>
+        <div class="h1">Портфель объектов</div>
+        <div class="cap" style="margin-top:4px">3 объекта · данные на 19 августа, 14:20</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button style="height:36px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);font-size:14px;color:var(--text)">Все объекты</button>
+        <button style="height:36px;padding:0 16px;border-radius:8px;border:none;background:var(--accent);color:var(--onAccent);font-size:14px;font-weight:600">Подключить объект</button>
+      </div>
+    </div>
+
+    <!-- сводка -->
+    <div style="display:grid;grid-template-columns:repeat(4, minmax(0,1fr));gap:16px">
+      <div class="card" style="padding:16px">
+        <div class="cap">Нарядов на согласовании</div>
+        <div class="h1" style="margin-top:8px">3</div>
+        <div class="cap" style="margin-top:4px;color:var(--error)">1 просрочен</div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div class="cap">Критичные зоны</div>
+        <div class="h1" style="margin-top:8px">1</div>
+        <div class="cap" style="margin-top:4px">авто-согласия не будет</div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div class="cap">Открытых замечаний</div>
+        <div class="h1" style="margin-top:8px">12</div>
+        <div class="cap" style="margin-top:4px;color:var(--error)">1 аварийное</div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div class="cap">Начислено за месяц</div>
+        <div class="h1" style="margin-top:8px;font-variant-numeric:tabular-nums">142 500</div>
+        <div class="cap" style="margin-top:4px">сум сервисного сбора</div>
+      </div>
+    </div>
+
+    <!-- таблица объектов -->
+    <div class="card" style="overflow:hidden">
+      <div style="padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center">
+        <div class="h2">Объекты</div>
+        <div class="cap" style="margin-left:auto">Светофор: красный — требует действия сегодня</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px"></th><th>Объект</th><th>Статус</th><th class="num">Наряды</th>
+            <th class="num">Отключения</th><th class="num">Замечания</th><th>Что горит</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span style="display:block;width:10px;height:10px;border-radius:999px;background:var(--error)"></span></td>
+            <td><div style="font-weight:600">ЖК Сокол</div><div class="cap">Амира Темура, 15 · 300 квартир</div></td>
+            <td><span class="chip" style="background:rgba(47,163,107,.12);color:var(--success)">Активен</span></td>
+            <td class="num">2</td><td class="num">1</td><td class="num">9</td>
+            <td class="dense" style="color:var(--error)">Аварийное замечание в подвале</td>
+          </tr>
+          <tr>
+            <td><span style="display:block;width:10px;height:10px;border-radius:999px;background:var(--warning)"></span></td>
+            <td><div style="font-weight:600">ЖК Чинор</div><div class="cap">Мустакиллик, 4 · 180 квартир</div></td>
+            <td><span class="chip" style="background:rgba(47,163,107,.12);color:var(--success)">Активен</span></td>
+            <td class="num">1</td><td class="num">0</td><td class="num">3</td>
+            <td class="dense" style="color:#8a6200">Наряд в щитовую ждёт решения</td>
+          </tr>
+          <tr>
+            <td><span style="display:block;width:10px;height:10px;border-radius:999px;background:var(--textTertiary)"></span></td>
+            <td><div style="font-weight:600">ЖК Навруз</div><div class="cap">Бунёдкор, 22 · 96 квартир</div></td>
+            <td><span class="chip" style="background:var(--border);color:var(--textSecondary)">Проверяется</span></td>
+            <td class="num">0</td><td class="num">0</td><td class="num">0</td>
+            <td class="dense" style="color:var(--textSecondary)">Не назначен резервный согласующий</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
