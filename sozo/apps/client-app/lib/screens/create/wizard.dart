@@ -83,6 +83,9 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         _catalog = catalog;
         _addresses = ((addresses['addresses'] as List?) ?? const []).cast<Map<String, dynamic>>();
         if (restored != null) _restore(restored);
+        // Чистим после восстановления И после повтора: оба кладут в черновик
+        // идентификаторы позиций, которые мог унести новый релиз прайса
+        _dropUnknownItems(catalog);
         // Основной адрес подставляется в новую заявку по умолчанию (C-29)
         if (_draft.address.isEmpty) {
           final primary = _addresses.where((a) => a['primary'] == true).firstOrNull ?? _addresses.firstOrNull;
@@ -99,6 +102,23 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
     } on ApiError catch (e) {
       if (mounted) setState(() { _error = e.message; _loading = false; });
     }
+  }
+
+  /// Выбрасывает из черновика позиции, которых больше нет в каталоге.
+  ///
+  /// Черновик и повтор заявки хранят идентификаторы позиций прайса, а прайс
+  /// живёт релизами: вышел новый — старые идентификаторы перестали существовать.
+  /// Без этой чистки такой черновик доходил до отправки и падал на сервере,
+  /// причём человек не понимал, какую именно работу у него не приняли.
+  void _dropUnknownItems(Map<String, dynamic> catalog) {
+    final known = <String>{};
+    for (final c in ((catalog['categories'] as List?) ?? const []).cast<Map<String, dynamic>>()) {
+      for (final i in ((c['items'] as List?) ?? const []).cast<Map<String, dynamic>>()) {
+        final id = i['id'];
+        if (id is String) known.add(id);
+      }
+    }
+    _draft.items.removeWhere((id, _) => !known.contains(id));
   }
 
   void _restore(OrderDraft d) {

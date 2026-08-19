@@ -346,7 +346,7 @@ export class ClientOrdersController {
   async message(@Param('id') id: string, @Body() b: { text?: string }, @Req() req: AppRequest) {
     const order = await this.mine(req, id);
     const text = b?.text?.trim();
-    if (!text) throw new BadRequestException({ code: 'TEXT_REQUIRED' });
+    if (!text) throw new BadRequestException({ code: 'TEXT_REQUIRED', message: 'Напишите сообщение' });
     if (order.masterId) {
       this.notifications.push({
         masterId: order.masterId,
@@ -421,7 +421,7 @@ export class ClientOrdersController {
     const order = await this.mine(req, id);
     const provider = (b?.provider ?? 'payme') as NonNullable<OrderRecord['payment']>['provider'];
     if (!['payme', 'click', 'uzum', 'card', 'cash'].includes(provider)) {
-      throw new BadRequestException({ code: 'PROVIDER_INVALID' });
+      throw new BadRequestException({ code: 'PROVIDER_INVALID', message: 'Выберите способ оплаты' });
     }
     if (order.payment?.status === 'succeeded') {
       return { ok: true, payment: order.payment, alreadyPaid: true };

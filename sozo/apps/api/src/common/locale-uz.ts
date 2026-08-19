@@ -6,6 +6,26 @@
  * прочности, а не недоделка — пустой ответ хуже непереведённого.
  */
 export const UZ: Record<string, string> = {
+  'Недопустимое имя файла':
+    'Fayl nomi noto‘g‘ri',
+  'Этой услуги нет в действующем прайсе — выберите работу заново':
+    'Bu xizmat amaldagi narxnomada yo‘q — ishni qaytadan tanlang',
+  'Менять можно только черновик релиза: действующий прайс нередактируем':
+    'Faqat qoralama relizni o‘zgartirish mumkin: amaldagi narxnoma tahrirlanmaydi',
+  'Напишите сообщение':
+    'Xabar yozing',
+  'Выберите способ оплаты':
+    'To‘lov usulini tanlang',
+  'Введите код':
+    'Kodni kiriting',
+  'Не указано событие':
+    'Hodisa ko‘rsatilmagan',
+  'Адрес не найден':
+    'Manzil topilmadi',
+  'Выберите точку':
+    'Nuqtani tanlang',
+  'Раздел доступен только сотрудникам организаций':
+    'Bo‘lim faqat tashkilot xodimlari uchun',
   '+{0} сум по заявке {1} — целиком вам': '+{0} so‘m {1} buyurtma bo‘yicha — to‘liq sizga',
   '100 − 25 × (переделки по вине)': '100 − 25 × (aybingiz bilan qayta ishlash)',
   '{0} — заявка ушла другому мастеру': '{0} — buyurtma boshqa ustaga ketdi',

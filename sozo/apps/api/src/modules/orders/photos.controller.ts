@@ -71,7 +71,7 @@ export class PhotosController {
   @Header('Cache-Control', 'private, max-age=3600')
   serve(@Param('file') file: string, @Query('token') token: string | undefined, @Res() res: Response) {
     if (!token || !verifyJwt(token)) throw new UnauthorizedException({ code: 'TOKEN_INVALID' });
-    if (!/^[a-f0-9-]+\.(jpg|png|webp)$/i.test(file)) throw new BadRequestException({ code: 'FILE_NAME_INVALID' });
+    if (!/^[a-f0-9-]+\.(jpg|png|webp)$/i.test(file)) throw new BadRequestException({ code: 'FILE_NAME_INVALID', message: 'Недопустимое имя файла' });
     const path = resolve(PHOTO_DIR, file);
     if (!path.startsWith(PHOTO_DIR) || !existsSync(path)) throw new NotFoundException({ code: 'PHOTO_NOT_FOUND' });
     const ext = file.split('.').pop()!.toLowerCase();

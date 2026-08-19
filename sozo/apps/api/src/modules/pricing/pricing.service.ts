@@ -313,7 +313,7 @@ export class PricingService {
    */
   activate(releaseId: string, opts: { secondAdminConfirmed?: boolean; overrideEconomics?: boolean; overrideComment?: string }) {
     const draft = this.get(releaseId);
-    if (draft.status !== 'draft') throw new BadRequestException({ code: 'NOT_A_DRAFT' });
+    if (draft.status !== 'draft') throw new BadRequestException({ code: 'NOT_A_DRAFT', message: 'Менять можно только черновик релиза: действующий прайс нередактируем' });
 
     // Блокирующий валидатор: сохранение «в минус» — только с комментарием в аудит (A-05)
     const econ = this.unitEconomics(releaseId);

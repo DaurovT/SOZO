@@ -769,7 +769,7 @@ export class ClientB2CController {
   @Post('promo/check')
   async check(@Body() b: { code?: string }, @Req() req: AppRequest) {
     const code = b?.code?.trim();
-    if (!code) throw new BadRequestException({ code: 'CODE_REQUIRED' });
+    if (!code) throw new BadRequestException({ code: 'CODE_REQUIRED', message: 'Введите код' });
     // evaluate, а не redeem: промокод списывается при использовании,
     // иначе проверка на экране «Итог» сожгла бы его без заявки
     const phone = this.phone(req);
@@ -1051,7 +1051,7 @@ export class ClientB2CController {
    */
   @Post('telemetry')
   track(@Body() b: { event?: string; params?: Record<string, unknown> }, @Req() req: AppRequest) {
-    if (!b?.event) throw new BadRequestException({ code: 'EVENT_REQUIRED' });
+    if (!b?.event) throw new BadRequestException({ code: 'EVENT_REQUIRED', message: 'Не указано событие' });
     this.audit.write({
       actorPhone: this.phone(req),
       action: `client_app.${b.event}`,

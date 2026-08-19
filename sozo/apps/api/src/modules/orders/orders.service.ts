@@ -132,7 +132,7 @@ export class OrdersService {
     const release = this.releaseFor(dto);
     const lines = (dto.items ?? []).map((it) => {
       const item = release.items.find((p) => p.id === it.priceItemId);
-      if (!item) throw new BadRequestException({ code: 'PRICE_ITEM_NOT_FOUND', priceItemId: it.priceItemId });
+      if (!item) throw new BadRequestException({ code: 'PRICE_ITEM_NOT_FOUND', message: 'Этой услуги нет в действующем прайсе — выберите работу заново', priceItemId: it.priceItemId });
       const qty = it.qty && it.qty > 0 ? it.qty : 1;
       return {
         priceItemId: item.id,

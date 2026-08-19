@@ -15,6 +15,26 @@
  * работа админки, а не словаря.
  */
 export const EN: Record<string, string> = {
+  'Недопустимое имя файла':
+    'Invalid file name',
+  'Этой услуги нет в действующем прайсе — выберите работу заново':
+    'This service is no longer in the active price list — pick the work again',
+  'Менять можно только черновик релиза: действующий прайс нередактируем':
+    'Only a draft release can be edited: the active price list is immutable',
+  'Напишите сообщение':
+    'Write a message',
+  'Выберите способ оплаты':
+    'Choose a payment method',
+  'Введите код':
+    'Enter the code',
+  'Не указано событие':
+    'No event specified',
+  'Адрес не найден':
+    'Address not found',
+  'Выберите точку':
+    'Select a site',
+  'Раздел доступен только сотрудникам организаций':
+    'This section is for organisation staff only',
   // ---------- Категории каталога: ключ прайса, подпись, подсказка ----------
   'Не знаю, что сломалось': 'I do not know what is broken',
   'Мастер приедет и разберётся': 'A technician will come and work it out',

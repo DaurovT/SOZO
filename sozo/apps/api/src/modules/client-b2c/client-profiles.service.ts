@@ -174,7 +174,7 @@ export class ClientProfilesService {
   deleteAddress(phone: string, id: string): void {
     const p = this.get(phone);
     const i = p.addresses.findIndex((a) => a.id === id);
-    if (i < 0) throw new BadRequestException({ code: 'ADDRESS_NOT_FOUND' });
+    if (i < 0) throw new BadRequestException({ code: 'ADDRESS_NOT_FOUND', message: 'Адрес не найден' });
     const [removed] = p.addresses.splice(i, 1);
     // Удалили основной — основным становится следующий, а не «никакой»
     if (removed.primary && p.addresses.length) p.addresses[0].primary = true;

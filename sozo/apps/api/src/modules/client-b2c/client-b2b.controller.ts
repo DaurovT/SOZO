@@ -141,7 +141,7 @@ export class ClientB2BController {
     @Body() b: { locationId?: string; fullName?: string; role?: string; position?: string; approvalLimitTiyin?: number | null; primary?: boolean },
     @Req() req: AppRequest,
   ) {
-    if (!b?.locationId) throw new BadRequestException({ code: 'LOCATION_REQUIRED' });
+    if (!b?.locationId) throw new BadRequestException({ code: 'LOCATION_REQUIRED', message: 'Выберите точку' });
     const inv = this.crm.issueInvite(this.phone(req), {
       locationId: b.locationId,
       fullName: b.fullName,
@@ -467,7 +467,7 @@ export class ClientB2BController {
   @Get('orders/:id/acceptance')
   async acceptanceInfo(@Param('id') id: string, @Req() req: AppRequest) {
     const order = await this.orders.record('t0', id);
-    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B' });
+    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B', message: 'Раздел доступен только сотрудникам организаций' });
     const { org, role } = this.site(req, order.locationId);
     if (!order.acceptanceCode) {
       order.acceptanceCode = String(Math.floor(1000 + Math.random() * 9000));
@@ -491,7 +491,7 @@ export class ClientB2BController {
   @Post('orders/:id/acceptance')
   async accept(@Param('id') id: string, @Body() b: { note?: string; accept?: boolean; reason?: string }, @Req() req: AppRequest) {
     const order = await this.orders.record('t0', id);
-    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B' });
+    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B', message: 'Раздел доступен только сотрудникам организаций' });
     const { rep } = this.site(req, order.locationId);
     if (!order.acceptanceRequest?.pending) {
       throw new BadRequestException({ code: 'ACCEPTANCE_NOT_REQUESTED', message: 'Мастер ещё не отправил работу на приёмку' });
@@ -571,7 +571,7 @@ export class ClientB2BController {
     @Req() req: AppRequest,
   ) {
     const order = await this.orders.record('t0', orderId);
-    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B' });
+    if (!order.locationId) throw new BadRequestException({ code: 'NOT_B2B', message: 'Раздел доступен только сотрудникам организаций' });
     const { rep, role } = this.site(req, order.locationId);
     const addwork = this.ops.addworkFor(order.id);
     const amount = addwork ? Math.max(...addwork.variants.map((v) => v.totalTiyin)) : order.totalFromTiyin;
