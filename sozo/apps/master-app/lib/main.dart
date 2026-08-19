@@ -1,0 +1,148 @@
+import 'package:flutter/material.dart';
+
+import 'design_tokens.dart';
+import 'widgets/figma_icon.dart';
+import 'i18n.dart';
+import 'screens/wallet_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/onboarding_screen.dart';
+import 'screens/orders_screen.dart';
+import 'screens/outbox_screen.dart';
+import 'screens/profile_extras.dart';
+import 'screens/profile_screen.dart';
+import 'screens/today_screen.dart';
+import 'store/session.dart';
+import 'widgets/app_chrome.dart';
+import 'widgets/common.dart';
+
+/// Единая сессия приложения: токен, профиль, офлайн-очередь.
+/// Один объект на процесс — приложение мастера однопользовательское по определению.
+final session = Session();
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const MasterApp());
+}
+
+class MasterApp extends StatefulWidget {
+  const MasterApp({super.key});
+
+  @override
+  State<MasterApp> createState() => _MasterAppState();
+}
+
+class _MasterAppState extends State<MasterApp> {
+  @override
+  void initState() {
+    super.initState();
+    l10n.load();
+    session.boot();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: t('common.sozoMaster'),
+      debugShowCheckedModeBanner: false,
+      theme: sozoTheme(),
+      // Слушаем и язык: он переключается на ходу, и перерисоваться должно
+      // всё дерево, а не только экран с переключателем.
+      // Ключ по языку: при переключении дерево пересоздаётся целиком, и экраны
+      // заново запрашивают справочники. Без этого подписи стали бы узбекскими,
+      // а причины отказа и вопросы экзамена остались бы в языке, на котором их
+      // загрузили при открытии экрана.
+      home: AnimatedBuilder(
+        key: ValueKey(l10n.code),
+        animation: Listenable.merge([session, l10n]),
+        builder: (context, _) {
+          if (!session.ready) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          if (session.forceUpdate) return const _ForceUpdateScreen();
+          if (session.isAuthorized) return const MasterShell();
+          // Кандидат вошёл, но на линию не выпущен — показываем воронку, а не пустой экран
+          if (session.isOnboarding) return const OnboardingScreen();
+          return const LoginScreen();
+        },
+      ),
+    );
+  }
+}
+
+/// F-60: сломанную сборку закрывают с сервера, не дожидаясь, пока все обновятся
+class _ForceUpdateScreen extends StatelessWidget {
+  const _ForceUpdateScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(SozoSpace.s32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const FigmaIcon('upload', size: 64, color: SozoColors.accent),
+              const SizedBox(height: SozoSpace.s16),
+              Text(
+                session.updateMessage ?? t('common.obnovitePrilojenieChtobyProdol'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, height: 1.35),
+              ),
+              const SizedBox(height: SozoSpace.s8),
+              Text(
+                t('common.ustanovlenaNujna', {'p1': Session.appVersion, 'p2': session.minVersion ?? t('common.novee')}),
+                style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Оболочка с вкладками (DEV-09 §2.1). У «Главной» своя шапка с аватаром —
+/// системный заголовок над ней был бы вторым названием подряд.
+class MasterShell extends StatefulWidget {
+  const MasterShell({super.key});
+
+  @override
+  State<MasterShell> createState() => _MasterShellState();
+}
+
+class _MasterShellState extends State<MasterShell> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    // Шапку каждая вкладка рисует сама — в макете они разной высоты
+    // и с разным содержимым (аватар на главной, заголовок 45 в графике).
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            OfflineBar(
+              outbox: session.outbox,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OutboxScreen())),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _tab,
+                children: [
+                  TodayScreen(onOpenWallet: () => setState(() => _tab = 3)),
+                  const OrdersScreen(),
+                  const ScheduleTab(),
+                  const WalletScreen(),
+                  const ProfileScreen(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: SozoTabBar(index: _tab, onSelect: (i) => setState(() => _tab = i)),
+    );
+  }
+}

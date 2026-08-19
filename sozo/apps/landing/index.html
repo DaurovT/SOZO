@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="SOZO — вызов мастера в Ташкенте: сантехника, электрика, кондиционеры, мелкий ремонт. Приезжаем в согласованное время, цену говорим до начала работ, фото до и после, гарантия 30 дней."
+    />
+    <meta name="theme-color" content="#0B0C0E" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Шрифты подключаем заранее, display=swap — текст виден сразу, без «прыжка». -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Главная картинка героя грузится первой: от неё зависит LCP. -->
+    <link rel="preload" as="image" href="/photos/work/hero-main.webp" fetchpriority="high" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="SOZO — мастер приедет вовремя" />
+    <meta
+      property="og:description"
+      content="Сантехника, электрика, кондиционеры и мелкий ремонт в Ташкенте. Цена до начала работ, фото до и после, гарантия 30 дней."
+    />
+    <meta property="og:image" content="/photos/work/hero-main.webp" />
+
+    <title>SOZO — мастер приедет вовремя. Ташкент</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

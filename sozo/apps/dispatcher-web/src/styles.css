@@ -1,0 +1,1897 @@
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* ---------- Layout ---------- */
+
+.app {
+  display: flex;
+  min-height: 100vh;
+  /* PRD-03: desktop-first, минимальная ширина контента 1440px */
+  min-width: 1440px;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar__logo {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  padding: var(--s16) var(--s16) var(--s12);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+/* «Диспетчерская» рядом с логотипом — подпись, а не часть знака (брендбук) */
+.sidebar__logo-suffix {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-left: 1px solid var(--border);
+  padding-left: var(--s8);
+}
+
+.sidebar__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s12) var(--s8);
+}
+
+.sidebar__section {
+  margin: var(--s24) var(--s8) var(--s8);
+  padding-top: var(--s12);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sidebar__section:first-child {
+  margin-top: var(--s4);
+  padding-top: 0;
+  border-top: none;
+}
+
+.sidebar__link {
+  display: block;
+  padding: var(--s8) var(--s8);
+  border-radius: var(--radius-button);
+  color: var(--text);
+}
+
+.sidebar__link:hover {
+  background: var(--bg);
+}
+
+.sidebar__link.active {
+  background: var(--bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sidebar__footer {
+  border-top: 1px solid var(--border);
+  padding: var(--s12) var(--s16);
+}
+
+.sidebar__user {
+  font-weight: 600;
+  margin-bottom: var(--s4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s24);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s16);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.tile__value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile__label {
+  color: var(--text-secondary);
+  margin-top: var(--s4);
+}
+
+.tile__hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: var(--s4);
+}
+
+/* ---------- Banners ---------- */
+
+.banner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s12) var(--s16);
+  margin-bottom: var(--s16);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.banner--warning {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border-color: var(--warning);
+  color: var(--text);
+}
+
+.banner--error {
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.banner--success {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  border-color: var(--success);
+  color: var(--text);
+}
+
+/* ---------- Tables ---------- */
+
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: var(--s8) var(--s12);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+td {
+  padding: 0 var(--s12);
+  height: 38px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:nth-child(even):not(.row--category) {
+  background: var(--bg);
+}
+
+tr.row--clickable {
+  cursor: pointer;
+}
+
+tr.row--clickable:hover td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.row--category td {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  height: 32px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.cell--missing {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.cell--editable {
+  cursor: text;
+}
+
+.cell--editable:hover {
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+.cell-input {
+  width: 110px;
+  height: 28px;
+  padding: 0 var(--s8);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-button);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.cell-input:focus {
+  outline: none;
+}
+
+textarea.cell-input {
+  width: 260px;
+  height: auto;
+  min-height: 56px;
+  padding: var(--s4) var(--s8);
+  font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---------- Badges & chips ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 1px var(--s8);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge--success {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.badge--warning {
+  color: color-mix(in srgb, var(--warning) 60%, var(--text));
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
+.badge--error {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.badge--muted {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+
+.badge--accent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.semibold {
+  font-weight: 600;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0 var(--s8);
+  margin-right: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 var(--s16);
+  border-radius: var(--radius-button);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--bg);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+
+.btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  height: auto;
+  font-weight: 400;
+}
+
+.btn--link:hover {
+  background: none;
+  color: var(--accent-hover);
+}
+
+/* ---------- Forms ---------- */
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s12);
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--s4);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.field textarea {
+  height: auto;
+  min-height: 64px;
+  padding: var(--s8) var(--s12);
+}
+
+.field input[type='file'] {
+  padding: var(--s8) var(--s12);
+  height: auto;
+  color: var(--text-secondary);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field--checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+}
+
+.field--checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--s32);
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-width: 560px;
+  padding: var(--s24);
+}
+
+.modal--wide {
+  max-width: 760px;
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s16);
+}
+
+.modal__header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s8);
+  margin-top: var(--s24);
+}
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  bottom: var(--s24);
+  right: var(--s24);
+  background: var(--text);
+  color: var(--surface);
+  padding: var(--s8) var(--s16);
+  border-radius: var(--radius-button);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 200;
+}
+
+/* ---------- Login ---------- */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.login-card {
+  width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s32);
+}
+
+.login-card h1 {
+  margin: 0 0 var(--s4);
+  font-size: 20px;
+}
+
+.login-card .subtitle {
+  color: var(--text-secondary);
+  margin: 0 0 var(--s24);
+}
+
+.dev-hint {
+  margin-top: var(--s16);
+  padding: var(--s8) var(--s12);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ---------- Misc ---------- */
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: var(--s24) 0 var(--s12);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  row-gap: var(--s8);
+  column-gap: var(--s16);
+}
+
+.kv dt {
+  color: var(--text-secondary);
+}
+
+.kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.state-text {
+  padding: var(--s24);
+  color: var(--text-secondary);
+}
+
+/* ==================== Диспетчерская (PRD-03) ==================== */
+
+/* ---------- Дашборд D-01 ---------- */
+
+.tile--clickable {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: border-color 0.12s ease;
+}
+
+.tile--clickable:hover {
+  border-color: var(--accent);
+}
+
+.tile--alert {
+  border: 2px solid var(--error);
+}
+
+.tile--alert .tile__value {
+  color: var(--error);
+}
+
+/* ---------- Kanban D-02 ---------- */
+
+.kanban {
+  display: flex;
+  gap: var(--s12);
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: var(--s16);
+}
+
+.kanban__column {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 140px);
+}
+
+.kanban__column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  padding: var(--s12) var(--s12) var(--s8);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.kanban__count {
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 var(--s8);
+}
+
+.kanban__cards {
+  padding: var(--s8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s8);
+  overflow-y: auto;
+}
+
+.kanban__empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: var(--s8);
+  text-align: center;
+}
+
+.order-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  padding: var(--s8) var(--s12);
+  cursor: pointer;
+}
+
+.order-card:hover {
+  border-color: var(--accent);
+}
+
+.order-card--emergency {
+  border-left: 3px solid var(--error);
+}
+
+.order-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  margin-bottom: var(--s4);
+}
+
+.order-card__number {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-card__client {
+  font-weight: 600;
+}
+
+.order-card__address {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-card__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  margin-top: var(--s4);
+  font-size: 12px;
+}
+
+.order-card__sum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.order-card__master {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Модал карточки заявки D-06 ---------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s16);
+}
+
+.tab {
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: var(--s8) var(--s12);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-note {
+  margin-top: var(--s12);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cancel-preview {
+  border: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border-radius: var(--radius-card);
+  padding: var(--s12) var(--s16);
+  margin: var(--s12) 0;
+}
+
+.cancel-preview__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s16);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+}
+
+.cancel-preview__note {
+  margin-top: var(--s8);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.order-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s12);
+  flex-wrap: wrap;
+  margin-bottom: var(--s16);
+}
+
+.order-head__sum {
+  margin-left: auto;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s8);
+}
+
+/* ---------- Галерея фото заявки (D-06, PRD-05 §9) ---------- */
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s12);
+  margin-top: var(--s12);
+}
+
+.photo-card__empty,
+.photo-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.photo-card__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  padding: var(--s8);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.photo-card__cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s8);
+  margin-top: var(--s8);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.photo-card__stage {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.photo-card__source {
+  margin-top: var(--s4);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.conditions {
+  margin-top: var(--s16);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-button);
+  padding: var(--s12);
+  background: var(--bg);
+}
+
+.conditions__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--s8);
+}
+
+.conditions__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s4) var(--s16);
+}
+
+.statuslog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.statuslog li {
+  display: flex;
+  gap: var(--s12);
+  padding: var(--s4) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.statuslog li:last-child {
+  border-bottom: none;
+}
+
+.statuslog__time {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.statuslog__reason {
+  color: var(--error);
+}
+
+/* ---------- Новая заявка D-08 ---------- */
+
+.new-order {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: var(--s24);
+  align-items: start;
+}
+
+.urgency-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.urgency-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  padding: var(--s8) var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  cursor: pointer;
+}
+
+.urgency-option input {
+  accent-color: var(--accent);
+}
+
+.urgency-option--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.urgency-option--emergency {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.urgency-option--emergency.urgency-option--selected {
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+
+.urgency-option--emergency input {
+  accent-color: var(--error);
+}
+
+.price-picker__list {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  margin-top: var(--s8);
+}
+
+.price-picker__category {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  padding: var(--s4) var(--s12);
+  border-bottom: 1px solid var(--border);
+}
+
+.price-picker__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: var(--s4) var(--s12);
+  cursor: pointer;
+}
+
+.price-picker__item:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.price-picker__item .num {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s4);
+}
+
+.stepper button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.stepper button:hover {
+  background: var(--bg);
+}
+
+.stepper__qty {
+  min-width: 24px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.estimate-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s16);
+  margin-top: var(--s16);
+  padding-top: var(--s12);
+  border-top: 1px solid var(--border);
+}
+
+.estimate-total__value {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Планировщик: ленты D-05, ёмкость D-04, лист ожидания D-18 ---------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s12);
+  margin-bottom: var(--s16);
+}
+
+.toolbar .field {
+  width: 170px;
+}
+
+.card--warning {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+/* Цвет брони по приоритету очереди (ТЗ 17.3) — общий для ленты и легенды. */
+.tone--error {
+  background: var(--error);
+}
+
+.tone--accent {
+  background: var(--accent);
+}
+
+.tone--warning {
+  background: var(--warning);
+}
+
+.tone--success {
+  background: var(--success);
+}
+
+.tone--muted {
+  background: var(--text-secondary);
+}
+
+/* ---------- Панель правил планирования (ТЗ 17.3) ---------- */
+
+.rules {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s12) var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.rules__summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rules__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--s4) var(--s16);
+  margin-top: var(--s12);
+}
+
+.rules__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+}
+
+.rules__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.rules__note {
+  margin-top: var(--s12);
+  padding-top: var(--s8);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.lanes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.lanes__row {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  border-top: 1px solid var(--border);
+}
+
+.lanes__row--head {
+  border-top: none;
+  background: var(--bg);
+}
+
+.lanes__name {
+  padding: var(--s8) var(--s12);
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.lanes__title {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  font-weight: 600;
+}
+
+.lanes__zone {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lanes__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  margin-top: 2px;
+}
+
+.lanes__empty {
+  padding: var(--s24);
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+}
+
+.lane-load {
+  position: relative;
+  height: 6px;
+  margin-top: var(--s4);
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* Засечка потолка плана дня (80% смены) — видно, сколько ёмкости осталось. */
+.lane-load__cap-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-secondary);
+}
+
+.lane-capacity {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lane-capacity--full {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.lane-load__bar {
+  height: 100%;
+  background: var(--success);
+}
+
+.lane-load__bar--cap {
+  background: var(--error);
+}
+
+.lane-load__text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lanes__track {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  overflow: hidden;
+}
+
+.lanes__track--head {
+  height: 22px;
+}
+
+.lanes__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border);
+}
+
+.lanes__tick-label {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lane-shift {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: var(--radius-button);
+  background: var(--bg);
+}
+
+/* Ближайшие 2 часа заморожены для автоматики (параметр №29). */
+.lane-freeze {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--text-secondary) 16%, transparent);
+  border-right: 1px dashed var(--text-secondary);
+  padding-left: 3px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Ночь 22:00–07:00 — плановые заявки не бронируются (ТЗ 17.3). */
+.lane-night {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--text-secondary) 10%, transparent),
+    color-mix(in srgb, var(--text-secondary) 10%, transparent) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.lane-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--error);
+  z-index: 3;
+}
+
+.lane-booking {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  z-index: 2;
+  border: none;
+  border-radius: var(--radius-button);
+  padding: 0 var(--s4);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--surface);
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.lane-booking.tone--warning {
+  color: var(--text);
+}
+
+.lane-booking:hover {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s16);
+  margin-top: var(--s12);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+}
+
+.legend__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.legend__swatch--freeze {
+  background: color-mix(in srgb, var(--text-secondary) 16%, transparent);
+  border: 1px dashed var(--text-secondary);
+}
+
+.legend__swatch--night {
+  border: 1px solid var(--border);
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--text-secondary) 24%, transparent),
+    color-mix(in srgb, var(--text-secondary) 24%, transparent) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+/* ---------- Гистограмма занятости по часам (D-04) ---------- */
+
+.histogram {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s4);
+  height: 180px;
+  padding: var(--s16);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.histogram__col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.histogram__plot {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  flex: 1;
+}
+
+.histogram__stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+}
+
+.histogram__free {
+  background: var(--border);
+}
+
+.histogram__busy {
+  background: var(--accent);
+}
+
+.histogram__hour {
+  margin-top: var(--s4);
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.histogram__col--full .histogram__busy {
+  background: var(--error);
+}
+
+.histogram__col--full .histogram__hour {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* Подпись под часом: «заморожено» / «ночь» — где плановые не берутся. */
+.histogram__note {
+  height: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.histogram__col--frozen .histogram__plot,
+.histogram__col--night .histogram__plot {
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  border-radius: 3px 3px 0 0;
+}
+
+.histogram__col--night .histogram__plot {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--text-secondary) 10%, transparent),
+    color-mix(in srgb, var(--text-secondary) 10%, transparent) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.histogram__col--frozen .histogram__busy,
+.histogram__col--night .histogram__busy {
+  background: var(--text-secondary);
+}
+
+/* ---------- Приоритеты очереди (D-04, ТЗ 17.3) ---------- */
+
+.queue-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s4) var(--s16);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s16);
+}
+
+.queue-levels__item {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+}
+
+.queue-levels__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.queue-levels__num {
+  min-width: 14px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Вкладка «Слот» карточки заявки ---------- */
+
+/* Расчёт брони: нормо-часы + дорожный буфер → слоты по 30 мин. */
+.slot-calc {
+  margin-top: var(--s12);
+  padding: var(--s8) var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+}
+
+/* Почему окон нет — причины вместо пустоты. */
+.slot-empty {
+  padding: var(--s12);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+  color: var(--text-secondary);
+}
+
+.slot-empty__list {
+  margin: var(--s8) 0;
+  padding-left: var(--s24);
+}
+
+.slot-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s8);
+}
+
+.slot-window {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  height: auto;
+  padding: var(--s8) var(--s12);
+}
+
+.slot-window__label {
+  font-variant-numeric: tabular-nums;
+}
+
+.slot-window__hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.slot-window--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.slot-window--active:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Кандидат авто-подбора без смены на дату (ТЗ 7.3). */
+.cand-warning {
+  color: var(--error);
+  font-size: 12px;
+}
+
+/* ---------- Операции смены: замены D-12, инциденты D-13, передача смены D-17 ---------- */
+
+/* Счётчик активных протоколов у пункта меню. */
+.sidebar__link--counted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.ops-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  font-weight: 600;
+  margin-bottom: var(--s4);
+}
+
+.ops-card__meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ops-card__actions {
+  margin-top: var(--s12);
+}
+
+.ops-details {
+  margin-top: var(--s8);
+}
+
+.ops-details__row {
+  margin-top: var(--s4);
+}
+
+/* Шаги протокола замены: детект → бродкаст → назначение → закрытие (ТЗ 17.3). */
+.protocol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.protocol__step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s12);
+  padding: var(--s12) var(--s16);
+  border-bottom: 1px solid var(--border);
+}
+
+.protocol__step:last-child {
+  border-bottom: none;
+}
+
+.protocol__marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.protocol__step--done .protocol__marker {
+  background: var(--success);
+  border-color: var(--success);
+  color: var(--surface);
+}
+
+.protocol__step--current .protocol__marker {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+
+.protocol__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.protocol__title {
+  font-weight: 600;
+}
+
+.protocol__note {
+  margin-top: var(--s4);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Обратный отсчёт окна бродкаст-оффера. */
+.countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.countdown--over {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* Кандидат на замену: строка со счётом и кнопкой назначения. */
+.cand-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s12);
+  padding: var(--s8) var(--s12);
+  margin-bottom: var(--s8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+}
+
+.cand-row__body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Пункт журнала передачи смены (D-17). */
+.handover-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s12);
+  padding: var(--s12) var(--s16);
+  margin-bottom: var(--s8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.handover-item--accepted {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 6%, var(--surface));
+}
+
+.handover-item__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.handover-item__title {
+  font-weight: 600;
+}
+
+.handover-item__detail {
+  margin-top: var(--s4);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ---------- Качество: жалобы D-10, споры D-11 ---------- */
+
+/* Строка с просроченным SLA видна до чтения цифр. */
+tr.row--warning td {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+}
+
+tr.row--warning.row--clickable:hover td {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
+/* Паттерн-детект: 3+ подтверждённых жалобы на мастера за 30 дней (ТЗ 17.10). */
+.card--error {
+  border-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, var(--surface));
+  margin-bottom: var(--s16);
+}
+
+.pattern-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  padding: var(--s4) 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Текст жалобы — со слов заявителя, переносы сохраняем. */
+.complaint-text {
+  padding: var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+  white-space: pre-wrap;
+}
+
+/* ---------- Карта города D-03 ---------- */
+
+.map-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s16);
+  margin-bottom: var(--s12);
+}
+
+.map-panel__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s8);
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-panel__filter input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--s16);
+  align-items: start;
+}
+
+/* Узкий экран: боковая панель уезжает под карту. */
+@media (max-width: 1100px) {
+  .map-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+ * z-index: 0 создаёт стековый контекст — слои Leaflet (до 1000) остаются под
+ * оверлеем модала карточки заявки (z-index 100).
+ */
+.map-shell {
+  position: relative;
+  z-index: 0;
+}
+
+.map-canvas {
+  height: calc(100vh - 160px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.map-legend {
+  position: absolute;
+  right: var(--s12);
+  bottom: var(--s24);
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s8) var(--s12);
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.map-legend__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  line-height: 1.8;
+}
+
+.map-legend__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.map-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s16);
+}
+
+.map-side__row {
+  padding: var(--s8) var(--s12);
+  margin-top: var(--s8);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-button);
+}
+
+.map-side__row--warning {
+  border-left-color: var(--warning);
+}
+
+.map-side__row--error {
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 6%, var(--surface));
+}
+
+.map-side__title {
+  font-weight: 600;
+}
+
+.map-side__note {
+  margin-top: var(--s4);
+  font-size: 12px;
+  color: var(--text-secondary);
+}

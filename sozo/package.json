@@ -1,0 +1,24 @@
+{
+  "name": "sozo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SOZO (USTAPRO) — платформа технического сервиса. Монорепозиторий по DEV-07.",
+  "workspaces": [
+    "packages/*",
+    "apps/api"
+  ],
+  "scripts": {
+    "api": "node apps/api/dist/main.js",
+    "admin": "npm run dev --prefix apps/admin-web",
+    "test": "npm run test -w @sozo/kernel",
+    "build": "npm run build -w @sozo/contracts && npm run build -w @sozo/kernel && npm run build -w @sozo/api",
+    "prisma:validate": "prisma validate --schema prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

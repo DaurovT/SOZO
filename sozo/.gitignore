@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+.dart_tool/
+.idea/
+.vscode/
+apps/client-app/build/
+apps/master-app/build/
+
+# dev-хранилище состояния и фото (до PostgreSQL/S3)
+data/

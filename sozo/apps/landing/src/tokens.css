@@ -1,0 +1,75 @@
+/* DEV-06 — дизайн-токены SOZO. Hex-цвета допустимы ТОЛЬКО в этом файле.
+   Палитра выведена из знака бренда (Figma): янтарь #FEB70F на почти-чёрном #141518. */
+
+:root {
+  /* --- Бренд (брендбук, не зависит от темы) --- */
+  --brand-yellow: #feb70f;
+  --brand-ink: #141518;
+  --brand-paper: #fcfcfb;
+
+  /* --- Тёмная шкала (герой, аварийный блок, подвал) --- */
+  --ink-900: #0b0c0e;
+  --ink-800: #121317;
+  --ink-700: #191b1f;
+  --ink-600: #232529;
+  --ink-500: #33363c;
+
+  /* --- Светлая шкала (основное тело страницы) --- */
+  --bg: #f7f7f5;
+  --bg-soft: #f1f1ee;
+  --surface: #ffffff;
+  --border: #e7e7e3;
+  --border-strong: #d6d6d0;
+
+  /* --- Текст --- */
+  --text: #141518;
+  --text-secondary: #6b6d73;
+  --text-tertiary: #9b9da3;
+  --on-dark: #f6f6f4;
+  --on-dark-secondary: #a8aab0;
+  --on-accent: #141518;
+
+  /* --- Акцент --- */
+  --accent: #feb70f;
+  --accent-hover: #e5a304;
+  --accent-soft: #fff4d6;
+  --accent-line: #f7d98a;
+
+  /* --- Статусы --- */
+  --success: #1f9d61;
+  --warning: #f08c1e;
+  --error: #e0483d;
+  --info: #3d6bf5;
+
+  /* --- Геометрия --- */
+  --header-h: 68px;
+  --radius-button: 10px;
+  --radius-card: 16px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  /* --- Шкала отступов --- */
+  --s4: 4px;
+  --s8: 8px;
+  --s12: 12px;
+  --s16: 16px;
+  --s24: 24px;
+  --s32: 32px;
+  --s48: 48px;
+  --s64: 64px;
+  --s96: 96px;
+
+  /* --- Тени (не сильнее 10% чёрного, DEV-06 §1) --- */
+  --shadow-sm: 0 1px 2px rgb(20 21 24 / 6%);
+  --shadow-md: 0 6px 20px -6px rgb(20 21 24 / 12%);
+  --shadow-lg: 0 24px 60px -20px rgb(20 21 24 / 22%);
+  --shadow-amber: 0 18px 46px -18px rgb(254 183 15 / 55%);
+
+  /* --- Шрифты --- */
+  --font-text: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Manrope', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* --- Движение --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}

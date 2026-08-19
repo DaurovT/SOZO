@@ -1,0 +1,1171 @@
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+/* ---------- Layout ---------- */
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar__logo {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  padding: var(--s16) var(--s16) var(--s12);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+/* «Админ» рядом с логотипом — подпись, а не часть знака (брендбук) */
+.sidebar__logo-suffix {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-left: 1px solid var(--border);
+  padding-left: var(--s8);
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s12);
+  color: var(--text);
+  margin-bottom: var(--s16);
+}
+
+.sidebar__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s12) var(--s8);
+}
+
+.sidebar__section {
+  margin: var(--s24) var(--s8) var(--s8);
+  padding-top: var(--s12);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.sidebar__section:first-child {
+  margin-top: var(--s4);
+  padding-top: 0;
+  border-top: none;
+}
+
+.sidebar__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s8);
+  padding: 6px var(--s8) 6px var(--s16);
+  border-radius: var(--radius-button);
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.sidebar__badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+
+.sidebar__link:hover {
+  color: var(--text);
+}
+
+.sidebar__link:hover {
+  background: var(--bg);
+}
+
+.sidebar__link.active {
+  background: var(--bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Выход в диспетчерскую (PRD-03) — соседнее приложение, отделено чертой. */
+.sidebar__link--external {
+  margin: 0 var(--s8);
+  padding-top: var(--s12);
+  padding-bottom: var(--s12);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text-secondary);
+}
+
+.sidebar__hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sidebar__footer {
+  border-top: 1px solid var(--border);
+  padding: var(--s12) var(--s16);
+}
+
+.sidebar__user {
+  font-weight: 600;
+  margin-bottom: var(--s4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s24);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s16);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--s16);
+  margin-bottom: var(--s16);
+}
+
+.tile__value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile__label {
+  color: var(--text-secondary);
+  margin-top: var(--s4);
+}
+
+.tile__hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: var(--s4);
+}
+
+.tile__value--sm {
+  font-size: 20px;
+}
+
+.card--warning {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border-color: var(--warning);
+}
+
+.card--error {
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border-color: var(--error);
+}
+
+.card--outline-error {
+  border-color: var(--error);
+}
+
+/* Плитка-ссылка: блок дашборда, ведущий на свой экран. */
+.card--link {
+  display: block;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card--link:hover {
+  border-color: var(--accent);
+}
+
+/* ---------- Banners ---------- */
+
+.banner {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s12) var(--s16);
+  margin-bottom: var(--s16);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.banner--warning {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border-color: var(--warning);
+  color: var(--text);
+}
+
+.banner--error {
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.banner--success {
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  border-color: var(--success);
+  color: var(--text);
+}
+
+/* ---------- Tables ---------- */
+
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: var(--s8) var(--s12);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+td {
+  padding: 0 var(--s12);
+  height: 38px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:nth-child(even):not(.row--category) {
+  background: var(--bg);
+}
+
+tr.row--clickable {
+  cursor: pointer;
+}
+
+tr.row--clickable:hover td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.row--category td {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  height: 32px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.neg {
+  color: var(--error);
+}
+
+.semibold {
+  font-weight: 600;
+}
+
+.cell-select {
+  height: 28px;
+  padding: 0 var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.cell-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cell--missing {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.cell--editable {
+  cursor: text;
+}
+
+.cell--editable:hover {
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+.cell-input {
+  width: 110px;
+  height: 28px;
+  padding: 0 var(--s8);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-button);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.cell-input:focus {
+  outline: none;
+}
+
+textarea.cell-input {
+  width: 260px;
+  height: auto;
+  min-height: 56px;
+  padding: var(--s4) var(--s8);
+  font-family: 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.row--warning td {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+/* ---------- Funnel (лиды A-37, онбординг мастеров A-12) ---------- */
+
+.funnel {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(190px, 1fr);
+  gap: var(--s12);
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: var(--s8);
+}
+
+.funnel-col {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s8);
+  min-height: 120px;
+}
+
+.funnel-col__title {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--s4) var(--s4) 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.funnel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  padding: var(--s8) var(--s12);
+  cursor: pointer;
+}
+
+.funnel-card:hover {
+  border-color: var(--accent);
+}
+
+.funnel-card__meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: var(--s4);
+}
+
+/* ---------- Badges & chips ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 1px var(--s8);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge--success {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.badge--warning {
+  color: color-mix(in srgb, var(--warning) 60%, var(--text));
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+}
+
+.badge--error {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.badge--muted {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+
+.badge--accent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.badge--strike {
+  text-decoration: line-through;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0 var(--s8);
+  margin-right: var(--s4);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+/* Пройденный этап таймлайна (дунинг и т.п.) */
+.chip--done {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 var(--s16);
+  border-radius: var(--radius-button);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--bg);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+
+.btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.btn--danger:hover {
+  background: color-mix(in srgb, var(--error) 8%, var(--surface));
+}
+
+.btn--link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  height: auto;
+  font-weight: 400;
+}
+
+.btn--link:hover {
+  background: none;
+  color: var(--accent-hover);
+}
+
+/* ---------- Forms ---------- */
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s12);
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--s4);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--s12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.field textarea {
+  height: auto;
+  min-height: 64px;
+  padding: var(--s8) var(--s12);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Панель фильтров над таблицей (реестр заявок A-01). */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s12);
+  margin-bottom: var(--s16);
+}
+
+.filters .field {
+  min-width: 200px;
+}
+
+.filters .field--grow {
+  flex: 1;
+  min-width: 240px;
+}
+
+.field--checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+}
+
+.field--checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--s32);
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-width: 560px;
+  padding: var(--s24);
+}
+
+.modal--wide {
+  max-width: 760px;
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s16);
+}
+
+.modal__header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s8);
+  margin-top: var(--s24);
+}
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  bottom: var(--s24);
+  right: var(--s24);
+  background: var(--text);
+  color: var(--surface);
+  padding: var(--s8) var(--s16);
+  border-radius: var(--radius-button);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 200;
+}
+
+/* ---------- Login ---------- */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.login-card {
+  width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s32);
+}
+
+.login-card h1 {
+  margin: 0 0 var(--s4);
+  font-size: 20px;
+}
+
+.login-card .subtitle {
+  color: var(--text-secondary);
+  margin: 0 0 var(--s24);
+}
+
+.dev-hint {
+  margin-top: var(--s16);
+  padding: var(--s8) var(--s12);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ---------- Map (A-01 карта клиентов) ---------- */
+
+.map-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s16);
+  margin-bottom: var(--s8);
+}
+
+.map-panel__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s8);
+  cursor: pointer;
+  user-select: none;
+}
+
+.map-panel__filter input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.map-shell {
+  position: relative;
+}
+
+.map-canvas {
+  height: calc(100vh - 120px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.map-legend {
+  position: absolute;
+  right: var(--s12);
+  bottom: var(--s24);
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--s8) var(--s12);
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.map-legend__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  line-height: 1.8;
+}
+
+.map-legend__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ---------- Tabs (карточка мастера A-11) ---------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s16);
+}
+
+.tab {
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: var(--s8) var(--s12);
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- Avatar (плейсхолдер с инициалами) ---------- */
+
+.avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* ---------- Progress (наличный долг к лимиту) ---------- */
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  background: var(--success);
+}
+
+.progress__fill--danger {
+  background: var(--error);
+}
+
+/* ---------- Misc ---------- */
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: var(--s24) 0 var(--s12);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  row-gap: var(--s8);
+  column-gap: var(--s16);
+}
+
+.kv dt {
+  color: var(--text-secondary);
+}
+
+.kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.state-text {
+  padding: var(--s24);
+  color: var(--text-secondary);
+}
+
+/* ---------- Аналитика: P&L (F-007) ---------- */
+
+.pnl {
+  display: flex;
+  flex-direction: column;
+}
+
+.pnl__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s16);
+  padding: var(--s8) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pnl__row:last-child {
+  border-bottom: none;
+}
+
+.pnl__label {
+  color: var(--text-secondary);
+}
+
+.pnl__hint {
+  margin-left: var(--s8);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pnl__value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pnl__row--total {
+  border-top: 1px solid var(--text);
+  border-bottom: none;
+  padding-top: var(--s12);
+  padding-bottom: var(--s12);
+}
+
+.pnl__row--total .pnl__label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pnl__row--total .pnl__value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.pnl--lg .pnl__row--total .pnl__value {
+  font-size: 28px;
+}
+
+.pnl__margin {
+  margin-left: var(--s8);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.card-note {
+  margin-top: var(--s12);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ---------- Аналитика: крупная метрика и диаграммы ---------- */
+
+.metric {
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric__unit {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s8);
+  margin-top: var(--s16);
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr 56px;
+  align-items: center;
+  gap: var(--s12);
+}
+
+.bar-row__label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-row__value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.bar {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.bar__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.bar__fill--success {
+  background: var(--success);
+}
+
+.bar__fill--warning {
+  background: var(--warning);
+}
+
+.bar__fill--error {
+  background: var(--error);
+}
+
+/* Полоса доли внутри ячейки таблицы (упущенный спрос по категориям) */
+.bar-cell {
+  display: grid;
+  grid-template-columns: 1fr 44px;
+  align-items: center;
+  gap: var(--s8);
+  min-width: 140px;
+}
+
+/* Гистограмма по дням: высота колонки задаётся инлайн в пикселях */
+.columns {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s12);
+  overflow-x: auto;
+  padding-bottom: var(--s4);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s4);
+  min-width: 52px;
+}
+
+.column__bar {
+  width: 100%;
+  border-radius: var(--radius-button) var(--radius-button) 0 0;
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.column__value {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.column__label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Плашка с действием: пояснение слева, кнопка справа */
+.banner--actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s16);
+}
+
+/* Список паттернов по мастерам (жалобы, ТЗ 17.10) */
+.plain-list {
+  margin: var(--s8) 0 0;
+  padding-left: var(--s16);
+}
+
+.plain-list li {
+  margin-bottom: var(--s4);
+}
+
+.badge + .badge {
+  margin-left: var(--s4);
+}
+
+/* Чип-уточнение после текста в ячейке (роль инициатора, статус заявителя) */
+.chip--gap {
+  margin-left: var(--s8);
+}
+
+/* ---------- Галерея фото заявки (реестр A-01, PRD-05 §9) ---------- */
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s12);
+  margin-top: var(--s12);
+}
+
+.photo-card__empty,
+.photo-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: var(--bg);
+}
+
+.photo-card__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  padding: var(--s8);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.photo-card__cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s8);
+  margin-top: var(--s8);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.photo-card__stage {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.photo-card__source {
+  margin-top: var(--s4);
+  font-size: 11px;
+  color: var(--text-secondary);
+}

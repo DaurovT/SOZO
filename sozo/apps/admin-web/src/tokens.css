@@ -1,0 +1,25 @@
+/* DEV-06 — дизайн-токены SOZO. Hex-цвета допустимы ТОЛЬКО в этом файле. */
+:root {
+  --bg: #FAF9F5;
+  --surface: #FFFFFF;
+  --text: #1A1915;
+  --text-secondary: #6E6B63;
+  --accent: #C15F3C;
+  --accent-hover: #A84E2F;
+  --success: #7D9B76;
+  --warning: #D4A27F;
+  --error: #B3563E;
+  --border: #E8E5DD;
+  --radius-card: 12px;
+  --radius-button: 8px;
+  --s4: 4px;
+  --s8: 8px;
+  --s12: 12px;
+  --s16: 16px;
+  --s24: 24px;
+  --s32: 32px;
+  /* Бренд SOZO (брендбук): фирменные цвета логотипа — не зависят от темы UI */
+  --brand-yellow: #FEB70F;
+  --brand-ink: #141518;
+  --brand-paper: #FCFCFB;
+}

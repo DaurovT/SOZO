@@ -1,0 +1,16 @@
+{
+  "name": "@sozo/contracts",
+  "version": "0.1.0",
+  "description": "Единственный источник типов API (DEV-07 §1): enum'ы DEV-03, схемы запросов. Из них генерируются OpenAPI и Dart-модели.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

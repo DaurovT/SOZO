@@ -1,0 +1,599 @@
+// SOZO — схема БД ядра (M0-E2-S1). Источник: DEV-02 (ER), ТЗ v2.25 §3.
+// Соглашения (DEV-02): PK uuid v7 (генерируется приложением из kernel/uuid);
+// tenant_id NOT NULL во всех таблицах и во всех уникальных ключах; деньги — BIGINT в тийинах;
+// статусы — enum, переходы валидирует ТОЛЬКО сервис статусных машин (DEV-10).
+// Группы, не вошедшие в M0 (склад, лояльность, планировщик, паспорт техники и пр.),
+// добавляются миграциями в своих майлстоунах — см. DEV-02 §1 полный перечень 51 сущности.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums (коды — DEV-03 / DEV-10) ----------
+
+enum OrderType {
+  b2c
+  b2b
+  warranty
+  from_defect
+  inspection
+}
+
+enum OrderStatus {
+  new
+  estimated
+  pending_approval
+  approved
+  assigned
+  master_departed
+  in_progress
+  addwork_approval
+  completed
+  verified
+  awaiting_payment
+  closed
+  rated
+  cancelled
+  dispute
+}
+
+enum OrderPause {
+  awaiting_materials
+  tech_break
+  blocked_third_party
+}
+
+enum Urgency {
+  normal
+  urgent
+  emergency
+}
+
+enum PaymentChannel {
+  subscription
+  invoice
+  online
+  cash
+}
+
+enum PhotoStage {
+  before
+  during
+  after
+  receipt
+  defect
+}
+
+enum QuoteKind {
+  initial
+  approved
+  additional
+  conservation
+}
+
+enum ReleaseStatus {
+  draft
+  scheduled
+  active
+  archived
+}
+
+enum DefectStatus {
+  new
+  pending_approval
+  approved
+  postponed
+  rejected
+  resolved
+}
+
+enum RoleKind {
+  b2c_client
+  location_employee
+  location_manager
+  org_manager
+  org_owner
+  master
+  dispatcher
+  accountant
+  admin
+}
+
+// ---------- Оргструктура и пользователи ----------
+
+model Organization {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  name          String
+  inn           String
+  vatPayer      Boolean  @default(false) @map("vat_payer")
+  vatRate       Int?     @map("vat_rate") // проценты; ставку подтверждает бухгалтер (ТЗ 8.10)
+  contractType  String   @map("contract_type") // subscription | one_off
+  status        String   @default("active") // active | suspended | terminated (ТЗ 3.1)
+  settingsJson  Json     @default("{}") @map("settings_json")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  locations Location[]
+  contracts Contract[]
+  roles     UserRole[]
+
+  @@unique([tenantId, inn])
+  @@index([tenantId, status])
+  @@map("organization")
+}
+
+model Location {
+  id                String   @id @db.Uuid
+  tenantId          String   @map("tenant_id") @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  cityId            String   @map("city_id") @db.Uuid // с первого дня (ТЗ 17.4)
+  name              String
+  address           String
+  geoLat            Decimal? @map("geo_lat") @db.Decimal(9, 6)
+  geoLng            Decimal? @map("geo_lng") @db.Decimal(9, 6)
+  photoForbidden    Boolean  @default(false) @map("photo_forbidden") // режимный объект (ТЗ 3.2)
+  orderLimitTiyin   BigInt?  @map("order_limit_tiyin") // лимит на заявку
+  monthlyLimitTiyin BigInt?  @map("monthly_limit_tiyin")
+  passportJson      Json     @default("{}") @map("passport_json") // паспорт объекта: м², санузлы, кондиционеры, щитки
+  accessJson        Json     @default("{}") @map("access_json") // график доступа, контакты ТСЖ/УК
+  preferredMasterId String?  @map("preferred_master_id") @db.Uuid
+  blacklistMasters  String[] @map("blacklist_masters") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  orders       Order[]
+
+  @@index([tenantId, organizationId])
+  @@index([tenantId, cityId])
+  @@map("location")
+}
+
+model Contract {
+  id                 String    @id @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  organizationId     String    @map("organization_id") @db.Uuid
+  kind               String // annual (цены заморожены) | monthly (перевод на текущий релиз при продлении) — ТЗ 18-п.17
+  priceListReleaseId String    @map("price_list_release_id") @db.Uuid // релиз договора (ТЗ 3.7)
+  subscriptionTiyin  BigInt?   @map("subscription_tiyin")
+  termsJson          Json      @default("{}") @map("terms_json") // пороги утверждений, SLA, перенос остатка, программа баллов и пр. (A-07)
+  startsOn           DateTime  @map("starts_on") @db.Date
+  endsOn             DateTime? @map("ends_on") @db.Date
+  autoRenew          Boolean   @default(false) @map("auto_renew")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  release      PriceListRelease @relation(fields: [priceListReleaseId], references: [id])
+
+  @@index([tenantId, organizationId])
+  @@map("contract")
+}
+
+model User {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  phone       String // вход телефон+OTP; смена номера — только через поддержку (ТЗ 14)
+  fullName    String?  @map("full_name")
+  language    String   @default("ru") // ru | uz — язык всех коммуникаций (ТЗ 14)
+  isBlocked   Boolean  @default(false) @map("is_blocked")
+  marketingOk Boolean  @default(false) @map("marketing_ok") // отдельное согласие (ТЗ 17.12)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  roles         UserRole[]
+  masterProfile MasterProfile?
+
+  @@unique([tenantId, phone])
+  @@map("user")
+}
+
+model UserRole {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  role           RoleKind
+  organizationId String?  @map("organization_id") @db.Uuid
+  locationId     String?  @map("location_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  user         User          @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  // Контекст роли проверяется на каждом эндпоинте (ТЗ 14): роль + organization_id + location_id
+  @@unique([tenantId, userId, role, organizationId, locationId])
+  @@index([tenantId, userId])
+  @@map("user_role")
+}
+
+model MasterProfile {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  userId         String    @unique @map("user_id") @db.Uuid
+  status         String    @default("candidate") // candidate | checking | training | active | blocked (ТЗ 17.1)
+  skillTags      String[]  @map("skill_tags") // только через экзамен (ТЗ 17.1)
+  zoneIds        String[]  @map("zone_ids") @db.Uuid
+  rating         Int       @default(60) // 0–100, старт 60 (ТЗ 7.4); MVP — вручную диспетчером
+  grade          String    @default("bronze") // bronze | silver | gold; доля — из грейда копией на момент закрытия
+  taxMode        String    @map("tax_mode") // self_employed | gph
+  contractUntil  DateTime? @map("contract_until") @db.Date // ГПХ: алерт за 14 дней
+  hasVehicle     Boolean   @default(false) @map("has_vehicle")
+  cashDebtTiyin  BigInt    @default(0) @map("cash_debt_tiyin") // лимит 2 000 000 сум → снятие с линии (ТЗ 8.5)
+  onProbation    Boolean   @default(true) @map("on_probation") // первые 20 заявок: 100% модерации фото
+  probationCount Int       @default(0) @map("probation_count")
+  qrBadgeCode    String?   @unique @map("qr_badge_code") // неперебираемый код верификации (L-07)
+  referrerId     String?   @map("referrer_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user   User    @relation(fields: [userId], references: [id])
+  orders Order[]
+
+  @@index([tenantId, status])
+  @@map("master_profile")
+}
+
+// ---------- Прайс (релизная модель, ТЗ 3.7) ----------
+
+model PriceListRelease {
+  id          String        @id @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  number      Int // релиз №1 — стартовый прайс (A-32)
+  status      ReleaseStatus @default(draft)
+  activatesAt DateTime?     @map("activates_at") @db.Timestamptz() // не раньше +7 дней от подтверждения (таймер #50)
+  coeffsJson  Json          @default("{}") @map("coeffs_json") // снапшот глобальных коэффициентов (A-05)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+
+  items     PriceItem[]
+  contracts Contract[]
+  orders    Order[]
+
+  // Активные релизы и их позиции иммутабельны (инвариант DEV-02 §3.2) — правки только в draft
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@map("price_list_release")
+}
+
+model PriceItem {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  releaseId        String   @map("release_id") @db.Uuid
+  category         String
+  name             String
+  unit             String // шт | точка | п.м | м² | час | выезд | объект | стык | створка | заявка | день | комплект
+  priceFromTiyin   BigInt   @map("price_from_tiyin")
+  priceToTiyin     BigInt   @map("price_to_tiyin")
+  normHours        Decimal  @map("norm_hours") @db.Decimal(5, 2) // основа слотов (ТЗ 17.3)
+  requiredSkills   String[] @map("required_skills")
+  requiresEquip    Boolean  @default(false) @map("requires_equipment")
+  isPaired         Boolean  @default(false) @map("is_paired") // цена включает второго исполнителя
+  stagePlanJson    Json?    @map("stage_plan_json") // [{этап, нормо-часы, пауза [мин; макс]}]
+  isLicensedClosed Boolean  @default(false) @map("is_licensed_closed") // газ/лифты до договора с лицензиатом (ТЗ 17.8)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  release PriceListRelease @relation(fields: [releaseId], references: [id])
+
+  @@index([tenantId, releaseId, category])
+  @@map("price_item")
+}
+
+// ---------- Заявка (центральная сущность, ТЗ 3.4) ----------
+
+model Order {
+  id                 String         @id @db.Uuid
+  tenantId           String         @map("tenant_id") @db.Uuid
+  number             String // Z-2026-000123
+  type               OrderType
+  urgency            Urgency        @default(normal)
+  status             OrderStatus    @default(new)
+  pause              OrderPause?
+  version            Int            @default(0) // оптимистичная блокировка переходов (DEV-10 §3.6)
+  source             String? // app | phone | landing | inspection_schedule
+  clientId           String?        @map("client_id") @db.Uuid // CHECK в миграции: ровно одно из client_id/location_id по типу
+  locationId         String?        @map("location_id") @db.Uuid
+  applicantUserId    String?        @map("applicant_user_id") @db.Uuid // программа баллов (ТЗ 17.14)
+  masterId           String?        @map("master_id") @db.Uuid
+  helperId           String?        @map("helper_id") @db.Uuid // парная (ТЗ 4.5)
+  priceListReleaseId String         @map("price_list_release_id") @db.Uuid // правила фиксации — ТЗ 3.7 / DEV-10
+  parentOrderId      String?        @map("parent_order_id") @db.Uuid // гарантийная / дробление
+  defectId           String?        @map("defect_id") @db.Uuid
+  addressJson        Json           @default("{}") @map("address_json") // улица/дом на создании; детали — C-50 после назначения
+  coefficientsCopy   Json           @default("{}") @map("coefficients_copy") // копия коэффициентов на момент создания
+  totalWorkTiyin     BigInt         @default(0) @map("total_work_tiyin")
+  totalMaterialTiyin BigInt         @default(0) @map("total_material_tiyin")
+  paymentChannel     PaymentChannel @map("payment_channel")
+  warrantyDaysCopy   Int            @default(30) @map("warranty_days_copy")
+  promoCode          String?        @map("promo_code")
+  rating             Int? // 1–5, окно 72 ч
+  partiallyDone      Boolean        @default(false) @map("partially_done") // консервация (ТЗ 4.6)
+  isDemo             Boolean        @default(false) @map("is_demo") // демо-контур вне биллинга/отчётов (DEV-02 §3.4)
+  clientUuid         String?        @map("client_uuid") @db.Uuid // офлайн-идемпотентность
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  location  Location?        @relation(fields: [locationId], references: [id])
+  master    MasterProfile?   @relation(fields: [masterId], references: [id])
+  release   PriceListRelease @relation(fields: [priceListReleaseId], references: [id])
+  lines     OrderLine[]
+  quotes    Quote[]
+  photos    OrderPhoto[]
+  materials OrderMaterial[]
+  statusLog OrderStatusLog[]
+
+  @@unique([tenantId, number])
+  @@unique([tenantId, clientUuid])
+  @@index([tenantId, status])
+  @@index([tenantId, locationId, createdAt]) // дубль-детект за 24 ч
+  @@index([tenantId, masterId, status])
+  @@map("order")
+}
+
+model OrderLine {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  orderId        String   @map("order_id") @db.Uuid
+  priceItemId    String?  @map("price_item_id") @db.Uuid
+  nameCopy       String   @map("name_copy") // копии на момент фиксации (инвариант DEV-02 §3.2)
+  unitCopy       String   @map("unit_copy")
+  priceTiyinCopy BigInt   @map("price_tiyin_copy")
+  normHoursCopy  Decimal  @map("norm_hours_copy") @db.Decimal(5, 2)
+  qty            Decimal  @default(1) @db.Decimal(8, 2)
+  stagePlanCopy  Json?    @map("stage_plan_copy")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([tenantId, orderId])
+  @@map("order_line")
+}
+
+model Quote {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  orderId       String    @map("order_id") @db.Uuid
+  kind          QuoteKind
+  amountTiyin   BigInt    @map("amount_tiyin")
+  positionsJson Json      @map("positions_json")
+  evidenceJson  Json?     @map("evidence_json") // фото+причина по подорожавшим позициям (ТЗ 17.17 п.4)
+  approvedBy    String?   @map("approved_by") @db.Uuid
+  approvedVia   String?   @map("approved_via") // app | web_card | phone_dispatcher | offline_signature
+  offlineFlag   Boolean   @default(false) @map("offline_flag") // «согласовано офлайн» → выборочная модерация
+  clientUuid    String?   @map("client_uuid") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([tenantId, clientUuid])
+  @@index([tenantId, orderId])
+  @@map("quote")
+}
+
+model OrderStatusLog {
+  id           String      @id @db.Uuid
+  tenantId     String      @map("tenant_id") @db.Uuid
+  orderId      String      @map("order_id") @db.Uuid
+  fromStatus   OrderStatus? @map("from_status")
+  toStatus     OrderStatus @map("to_status")
+  action       String // TransitionAction (DEV-10 §2)
+  actorId      String?     @map("actor_id") @db.Uuid
+  actorRole    String?     @map("actor_role")
+  reason       String?
+  clientUuid   String?     @map("client_uuid") @db.Uuid
+  deviceTime   DateTime?   @map("device_time") @db.Timestamptz() // двойные метки времени (ТЗ 7.2)
+  offlineFixed Boolean     @default(false) @map("offline_fixed")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  // Append-only (REVOKE UPDATE/DELETE в миграции); идемпотентность переходов (DEV-10 §3.5)
+  @@unique([tenantId, orderId, fromStatus, toStatus, clientUuid])
+  @@index([tenantId, orderId, createdAt])
+  @@map("order_status_log")
+}
+
+model OrderPhoto {
+  id         String     @id @db.Uuid
+  tenantId   String     @map("tenant_id") @db.Uuid
+  orderId    String     @map("order_id") @db.Uuid
+  stage      PhotoStage
+  s3Key      String     @map("s3_key") // доступ только по signed URL; закрытые заявки — вечное хранение (ТЗ 14)
+  serverTs   DateTime   @default(now()) @map("server_ts") @db.Timestamptz()
+  deviceTs   DateTime?  @map("device_ts") @db.Timestamptz()
+  geoLat     Decimal?   @map("geo_lat") @db.Decimal(9, 6) // null допустим с флагом (ТЗ 7.2)
+  geoLng     Decimal?   @map("geo_lng") @db.Decimal(9, 6)
+  geoMissing Boolean    @default(false) @map("geo_missing")
+  hash       String?
+  clientUuid String?    @map("client_uuid") @db.Uuid
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([tenantId, clientUuid])
+  @@index([tenantId, orderId, stage])
+  @@map("order_photo")
+}
+
+model OrderMaterial {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  orderId        String   @map("order_id") @db.Uuid
+  kind           String // spare_part (чек обязателен) | consumable (фикс-прайс «сумки», без чека) — ТЗ 8.4
+  name           String
+  amountTiyin    BigInt   @map("amount_tiyin")
+  sourceChannel  String   @map("source_channel") // partner_store | master_own | client_self | company_stock
+  receiptPhotoId String?  @map("receipt_photo_id") @db.Uuid
+  priceTier      String?  @map("price_tier") // economy | standard | premium (порог 200 000, ТЗ 8.4.3)
+  clientUuid     String?  @map("client_uuid") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([tenantId, clientUuid])
+  @@index([tenantId, orderId])
+  @@map("order_material")
+}
+
+model Defect {
+  id                String       @id @db.Uuid
+  tenantId          String       @map("tenant_id") @db.Uuid
+  locationId        String       @map("location_id") @db.Uuid
+  foundInOrderId    String?      @map("found_in_order_id") @db.Uuid
+  status            DefectStatus @default(new)
+  priority          String // critical | high | medium | low (ТЗ 3.5)
+  description       String
+  estimateJson      Json?        @map("estimate_json")
+  estimateTiyin     BigInt?      @map("estimate_tiyin")
+  estimateReleaseId String?      @map("estimate_release_id") @db.Uuid // заявка из дефекта наследует релиз оценки
+  estimateValidTill DateTime?    @map("estimate_valid_till") @db.Date // 30 дней (ТЗ 3.5)
+  postponedUntil    DateTime?    @map("postponed_until") @db.Date
+  resolvedByOrderId String?      @map("resolved_by_order_id") @db.Uuid
+  rejectedNoteDate  DateTime?    @map("rejected_note_date") @db.Date // «предупреждали {дата}» — юрзащита (ТЗ 10)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([tenantId, locationId, status])
+  @@map("defect")
+}
+
+// ---------- Биллинг (двойная запись, ТЗ 8.1/8.8) ----------
+
+model Account {
+  id       String @id @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  code     String // план счетов PRD-05 §4.3
+  name     String
+  kind     String // asset | liability | income | expense
+
+  debits  Transaction[] @relation("debit")
+  credits Transaction[] @relation("credit")
+
+  @@unique([tenantId, code])
+  @@map("account")
+}
+
+model Transaction {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  operationId     String   @map("operation_id") @db.Uuid // Σ проводок операции = 0 (инвариант DEV-02 §3.1)
+  debitAccountId  String   @map("debit_account_id") @db.Uuid
+  creditAccountId String   @map("credit_account_id") @db.Uuid
+  amountTiyin     BigInt   @map("amount_tiyin") // CHECK > 0 в миграции
+  type            String // сценарии PRD-05 §4.4 (23 шт.)
+  orderId         String?  @map("order_id") @db.Uuid
+  invoiceId       String?  @map("invoice_id") @db.Uuid
+  isStorno        Boolean  @default(false) @map("is_storno")
+  reversedTxId    String?  @map("reversed_tx_id") @db.Uuid
+  idemKey         String?  @map("idem_key") // (provider, payment_id) для вебхуков
+  periodLocked    Boolean  @default(false) @map("period_locked") // проводки в закрытый период отклоняет триггер
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  debitAccount  Account @relation("debit", fields: [debitAccountId], references: [id])
+  creditAccount Account @relation("credit", fields: [creditAccountId], references: [id])
+
+  // Append-only: REVOKE UPDATE/DELETE в миграции; исправления — только сторно
+  @@unique([tenantId, idemKey])
+  @@index([tenantId, operationId])
+  @@index([tenantId, orderId])
+  @@map("transaction")
+}
+
+model SubscriptionAccount {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  organizationId String   @unique @map("organization_id") @db.Uuid
+  balanceTiyin   BigInt   @default(0) @map("balance_tiyin") // витрина по проводкам; абонентка — аванс, не выручка (ТЗ 8.8)
+  reservedTiyin  BigInt   @default(0) @map("reserved_tiyin") // резерв плановых осмотров (ТЗ 8.3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@map("subscription_account")
+}
+
+model Invoice {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  number         String // INV-…
+  organizationId String    @map("organization_id") @db.Uuid
+  kind           String // subscription | overlimit | one_off_prepayment | materials
+  amountTiyin    BigInt    @map("amount_tiyin")
+  vatTiyin       BigInt    @default(0) @map("vat_tiyin") // НДС изнутри (÷1.12) для плательщиков
+  status         String    @default("issued") // issued | paid | overdue | cancelled
+  dueOn          DateTime? @map("due_on") @db.Date
+  pdfS3Key       String?   @map("pdf_s3_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([tenantId, number])
+  @@index([tenantId, organizationId, status])
+  @@map("invoice")
+}
+
+model Receivable {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  debtorType   String   @map("debtor_type") // organization | b2c_client | master_cash
+  debtorId     String   @map("debtor_id") @db.Uuid
+  invoiceId    String?  @map("invoice_id") @db.Uuid
+  orderId      String?  @map("order_id") @db.Uuid
+  amountTiyin  BigInt   @map("amount_tiyin")
+  repaidTiyin  BigInt   @default(0) @map("repaid_tiyin") // FIFO-разнесение (ТЗ 8.9)
+  dunningStage String?  @map("dunning_stage")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([tenantId, debtorType, debtorId])
+  @@map("receivable")
+}
+
+// ---------- Системные ----------
+
+model AuditLog {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  actorRole String?  @map("actor_role")
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id") @db.Uuid
+  payload   Json     @default("{}")
+  device    String?
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  // Append-only навечно (REVOKE UPDATE/DELETE в миграции) — ТЗ 14
+  @@index([tenantId, entity, entityId])
+  @@index([tenantId, createdAt])
+  @@map("audit_log")
+}
+
+model OutboxEvent {
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  name        String // domain.event_name (DEV-07 §5, каталог DEV-03 x-events)
+  payload     Json
+  processedAt DateTime? @map("processed_at") @db.Timestamptz()
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, processedAt, createdAt]) // воркеры BullMQ разбирают по порядку
+  @@map("outbox_event")
+}
+
+model SystemParameter {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String // 123 параметра PRD-04 §5; в коде магических чисел нет (DoD п.6)
+  value     Json
+  level     String // global | contract | location | price
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([tenantId, code])
+  @@map("system_parameter")
+}

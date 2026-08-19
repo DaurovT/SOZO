@@ -1,0 +1,33 @@
+# Зависимости и артефакты сборки — 2,4 ГБ из 2,4 ГБ репозитория.
+# Без этого файла push уйдёт часами и упрётся в лимит GitHub на 100 МБ.
+node_modules/
+dist/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+
+# iOS / Android
+Pods/
+.gradle/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+DerivedData/
+*.ipa
+*.app
+
+# Секреты. В репозитории только .env.example — реальные значения сюда не кладём
+.env
+.env.local
+.env.*.local
+*.pem
+*.p12
+*.keystore
+
+# Служебное
+.DS_Store
+*.log
+coverage/
+.idea/
+.vscode/
