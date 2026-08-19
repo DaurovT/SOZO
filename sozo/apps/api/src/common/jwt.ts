@@ -4,7 +4,28 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * Dev-JWT (HS256) без внешних зависимостей — для M0-заглушки identity.
  * TODO(M0-E2-S2): ротация refresh, отзыв, секрет из секрет-хранилища.
  */
-const SECRET = process.env.JWT_SECRET ?? 'dev-only-change-me';
+/**
+ * Секрет подписи. В проде обязателен и не может остаться дефолтным: этим
+ * ключом подписываются роли, и знающий его выпишет себе admin. Поэтому
+ * NODE_ENV=production без своего JWT_SECRET — отказ на старте, а не
+ * молчаливая работа с ключом из репозитория.
+ */
+const DEV_SECRET = 'dev-only-change-me';
+
+function resolveSecret(): string {
+  const fromEnv = process.env.JWT_SECRET?.trim();
+  const isProd = process.env.NODE_ENV === 'production';
+  if (fromEnv && fromEnv !== DEV_SECRET) return fromEnv;
+  if (isProd) {
+    throw new Error(
+      'JWT_SECRET не задан (или оставлен дефолтным) при NODE_ENV=production. ' +
+        'Сгенерируйте: openssl rand -base64 48 — и передайте через окружение.',
+    );
+  }
+  return DEV_SECRET;
+}
+
+const SECRET = resolveSecret();
 
 export interface JwtClaims {
   sub: string;

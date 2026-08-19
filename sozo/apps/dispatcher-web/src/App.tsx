@@ -19,7 +19,7 @@ import { MapPage } from './pages/Map';
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

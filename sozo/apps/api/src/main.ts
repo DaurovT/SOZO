@@ -11,7 +11,24 @@ async function bootstrap() {
   // её адрес уходит в SMS, где каждый символ платный, и `/w/ABCD2345`
   // помещается в одно сообщение, а `/v1/w/...` — уже впритык
   app.setGlobalPrefix('v1', { exclude: ['w/:code', 'w/:code/(.*)'] });
-  app.enableCors({ origin: true }); // dev: админка на vite (5173); prod — за одним доменом
+  // Список источников задаётся окружением: CORS_ORIGINS через запятую.
+  // `origin: true` отражает любой источник и остаётся только в dev, где
+  // адреса меняются каждый день. В проде пустой список = запрет всего чужого.
+  const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (corsOrigins.length > 0) {
+    app.enableCors({ origin: corsOrigins, credentials: true });
+    // eslint-disable-next-line no-console
+    console.log(`[CORS] разрешены источники: ${corsOrigins.join(', ')}`);
+  } else if (process.env.NODE_ENV === 'production') {
+    app.enableCors({ origin: false });
+    // eslint-disable-next-line no-console
+    console.warn('[CORS] production без CORS_ORIGINS — кросс-доменные запросы запрещены');
+  } else {
+    app.enableCors({ origin: true }); // dev: админка на vite (5173)
+  }
   app.useBodyParser('json', { limit: '10mb' }); // загрузка фото dataURL (PRD-05 §9)
   // Веб-карточка заявки работает на обычных формах, без JS: браузер шлёт
   // urlencoded, и без этого разбора «Согласен» на слабом телефоне не нажмётся
@@ -44,9 +61,13 @@ async function bootstrap() {
   app.useGlobalFilters(new I18nExceptionFilter());
 
   const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port);
+  // Адрес привязки: за nginx слушаем только петлю, чтобы порт 3000 не торчал
+  // в сеть даже при открытом NSG. Без HOST поведение прежнее (0.0.0.0) —
+  // это нужно разработке, где на API ходят с телефона в той же Wi-Fi.
+  const host = process.env.HOST ?? '0.0.0.0';
+  await app.listen(port, host);
   // eslint-disable-next-line no-console
-  console.log(`SOZO API: http://localhost:${port}/v1/health`);
+  console.log(`SOZO API: http://${host}:${port}/v1/health`);
 }
 
 void bootstrap();

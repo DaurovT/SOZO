@@ -5,6 +5,20 @@ import { StateStore } from '../../common/state-store';
 
 export const DEV_OTP_CODE = '00000'; // dev-заглушка: «пять нулей»
 
+/**
+ * Разрешён ли вход по dev-коду.
+ *
+ * Вне прода — да, всегда: без этого не работает ни разработка, ни тесты.
+ * В проде — только по явному ALLOW_DEV_OTP=1, и это осознанное решение
+ * владельца, а не умолчание: пока нет SMS-провайдера (Eskiz/Playmobile),
+ * выключение флага делает вход невозможным вообще. Смысл флага в том, что
+ * дыру теперь видно в конфиге, а не только в исходниках.
+ */
+export function devOtpAllowed(): boolean {
+  if (process.env.NODE_ENV !== 'production') return true;
+  return process.env.ALLOW_DEV_OTP === '1';
+}
+
 export interface UserRecord {
   id: string;
   phone: string;
@@ -48,6 +62,13 @@ export class IdentityService {
   private readonly logins: LoginEventRec[] = [];
 
   constructor(private readonly store: StateStore) {
+    if (process.env.NODE_ENV === 'production' && devOtpAllowed()) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[OTP] ВНИМАНИЕ: включён вход по dev-коду 00000 в production (ALLOW_DEV_OTP=1). ' +
+          'Любой, кто знает номер, войдёт под этим человеком. Снимите флаг, как только появится SMS-провайдер.',
+      );
+    }
     // Сид: владелец платформы, бухгалтер, диспетчер (роли PRD-04 §1)
     this.upsert({ phone: '+998900000000', fullName: 'Админ (владелец)', roles: ['admin'] });
     this.upsert({ phone: '+998900000001', fullName: 'Бухгалтер', roles: ['accountant'] });
@@ -136,6 +157,13 @@ export class IdentityService {
   }
 
   verify(phone: string, code: string): { accessToken: string; user: UserRecord } {
+    if (!devOtpAllowed()) {
+      this.trackLogin(phone, false, [], 'dev-код выключен, SMS-провайдер не подключён');
+      throw new UnauthorizedException({
+        code: 'OTP_PROVIDER_MISSING',
+        message: 'Вход по коду временно недоступен: SMS-провайдер не подключён',
+      });
+    }
     if (code !== DEV_OTP_CODE) {
       this.trackLogin(phone, false, [], 'неверный код');
       throw new UnauthorizedException({ code: 'OTP_INVALID' });

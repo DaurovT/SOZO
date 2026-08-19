@@ -16,10 +16,11 @@ class Session extends ChangeNotifier {
   static const _kContext = 'sozo_client_context';
   static const _kRemember = 'sozo_client_remember_context';
 
-  /// Адрес сервера. Задаётся при сборке: `--dart-define=SOZO_API=http://IP:3000`,
-  /// иначе — localhost для браузера и симулятора. На устройстве меняется
-  /// долгим нажатием по версии на первом экране.
-  static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'http://localhost:3000');
+  /// Адрес сервера. По умолчанию — боевой, поэтому обычная сборка без флагов
+  /// уже ходит на него. Перекрывается при сборке: `--dart-define=SOZO_API=...`
+  /// (так поднимают приложение против локального сервера). На устройстве
+  /// меняется долгим нажатием по версии на первом экране.
+  static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'https://20-52-250-154.sslip.io');
 
   late ApiClient api = ApiClient(baseUrl: defaultBase);
 

@@ -19,7 +19,7 @@ class Session extends ChangeNotifier {
   /// Версия сборки — сверяется с минимальной серверной (F-60)
   static const appVersion = String.fromEnvironment('SOZO_VERSION', defaultValue: '1.0.0');
 
-  static const defaultBaseUrl = String.fromEnvironment('SOZO_API', defaultValue: 'http://localhost:3000');
+  static const defaultBaseUrl = String.fromEnvironment('SOZO_API', defaultValue: 'https://20-52-250-154.sslip.io');
   static const _kToken = 'sozo_token';
   static const _kBase = 'sozo_base_url';
   static const _kPhone = 'sozo_phone';
