@@ -18,12 +18,19 @@ set -euo pipefail
 DOMAIN="${1:?Укажите домен: ./deploy/switch-to-domain.sh sozo.uz}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IP="$(curl -s --max-time 10 https://api.ipify.org || true)"
-NAMES=("api.$DOMAIN" "admin.$DOMAIN" "dispatch.$DOMAIN")
+# Корень и www — лендинг и веб-карточка; поддомены — API и панели
+NAMES=("$DOMAIN" "www.$DOMAIN" "api.$DOMAIN" "admin.$DOMAIN" "dispatch.$DOMAIN")
 
 echo "== 1. Проверка DNS (адрес машины: ${IP:-неизвестен})"
+# Спрашиваем авторитетные серверы, а не локальный резолвер: у записи TTL
+# в часы, и кэш будет отдавать старый адрес ещё долго после правки. Let's
+# Encrypt резолвит рекурсивно от корня, то есть видит именно авторитетный ответ.
+AUTH_NS="$(dig +short NS "$DOMAIN" | head -1)"
+[ -z "$AUTH_NS" ] && { echo "  ✗ не нашёл NS для $DOMAIN"; exit 1; }
+echo "  авторитетный сервер: $AUTH_NS"
 for n in "${NAMES[@]}"; do
-  got="$(getent hosts "$n" | awk '{print $1}' | head -1)"
-  if [ -z "$got" ]; then echo "  ✗ $n не резолвится — добавьте A-запись и подождите"; exit 1; fi
+  got="$(dig +short "@$AUTH_NS" "$n" A | tail -1)"
+  if [ -z "$got" ]; then echo "  ✗ $n не резолвится на $AUTH_NS — добавьте запись"; exit 1; fi
   if [ -n "$IP" ] && [ "$got" != "$IP" ]; then echo "  ✗ $n → $got, а машина $IP"; exit 1; fi
   echo "  ✓ $n → $got"
 done
@@ -45,7 +52,7 @@ echo "== 3. Сертификат на три имени"
 sudo certbot certonly --webroot -w /var/www/html \
   --cert-name "api.$DOMAIN" \
   $(printf -- '-d %s ' "${NAMES[@]}") \
-  --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring
+  --expand --non-interactive --agree-tos --register-unsafely-without-email --keep-until-expiring
 echo "  ✓ выпущен"
 
 echo "== 4. Панели возвращаются в корень своих хостов"
@@ -73,6 +80,6 @@ echo "== 6. Адреса и пересборка"
 "$ROOT/deploy/set-address.sh" "$DOMAIN"
 
 echo "== 7. Проверка"
-for u in "https://api.$DOMAIN/v1/health" "https://admin.$DOMAIN/" "https://dispatch.$DOMAIN/"; do
+for u in "https://$DOMAIN/" "https://api.$DOMAIN/v1/health" "https://admin.$DOMAIN/" "https://dispatch.$DOMAIN/"; do
   printf "  %-40s " "$u"; curl -s -o /dev/null -w "HTTP %{http_code}\n" --max-time 15 "$u"
 done

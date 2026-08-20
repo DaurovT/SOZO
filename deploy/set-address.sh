@@ -36,6 +36,10 @@ else
   DISPATCH_URL="$API_ORIGIN/dispatch/"
 fi
 API_BASE="$API_ORIGIN/v1"
+# Лендинг живёт на корне домена, то есть на другом источнике, чем API:
+# без него в списке формы лидов упрутся в CORS
+LANDING_ORIGIN=""
+[ "$LAYOUT" = "subdomains" ] && LANDING_ORIGIN=",$SCHEME://$ADDR"
 
 echo "Раскладка: $LAYOUT"
 echo "  API      $API_BASE"
@@ -84,7 +88,7 @@ PY
 if [ -f /etc/sozo/sozo.env ]; then
   sudo sed -i \
     -e "s|^SOZO_PUBLIC_ADDR=.*|SOZO_PUBLIC_ADDR=$ADDR|" \
-    -e "s|^CORS_ORIGINS=.*|CORS_ORIGINS=$API_ORIGIN,$ADMIN_URL,$DISPATCH_URL|" \
+    -e "s|^CORS_ORIGINS=.*|CORS_ORIGINS=$API_ORIGIN,$ADMIN_URL,$DISPATCH_URL$LANDING_ORIGIN|" \
     /etc/sozo/sozo.env
   echo "  ok  /etc/sozo/sozo.env (CORS)"
 fi
