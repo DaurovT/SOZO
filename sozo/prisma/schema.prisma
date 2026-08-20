@@ -76,7 +76,13 @@ enum PhotoStage {
 enum QuoteKind {
   initial
   approved
+  // Вынужденная доп-работа и апсейл различаются по последствиям: первая
+  // блокирует конвейер и требует фото, второй никогда не автостартует.
+  // Одно значение `additional` их смешивало, и по журналу нельзя было
+  // отличить «пришлось» от «предложили»
   additional
+  additional_forced
+  additional_upsell
   conservation
 }
 
@@ -437,7 +443,9 @@ model Order {
   applicantUserId    String?        @map("applicant_user_id") @db.Uuid // программа баллов (ТЗ 17.14)
   masterId           String?        @map("master_id") @db.Uuid
   helperId           String?        @map("helper_id") @db.Uuid // парная (ТЗ 4.5)
-  priceListReleaseId String         @map("price_list_release_id") @db.Uuid // правила фиксации — ТЗ 3.7 / DEV-10
+  // Релиз может быть не определён: аварийная заявка создаётся минуя оценку,
+  // и до сметы привязывать её к прайсу не к чему
+  priceListReleaseId String?        @map("price_list_release_id") @db.Uuid
   parentOrderId      String?        @map("parent_order_id") @db.Uuid // гарантийная / дробление
   defectId           String?        @map("defect_id") @db.Uuid
   addressJson        Json           @default("{}") @map("address_json") // улица/дом на создании; детали — C-50 после назначения
@@ -463,6 +471,59 @@ model Order {
   slaArrivalDue      DateTime?      @map("sla_arrival_due") @db.Timestamptz()
   slaResolutionDue   DateTime?      @map("sla_resolution_due") @db.Timestamptz()
   slaBreachFlags     String[]       @map("sla_breach_flags") // response | arrival | resolution
+
+  // ---------- Поля, которых схема не знала (миграция m12_orders) ----------
+  //
+  // Деление по правилу DEV-02, а не по удобству: деньги, время, ключи и всё,
+  // по чему ищут или что ограничивают — колонки, иначе на них не наложить
+  // CHECK и не построить индекс. Структурные снимки — jsonb, как уже сделано
+  // для coefficients_copy и passport.
+
+  /**
+   * Телефон клиента. В ER заявка ссылается на client_id, но B2C-клиент
+   * заводится самим фактом заявки, и телефон — единственный устойчивый
+   * идентификатор: по нему собирается вся личная лента. Колонка, а не поиск
+   * через связь, потому что этот запрос самый частый в системе.
+   */
+  clientPhone             String    @map("client_phone")
+  clientName              String?   @map("client_name")
+  organizationId          String?   @map("organization_id") @db.Uuid
+  description             String?
+  address                 String
+  geoLat                  Decimal?  @map("geo_lat") @db.Decimal(9, 6)
+  geoLng                  Decimal?  @map("geo_lng") @db.Decimal(9, 6)
+
+  /** Денормализованные имена: список заявок не должен join'ить мастера ради подписи */
+  masterName              String?   @map("master_name")
+  helperName              String?   @map("helper_name")
+
+  restrictedSite          Boolean   @default(false) @map("restricted_site")
+  arrivedAt               DateTime? @map("arrived_at") @db.Timestamptz()
+  claimedByOperator       String?   @map("claimed_by_operator")
+  releasedReason          String?   @map("released_reason")
+
+  // Деньги — BIGINT в тийинах (DEV-02): вилка цены, итог и чаевые
+  baseFromTiyin           BigInt    @default(0) @map("base_from_tiyin")
+  baseToTiyin             BigInt    @default(0) @map("base_to_tiyin")
+  totalFromTiyin          BigInt    @default(0) @map("total_from_tiyin")
+  totalToTiyin            BigInt    @default(0) @map("total_to_tiyin")
+  tipTiyin                BigInt    @default(0) @map("tip_tiyin")
+
+  promoDiscountPercent    Int       @default(0) @map("promo_discount_percent")
+  urgentSurchargePercent  Int       @default(0) @map("urgent_surcharge_percent")
+  preferredMasterId       String?   @map("preferred_master_id") @db.Uuid
+  slaDueAt                DateTime? @map("sla_due_at") @db.Timestamptz()
+  rescheduleCount         Int       @default(0) @map("reschedule_count")
+  /** Код приёмки ищут по значению — поэтому колонка, а не поле внутри JSON */
+  acceptanceCode          String?   @map("acceptance_code")
+
+  // Структурные снимки: на них не накладывают CHECK и по ним не ищут
+  acceptanceJson          Json?     @map("acceptance_json")
+  acceptanceRequestJson   Json?     @map("acceptance_request_json")
+  addressDetailsJson      Json?     @map("address_details_json")
+  paymentJson             Json?     @map("payment_json")
+  requestedWindowJson     Json?     @map("requested_window_json")
+  commonAreaAccessJson    Json?     @map("common_area_access_json")
   slaPausedMs        BigInt         @default(0) @map("sla_paused_ms")
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
@@ -474,7 +535,7 @@ model Order {
   slaPolicy SlaPolicy?       @relation(fields: [slaPolicyId], references: [id])
   permits   AccessPermit[]
   passes    VisitPass[]
-  release   PriceListRelease @relation(fields: [priceListReleaseId], references: [id])
+  release   PriceListRelease? @relation(fields: [priceListReleaseId], references: [id])
   lines     OrderLine[]
   quotes    Quote[]
   photos    OrderPhoto[]
@@ -498,6 +559,9 @@ model OrderLine {
   priceItemId    String?  @map("price_item_id") @db.Uuid
   nameCopy       String   @map("name_copy") // копии на момент фиксации (инвариант DEV-02 §3.2)
   unitCopy       String   @map("unit_copy")
+  /** Вилка цены на момент заявки: прайс хранит диапазон, а не одну цену */
+  priceFromTiyinCopy BigInt @map("price_from_tiyin_copy") @default(0)
+  priceToTiyinCopy   BigInt @map("price_to_tiyin_copy") @default(0)
   priceTiyinCopy BigInt   @map("price_tiyin_copy")
   normHoursCopy  Decimal  @map("norm_hours_copy") @db.Decimal(5, 2)
   qty            Decimal  @default(1) @db.Decimal(8, 2)
@@ -519,6 +583,8 @@ model Quote {
   positionsJson Json      @map("positions_json")
   evidenceJson  Json?     @map("evidence_json") // фото+причина по подорожавшим позициям (ТЗ 17.17 п.4)
   approvedBy    String?   @map("approved_by") @db.Uuid
+  /** Пояснение к смете: почему сумма такая — его читает клиент */
+  note        String?
   approvedVia   String?   @map("approved_via") // app | web_card | phone_dispatcher | offline_signature
   offlineFlag   Boolean   @default(false) @map("offline_flag") // «согласовано офлайн» → выборочная модерация
   clientUuid    String?   @map("client_uuid") @db.Uuid
@@ -539,6 +605,8 @@ model OrderStatusLog {
   toStatus     OrderStatus @map("to_status")
   action       String // TransitionAction (DEV-10 §2)
   actorId      String?     @map("actor_id") @db.Uuid
+  /** Телефон действующего лица — по нему разбирают, кто двигал заявку */
+  actorPhone String? @map("actor_phone")
   actorRole    String?     @map("actor_role")
   reason       String?
   clientUuid   String?     @map("client_uuid") @db.Uuid
@@ -559,7 +627,10 @@ model OrderPhoto {
   tenantId   String     @map("tenant_id") @db.Uuid
   orderId    String     @map("order_id") @db.Uuid
   stage      PhotoStage
-  s3Key      String     @map("s3_key") // доступ только по signed URL; закрытые заявки — вечное хранение (ТЗ 14)
+  /** Откуда снимок: приложение мастера, dev-флаг диспетчера, витрина */
+  source      String  @default("")
+  /** Ключ в хранилище; пусто у отметки диспетчера, сделанной без файла */
+  s3Key      String?     @map("s3_key") // доступ только по signed URL; закрытые заявки — вечное хранение (ТЗ 14)
   serverTs   DateTime   @default(now()) @map("server_ts") @db.Timestamptz()
   deviceTs   DateTime?  @map("device_ts") @db.Timestamptz()
   geoLat     Decimal?   @map("geo_lat") @db.Decimal(9, 6) // null допустим с флагом (ТЗ 7.2)
@@ -584,6 +655,8 @@ model OrderMaterial {
   name           String
   amountTiyin    BigInt   @map("amount_tiyin")
   sourceChannel  String   @map("source_channel") // partner_store | master_own | client_self | company_stock
+  /** Чек приложен. Запчасть без чека не принимается (ТЗ 8.4) */
+  hasReceipt     Boolean @default(false) @map("has_receipt")
   receiptPhotoId String?  @map("receipt_photo_id") @db.Uuid
   priceTier      String?  @map("price_tier") // economy | standard | premium (порог 200 000, ТЗ 8.4.3)
   clientUuid     String?  @map("client_uuid") @db.Uuid

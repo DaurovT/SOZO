@@ -44,6 +44,13 @@ const RENAMED = {
   requiresEquipment: 'requiresEquip',
   terms: 'settingsJson',
   graphType: 'type',
+  address: 'address',
+  acceptance: 'acceptanceJson',
+  acceptanceRequest: 'acceptanceRequestJson',
+  addressDetails: 'addressDetailsJson',
+  payment: 'paymentJson',
+  requestedWindow: 'requestedWindowJson',
+  commonAreaAccess: 'commonAreaAccessJson',
 };
 
 function modelFields(name) {
