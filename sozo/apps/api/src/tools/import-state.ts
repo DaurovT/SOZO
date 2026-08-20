@@ -66,6 +66,15 @@ async function main(): Promise<void> {
    * только явно — и тогда в отчёте видно, что именно не поехало.
    */
   const skip = process.argv.includes('--skip-conflicts');
+  /**
+   * Второй способ разрешить конфликт ИНН — обнулить его у повторов.
+   *
+   * Частичный уникальный индекс пропускает пустые ИНН: организация без него
+   * существовать может, две с одним и тем же — нет. Для тестовых записей это
+   * лучше пропуска: организация остаётся вместе со своими точками B2B, и
+   * заявки на них не повисают. Настоящий ИНН вписывается потом руками.
+   */
+  const blankInn = process.argv.includes('--blank-duplicate-inn');
   const conflicts: string[] = [];
 
   const orgs = (state.crm ?? []) as Array<{ id: string; inn?: string; name?: string }>;
@@ -77,11 +86,15 @@ async function main(): Promise<void> {
   const dupOrgIds = new Set<string>();
   for (const [inn, group] of byInn) {
     if (group.length < 2) continue;
+    const fate = blankInn ? 'останется с пустым ИНН' : 'будет пропущена';
     conflicts.push(
       `ИНН ${inn} у ${group.length} организаций — в базе он уникален (это налоговый номер, а не метка):\n` +
-        group.map((o, i) => `      ${i === 0 ? 'останется' : 'будет пропущена'}: ${o.name ?? o.id}`).join('\n'),
+        group.map((o, i) => `      ${i === 0 ? 'останется' : fate}: ${o.name ?? o.id}`).join('\n'),
     );
-    for (const o of group.slice(1)) dupOrgIds.add(o.id);
+    for (const o of group.slice(1)) {
+      if (blankInn) o.inn = '';
+      else dupOrgIds.add(o.id);
+    }
   }
 
   const users = Array.isArray(state.identity)

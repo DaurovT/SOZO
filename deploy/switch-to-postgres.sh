@@ -21,7 +21,10 @@ DB_NAME=sozo
 DB_URL="postgresql://sozo:sozo@127.0.0.1:5432/${DB_NAME}"
 STAMP=$(date +%Y%m%d%H%M%S)
 SNAPSHOT="/var/lib/sozo/state.pre-pg.${STAMP}.json"
-EXTRA="${1:-}"
+# Как разрешать конфликты снимка со схемой. Умолчание — ничего не терять:
+# повторяющийся ИНН обнуляется, организация и её точки остаются, заявки на
+# них не повисают. Настоящий ИНН вписывается потом руками.
+EXTRA="${1:---blank-duplicate-inn --skip-conflicts}"
 
 say() { printf '\n=== %s\n' "$1"; }
 
@@ -63,7 +66,7 @@ if ! STATE_FILE="$SNAPSHOT" DATABASE_URL="$DB_URL" node apps/api/dist/tools/impo
 fi
 
 say "6/7 Приёмка: два сервера на одних данных отвечают одинаково?"
-if ! node apps/api/test/import-verify.mjs "$SNAPSHOT" "$DB_URL"; then
+if ! node apps/api/test/import-verify.mjs "$SNAPSHOT" "$DB_URL" $EXTRA; then
   echo "Приёмка не прошла. Прод остаётся на файле — возвращаю сервис."
   echo "База ${DB_NAME} оставлена как есть, чтобы можно было разобраться."
   systemctl start sozo-api

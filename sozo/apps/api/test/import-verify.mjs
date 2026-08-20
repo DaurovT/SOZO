@@ -132,12 +132,14 @@ try {
   // Не «сколько потерялось», а «те ли самые». Порог вроде «не больше
   // двенадцати» проходит и тогда, когда не доехали двенадцать других заявок
   const snap = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));
+  // Как разрешался конфликт ИНН, приёмка должна знать: при пропуске
+  // организации её точки уезжают вместе с ней, при обнулении — остаются.
+  // Проверка, не знающая способа, объявляет потерей ровно то, что сохранили
+  const blankInn = process.argv.includes('--blank-duplicate-inn');
   const liveLoc = new Set();
   const seenInn = new Set();
   for (const o of snap.crm ?? []) {
-    // Организация с уже встреченным ИНН при переносе пропускается — вместе с
-    // её точками B2B, а на точку ссылается заявка
-    if (o.inn && seenInn.has(o.inn)) continue;
+    if (!blankInn && o.inn && seenInn.has(o.inn)) continue;
     if (o.inn) seenInn.add(o.inn);
     for (const l of o.locations ?? []) liveLoc.add(l.id);
   }
