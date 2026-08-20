@@ -51,6 +51,40 @@ class Session extends ChangeNotifier {
       ? me!['fullName'] as String
       : (phone ?? '');
 
+  // ---- контур «Дом» (DEV-15) ----
+
+  /// Житель подключённого объекта: раздел «Мой дом» появляется только у него.
+  /// Для остальных приложение выглядит ровно как в v2.25.
+  bool get isResident => me?['building'] != null;
+
+  Map<String, dynamic>? get building =>
+      me?['building'] == null ? null : Map<String, dynamic>.from(me!['building'] as Map);
+
+  String? get buildingEmergencyPhone => building?['emergencyPhone'] as String?;
+
+  String? get supportPhone => me?['supportPhone'] as String?;
+
+  /// Простой режим (C-57). Хранится локально: его включает либо сам житель,
+  /// либо член семьи с его аккаунта — серверу это знать незачем.
+  bool _simpleMode = false;
+  bool get simpleMode => _simpleMode;
+
+  Future<void> setSimpleMode(bool on) async {
+    _simpleMode = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sozo_simple_mode', on);
+    notifyListeners();
+  }
+
+  Future<void> loadSimpleMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    _simpleMode = prefs.getBool('sozo_simple_mode') ?? false;
+  }
+
+  /// Заявки для простого режима: статус словами, без кодов и цветов
+  List<Map<String, dynamic>> get simpleOrders =>
+      ((me?['simpleOrders'] as List?) ?? const []).cast<Map<String, dynamic>>();
+
   List<Map<String, dynamic>> get contexts =>
       ((me?['contexts'] as List?) ?? const []).cast<Map<String, dynamic>>();
 

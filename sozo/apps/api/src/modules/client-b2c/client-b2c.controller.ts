@@ -1,3 +1,5 @@
+import { BuildingsService } from '../buildings/buildings.service';
+import { AccessService } from '../access/access.service';
 import {
   BadRequestException,
   Body,
@@ -9,6 +11,7 @@ import {
   Post,
   Query,
   Req,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { AuditService } from '../platform/audit.service';
@@ -98,6 +101,27 @@ const HHMM = (min: number): string =>
  * ответственного на точке, и смешивать два разных продукта в одном префиксе —
  * верный способ однажды отдать клиенту чужие данные.
  */
+/**
+ * Статусы словами для простого режима (C-57). Кодов и цветов здесь быть не должно:
+ * человек, которому нужен этот режим, различает слова, а не оттенки.
+ */
+const RESOURCE_WORDS: Record<string, string> = {
+  cold_water: 'холодная вода', hot_water: 'горячая вода', heating: 'отопление',
+  electricity: 'электричество', gas: 'газ', sewage: 'канализация', lift: 'лифт', ventilation: 'вентиляция',
+};
+
+const SIMPLE_STATUS: Record<string, string> = {
+  new: 'Заявка принята',
+  estimated: 'Заявка принята',
+  assigned: 'Мастер назначен',
+  master_departed: 'Мастер едет к вам',
+  in_progress: 'Работы идут',
+  addwork_approval: 'Ждём вашего решения',
+  completed: 'Работы завершены',
+  verified: 'Работы завершены',
+  awaiting_payment: 'Ожидает оплаты',
+};
+
 @Controller('app')
 @UseGuards(AppGuard)
 export class ClientB2CController {
@@ -112,6 +136,8 @@ export class ClientB2CController {
     private readonly view: ClientViewService,
     private readonly photos: ClientPhotoService,
     private readonly audit: AuditService,
+    private readonly buildings: BuildingsService,
+    private readonly access: AccessService,
     private readonly demo: DemoSeedService,
     private readonly notifications: ClientNotificationsService,
     private readonly quality: QualityService,
@@ -147,6 +173,55 @@ export class ClientB2CController {
   // ---------- Профиль ----------
 
   /** C-01/C-05/C-30: кто вошёл, какие у него роли и есть ли долг */
+  /**
+   * Объект жителя по его сохранённым адресам. Берём первый подключённый:
+   * у человека может быть и квартира, и паркинг, но раздел «Мой дом» один.
+   */
+  private residentBuilding(addresses: Array<{ street?: string }>) {
+    for (const a of addresses ?? []) {
+      const r = this.buildings.resolve('t0', a.street ?? '');
+      if (r.match === 'exact' && r.buildingId && r.connectionStatus === 'active') {
+        const b = this.buildings.get('t0', r.buildingId);
+        return {
+          id: b.id,
+          name: b.name,
+          address: b.address,
+          emergencyPhone: b.emergencyPhone,
+          dispatchPhone: b.dispatchPhone,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** C-51. Данные раздела «Мой дом»: аварийный телефон, отключения, объявления */
+  @Get('my-building')
+  myBuilding(@Req() req: AppRequest) {
+    const profile = this.profiles.get(this.phone(req));
+    const b = this.residentBuilding(profile.addresses);
+    if (!b) throw new NotFoundException('Ваш дом не подключён');
+
+    const now = Date.now();
+    const shutdowns = this.access
+      .listShutdowns('t0', b.id)
+      .filter((x) => x.status !== 'restored' && x.status !== 'cancelled' && Date.parse(x.plannedTo) > now)
+      .map((x) => ({
+        resourceType: x.resourceType,
+        resourceLabel: RESOURCE_WORDS[x.resourceType] ?? x.resourceType,
+        windowText: `${new Date(x.plannedFrom).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} — ${new Date(x.plannedTo).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
+        reason: x.reason,
+        status: x.status,
+      }));
+
+    return {
+      building: b,
+      emergencyPhone: b.emergencyPhone,
+      dispatchPhone: b.dispatchPhone,
+      shutdowns,
+      announcements: [],
+    };
+  }
+
   @Get('me')
   async me(@Req() req: AppRequest) {
     const phone = this.phone(req);
@@ -227,6 +302,20 @@ export class ClientB2CController {
       supportPhone: this.params.text(200, '+998712000000'),
       // Бейдж на вкладке: профиль тянется на каждом обновлении главной,
       // отдельный запрос ради одной цифры не нужен
+      // Контур «Дом»: раздел появляется только у жителя подключённого объекта
+      building: this.residentBuilding(profile.addresses),
+      // Заявки для простого режима: статус словами, без кодов и цветов
+      simpleOrders: mine
+        .filter((o) => !['closed', 'rated', 'cancelled'].includes(o.status))
+        .slice(0, 3)
+        .map((o) => ({
+          id: o.id,
+          title: o.description,
+          statusWords: SIMPLE_STATUS[o.status] ?? 'Заявка принята',
+          whenWords: o.createdAt
+            ? new Date(o.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+            : '',
+        })),
       unreadNotifications: this.notifications.unread(
         phone,
         all.filter((o) => o.clientPhone === phone || (o.locationId && sites.some((s) => s.loc.id === o.locationId))),

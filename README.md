@@ -111,8 +111,8 @@ cd sozo && npm run db:check      # 13 проверок на PGlite (WASM): RLS, 
 
 # API — сквозные прогоны против запущенного сервера
 cd sozo/apps/api
-node test/home-contour-e2e.mjs   # 82 проверки контура «Дом»
-node test/b2b-access-e2e.mjs     # 24 проверки прав в B2B-контуре
+node test/home-contour-e2e.mjs   # 82 проверки контура «Дом» — работает на пустом состоянии
+node test/b2b-access-e2e.mjs     # 24 проверки прав в B2B-контуре — ТРЕБУЕТ реального state.json
 node test/locale-e2e.mjs         # локали сервера
 node test/client-app-e2e.mjs
 node test/b2b-e2e.mjs
@@ -122,6 +122,14 @@ node test/web-card-e2e.mjs
 cd sozo/apps/client-app && flutter analyze && flutter test    # 95 тестов
 cd sozo/apps/master-app && flutter analyze && flutter test
 ```
+
+**Важно про e2e и данные.** Часть прогонов опирается на боевое dev-состояние
+(`sozo/apps/api/data/state.json`), которого нет в репозитории — оно закрыто в
+`.gitignore` намеренно. На свежем клоне `b2b-access-e2e` даёт 9 из 24: ему нужны
+ответственные на точках с потолками утверждения, а `POST /v1/app/demo/seed` их
+не создаёт. Это не регрессия, а свойство прогона — проверено на коде до и после
+правок контура «Дом». Прогоны `home-contour-e2e`, `client-app-e2e`, `b2b-e2e`,
+`web-card-e2e` и `locale-e2e` работают на пустом состоянии.
 
 Тесты клиента проверяют не только «экран построился», но и что он **виден и
 помещается** на 390×844 — переполнение по ширине иначе всплывает только на

@@ -110,6 +110,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onTap: _pickLanguage,
               ),
               const SozoDivider(),
+              // Включает и сам житель, и член семьи с его аккаунта: приложение
+              // пожилому человеку обычно ставит взрослый ребёнок (DEV-15 §10.3.1).
+              // Автоматически по возрасту не предлагаем — это оскорбительно.
+              NavRow(
+                icon: 'layers',
+                title: t('simple.prostoyRezhim'),
+                value: t('simple.prostoyRezhimPodpis'),
+                onTap: () => session.setSimpleMode(true),
+              ),
+              const SozoDivider(),
               NavRow(
                 icon: 'users',
                 title: t('c30.context'),

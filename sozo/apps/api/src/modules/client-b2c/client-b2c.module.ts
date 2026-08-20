@@ -1,3 +1,5 @@
+import { BuildingsModule } from '../buildings/buildings.module';
+import { AccessModule } from '../access/access.module';
 import { Module } from '@nestjs/common';
 import { BillingModule } from '../billing/billing.module';
 import { CrmModule } from '../crm/crm.module';
@@ -31,7 +33,7 @@ import { DemoSeedService } from './demo-seed.service';
  * и заводить им вторую копию значило бы иметь два источника правды.
  */
 @Module({
-  imports: [
+  imports: [BuildingsModule, AccessModule, 
     OrdersModule,
     PricingModule,
     SchedulingModule,

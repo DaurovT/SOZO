@@ -19,6 +19,8 @@ import 'b2b/site_screens.dart';
 import 'b2b/staff_home.dart';
 import 'history_screen.dart';
 import 'home_screen.dart';
+import 'home_building_screen.dart';
+import 'simple_mode_screen.dart';
 import 'notifications_screen.dart';
 import 'profile_screen.dart';
 import 'services_screen.dart';
@@ -48,6 +50,10 @@ class AppShell extends StatelessWidget {
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
+        // Простой режим подменяет каркас целиком: таббара в нём нет,
+        // это часть правила «не больше трёх действий на экране»
+        if (session.simpleMode) return const SimpleModeScreen();
+
         final tabs = _tabsFor(session.role, session.isB2C);
         return ValueListenableBuilder<int>(
           valueListenable: shellTab,
@@ -150,6 +156,16 @@ typedef _Tab = ({String icon, String label, double size, Widget screen});
 /// не съезжает, а «Профиль» всегда там же, где был.
 List<_Tab> _tabsFor(String role, bool isB2C) {
   if (isB2C) {
+    // Вкладка «Мой дом» появляется только у жителя подключённого объекта
+    // (DEV-15 §10.3): у остальных таббар остаётся ровно таким, как в v2.25
+    if (session.isResident) {
+      return const [
+        (icon: 'home', label: 'tab.home', size: 20.0, screen: HomeScreen()),
+        (icon: 'grid', label: 'building.moyDom', size: 20.0, screen: HomeBuildingScreen()),
+        (icon: 'clipboard-list', label: 'tab.orders', size: 20.0, screen: HistoryScreen()),
+        (icon: 'user', label: 'tab.profile', size: 20.0, screen: ProfileScreen()),
+      ];
+    }
     return const [
       // Иконки и размер 20 — из макета таббара (190:71)
       (icon: 'home', label: 'tab.home', size: 20.0, screen: HomeScreen()),
