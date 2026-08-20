@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 
 /**
  * Планировщик ёмкости (PRD-05 §2, ТЗ 17.3). Сетка 30-минутных слотов.
@@ -64,13 +66,18 @@ export const QUEUE_PRIORITY: Record<string, number> = {
 const HHMM = (min: number): string => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 @Injectable()
-export class SchedulingService {
+export class SchedulingService implements OnModuleInit {
   private readonly shifts: ShiftRec[] = [];
   private readonly bookings: BookingRec[] = [];
   /** Лист ожидания: заявки без брони, ждут освободившийся слот (ТЗ 17.3) */
   private readonly waitlist: WaitlistEntry[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private loaded = false;
+
+  constructor(
+    private readonly store: StateStore,
+    private readonly prisma: PrismaService,
+  ) {
     this.store.register(
       'scheduling',
       () => ({ shifts: this.shifts, bookings: this.bookings, waitlist: this.waitlist }),
@@ -84,6 +91,130 @@ export class SchedulingService {
         this.waitlist.push(...(data.waitlist ?? []));
       },
     );
+  }
+
+  /**
+   * Загрузка и запись при работе на базе.
+   *
+   * Форма — полная перезапись трёх коллекций. В отличие от журнала проводок,
+   * здесь записи удаляются: бронь снимают, смену убирают из расписания. Знать
+   * поимённо, что именно исчезло, значило бы вести вторую модель предметной
+   * области ради самой записи. Коллекции живут в пределах ближайших дней и
+   * малы: расписание — не архив.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
+    const d = await this.prisma.withContext(async (tx) => ({
+      shifts: await tx.shift.findMany(),
+      bookings: await tx.booking.findMany(),
+      waitlist: await tx.waitlistEntry.findMany({ orderBy: { at: 'asc' } }),
+    }));
+    if (d.shifts.length) {
+      this.shifts.length = 0;
+      this.shifts.push(
+        ...d.shifts.map((x) => ({
+          id: x.id,
+          masterId: x.masterId,
+          masterName: x.masterName,
+          date: x.date.toISOString().slice(0, 10),
+          startMin: x.startMin,
+          endMin: x.endMin,
+          isDuty: x.isDuty,
+          zone: x.zone ?? undefined,
+        })),
+      );
+    }
+    if (d.bookings.length) {
+      this.bookings.length = 0;
+      this.bookings.push(
+        ...d.bookings.map((x) => ({
+          id: x.id,
+          shiftId: x.shiftId,
+          masterId: x.masterId,
+          orderId: x.orderId,
+          orderNumber: x.orderNumber,
+          startMin: x.startMin,
+          endMin: x.endMin,
+          slots: x.slots,
+          normHours: Number(x.normHours),
+          bufferMin: x.bufferMin,
+          anchored: x.anchored,
+          priority: x.priority,
+          clientWindow: [x.clientWindowFromMin, x.clientWindowToMin] as [number, number],
+          createdAt: x.createdAt.toISOString(),
+        })),
+      );
+    }
+    if (d.waitlist.length) {
+      this.waitlist.length = 0;
+      this.waitlist.push(
+        ...d.waitlist.map((x) => ({
+          orderId: x.orderId,
+          orderNumber: x.orderNumber,
+          normHours: Number(x.normHours),
+          priority: x.priority,
+          at: x.at.toISOString(),
+        })),
+      );
+    }
+    this.loaded = true;
+    if (this.shifts.length || this.bookings.length) {
+      // eslint-disable-next-line no-console
+      console.log(`[Scheduling] из базы: смен ${this.shifts.length}, броней ${this.bookings.length}, в листе ожидания ${this.waitlist.length}`);
+    }
+  }
+
+  private writing: Promise<void> = Promise.resolve();
+
+  private scheduleWrite(): void {
+    if (!this.prisma.enabled || !this.loaded) return;
+    this.writing = this.writing
+      .then(() => this.writeAll())
+      .catch((e: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error('[Scheduling] запись в базу не удалась:', (e as Error).message);
+      });
+  }
+
+  private async writeAll(): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    await this.prisma.withContext(async (tx) => {
+      // Порядок обязателен: бронь ссылается на смену
+      await tx.booking.deleteMany({});
+      await tx.waitlistEntry.deleteMany({});
+      await tx.shift.deleteMany({});
+      for (const x of this.shifts) {
+        await tx.shift.create({
+          data: {
+            id: x.id, tenantId, masterId: x.masterId, masterName: x.masterName,
+            date: new Date(`${x.date}T00:00:00Z`), startMin: x.startMin, endMin: x.endMin,
+            isDuty: x.isDuty, zone: x.zone ?? null,
+          },
+        });
+      }
+      for (const x of this.bookings) {
+        await tx.booking.create({
+          data: {
+            id: x.id, tenantId, shiftId: x.shiftId, masterId: x.masterId, orderId: x.orderId,
+            orderNumber: x.orderNumber, startMin: x.startMin, endMin: x.endMin, slots: x.slots,
+            normHours: x.normHours, bufferMin: x.bufferMin, anchored: x.anchored, priority: x.priority,
+            clientWindowFromMin: x.clientWindow[0], clientWindowToMin: x.clientWindow[1],
+            createdAt: new Date(x.createdAt),
+          },
+        });
+      }
+      for (const x of this.waitlist) {
+        await tx.waitlistEntry.create({
+          data: {
+            tenantId, orderId: x.orderId, orderNumber: x.orderNumber,
+            normHours: x.normHours, priority: x.priority, at: new Date(x.at),
+          },
+        });
+      }
+    });
   }
 
   // ---------- Смены ----------
@@ -109,6 +240,7 @@ export class SchedulingService {
     if (dup) throw new BadRequestException({ code: 'SHIFT_EXISTS', message: 'У мастера уже есть смена на эту дату' });
     const shift: ShiftRec = { id: uuidv7(), ...data };
     this.shifts.push(shift);
+    this.scheduleWrite();
     this.store.persist();
     return shift;
   }
@@ -120,6 +252,7 @@ export class SchedulingService {
       throw new BadRequestException({ code: 'SHIFT_HAS_BOOKINGS', message: 'В смене есть брони — сначала переназначьте заявки' });
     }
     this.shifts.splice(idx, 1);
+    this.scheduleWrite();
     this.store.persist();
   }
 
@@ -293,6 +426,7 @@ export class SchedulingService {
       createdAt: new Date().toISOString(),
     };
     this.bookings.push(rec);
+    this.scheduleWrite();
     this.store.persist();
     return rec;
   }
@@ -302,6 +436,7 @@ export class SchedulingService {
     const idx = this.bookings.findIndex((b) => b.orderId === orderId);
     if (idx < 0) return { freed: null, nextCandidate: null };
     const [freed] = this.bookings.splice(idx, 1);
+    this.scheduleWrite();
     // приоритет предложения: срочные → лист ожидания (FIFO внутри приоритета)
     const next = [...this.waitlist].sort((a, b) => a.priority - b.priority || a.at.localeCompare(b.at))[0] ?? null;
     this.store.persist();
@@ -313,6 +448,7 @@ export class SchedulingService {
   addToWaitlist(orderId: string, orderNumber: string, normHours: number, priority = QUEUE_PRIORITY.waitlist): void {
     if (this.waitlist.some((w) => w.orderId === orderId)) return;
     this.waitlist.push({ orderId, orderNumber, normHours, priority, at: new Date().toISOString() });
+    this.scheduleWrite();
     this.store.persist();
   }
 
@@ -320,6 +456,7 @@ export class SchedulingService {
     const i = this.waitlist.findIndex((w) => w.orderId === orderId);
     if (i >= 0) {
       this.waitlist.splice(i, 1);
+      this.scheduleWrite();
       this.store.persist();
     }
   }

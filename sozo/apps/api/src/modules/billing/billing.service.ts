@@ -4,6 +4,8 @@ import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
 import { StateStore } from '../../common/state-store';
 import { CrmService } from '../crm/crm.service';
 import { ParametersService } from '../platform/parameters.service';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 
 /** План счетов — упрощённый контур PRD-05 §4.3 (полный — с миграцией на Prisma) */
 const ACCOUNTS: Array<{ code: string; name: string; kind: 'asset' | 'liability' | 'income' | 'expense' }> = [
@@ -73,11 +75,16 @@ export class BillingService implements OnModuleInit {
   private readonly closedPeriods = new Set<string>(); // 'YYYY-MM' (A-19)
   private openingDone = false;
 
+  /** code → id счёта в базе; заполняется при загрузке плана счетов */
+  private accountIds = new Map<string, string>();
+  private loaded = false;
+
   constructor(
     private readonly bus: EventBus,
     private readonly store: StateStore,
     private readonly crm: CrmService,
     private readonly params: ParametersService,
+    private readonly prisma: PrismaService,
   ) {
     this.store.register(
       'billing',
@@ -96,7 +103,8 @@ export class BillingService implements OnModuleInit {
     );
   }
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    await this.loadFromDb();
     this.bus.subscribe<OrderClosedEvent>('order.closed', (e) => this.onOrderClosed(e));
     // Склад: продажа мастеру — удержание из будущей выплаты (ТЗ 17.16)
     this.bus.subscribe<{ masterId: string; masterName: string; amountTiyin: number; itemName: string }>(
@@ -120,6 +128,176 @@ export class BillingService implements OnModuleInit {
         }
       },
     );
+  }
+
+  /**
+   * Загрузка с базы и посев плана счетов.
+   *
+   * План счетов — константа кода (PRD-05 §4.3), но в базе он таблица, и
+   * проводка ссылается на счёт внешним ключом. Это не дублирование источника
+   * истины: без ссылки база не может отказать проводке на несуществующий
+   * счёт, а для журнала двойной записи именно это и есть смысл ограничения.
+   * Счета заводятся один раз и опознаются кодом.
+   */
+  private async loadFromDb(): Promise<void> {
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    const d = await this.prisma.withContext(async (tx) => {
+      for (const a of ACCOUNTS) {
+        const existing = await tx.account.findFirst({ where: { tenantId, code: a.code } });
+        if (!existing) {
+          await tx.account.create({ data: { id: uuidv7(), tenantId, code: a.code, name: a.name, kind: a.kind } });
+        }
+      }
+      return {
+        accounts: await tx.account.findMany({ where: { tenantId } }),
+        txs: await tx.transaction.findMany({ orderBy: { createdAt: 'asc' } }),
+        invoices: await tx.invoice.findMany({ orderBy: { createdAt: 'asc' } }),
+        periods: await tx.accountingPeriod.findMany(),
+      };
+    });
+    this.accountIds = new Map(d.accounts.map((a) => [a.code, a.id]));
+    const codeOf = new Map(d.accounts.map((a) => [a.id, a.code]));
+
+    if (d.txs.length) {
+      this.txs.length = 0;
+      this.txs.push(
+        ...d.txs.map((t) => ({
+          id: t.id,
+          operationId: t.operationId,
+          type: t.type,
+          debit: codeOf.get(t.debitAccountId) ?? '',
+          credit: codeOf.get(t.creditAccountId) ?? '',
+          amountTiyin: Number(t.amountTiyin),
+          orderId: t.orderId ?? undefined,
+          invoiceId: t.invoiceId ?? undefined,
+          masterId: t.masterId ?? undefined,
+          isStorno: t.isStorno,
+          reversedTxId: t.reversedTxId ?? undefined,
+          comment: t.comment ?? undefined,
+          createdAt: t.createdAt.toISOString(),
+        })),
+      );
+    }
+    if (d.invoices.length) {
+      this.invoices.length = 0;
+      this.invoices.push(
+        ...d.invoices.map((i) => ({
+          id: i.id,
+          number: i.number,
+          organizationId: i.organizationId,
+          organizationName: i.organizationName,
+          kind: i.kind as InvoiceRec['kind'],
+          amountTiyin: Number(i.amountTiyin),
+          status: i.status as InvoiceRec['status'],
+          issuedAt: i.createdAt.toISOString(),
+          paidAt: i.paidAt?.toISOString(),
+          vatTiyin: Number(i.vatTiyin),
+          vatRatePercent: i.vatRatePercent,
+        })),
+      );
+      // Счётчик номеров восстанавливается из выставленных счетов, а не
+      // хранится отдельно: отдельный счётчик рассыпается ровно тогда, когда
+      // он и нужен — при восстановлении из резервной копии
+      this.invoiceSeq = this.invoices.reduce((max, i) => Math.max(max, Number(i.number.split('-').pop()) || 0), 0);
+    }
+    for (const p of d.periods) this.closedPeriods.add(p.period);
+    // Стартовые остатки узнаются по проводкам, а не по флагу: флаг может
+    // разойтись с журналом, журнал — источник истины (ТЗ 8.1)
+    this.openingDone = this.txs.some((t) => t.type === 'opening');
+    this.loaded = true;
+    if (this.txs.length || this.invoices.length) {
+      // eslint-disable-next-line no-console
+      console.log(`[Billing] из базы: проводок ${this.txs.length}, счетов ${this.invoices.length}, закрытых периодов ${this.closedPeriods.size}`);
+    }
+  }
+
+  /**
+   * Запись только дописыванием, в отличие от остальных модулей.
+   *
+   * Журнал проводок append-only (ТЗ 8.1): правка задним числом запрещена,
+   * исправление — сторно. Переписать «всё, что в памяти», как делают
+   * объекты и заявки, здесь нельзя — это было бы прямым нарушением
+   * инварианта, ради которого журнал и существует. Поэтому пишутся ровно
+   * новые проводки, а счета и периоды — точечно.
+   */
+  private writing: Promise<void> = Promise.resolve();
+
+  private enqueue(work: (tx: Parameters<Parameters<PrismaService['withContext']>[0]>[0], tenantId: string) => Promise<void>): void {
+    if (!this.prisma.enabled || !this.loaded) return;
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    this.writing = this.writing
+      .then(() => this.prisma.withContext((tx) => work(tx, tenantId)))
+      .catch((e: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error('[Billing] запись в базу не удалась:', (e as Error).message);
+      });
+  }
+
+  private appendTxs(created: TxRec[]): void {
+    this.enqueue(async (tx, tenantId) => {
+      for (const t of created) {
+        const debitAccountId = this.accountIds.get(t.debit);
+        const creditAccountId = this.accountIds.get(t.credit);
+        if (!debitAccountId || !creditAccountId) throw new Error(`нет счёта плана: ${t.debit} / ${t.credit}`);
+        await tx.transaction.create({
+          data: {
+            id: t.id,
+            tenantId,
+            operationId: t.operationId,
+            debitAccountId,
+            creditAccountId,
+            amountTiyin: BigInt(t.amountTiyin),
+            type: t.type,
+            orderId: t.orderId ?? null,
+            invoiceId: t.invoiceId ?? null,
+            masterId: t.masterId ?? null,
+            isStorno: t.isStorno,
+            reversedTxId: t.reversedTxId ?? null,
+            comment: t.comment ?? null,
+            createdAt: new Date(t.createdAt),
+          },
+        });
+      }
+    });
+  }
+
+  private saveInvoice(inv: InvoiceRec): void {
+    this.enqueue(async (tx, tenantId) => {
+      const data = {
+        number: inv.number,
+        organizationId: inv.organizationId,
+        organizationName: inv.organizationName,
+        kind: inv.kind,
+        amountTiyin: BigInt(inv.amountTiyin),
+        vatTiyin: BigInt(inv.vatTiyin),
+        vatRatePercent: inv.vatRatePercent,
+        status: inv.status,
+        paidAt: inv.paidAt ? new Date(inv.paidAt) : null,
+      };
+      await tx.invoice.upsert({
+        where: { id: inv.id },
+        create: { id: inv.id, tenantId, createdAt: new Date(inv.issuedAt), ...data },
+        update: data,
+      });
+    });
+  }
+
+  private savePeriod(month: string, closed: boolean): void {
+    this.enqueue(async (tx, tenantId) => {
+      if (closed) {
+        await tx.accountingPeriod.upsert({
+          where: { tenantId_period: { tenantId, period: month } },
+          create: { tenantId, period: month },
+          update: {},
+        });
+      } else {
+        await tx.accountingPeriod.deleteMany({ where: { tenantId, period: month } });
+      }
+    });
   }
 
   // ---------- Проводки ----------
@@ -160,6 +338,7 @@ export class BillingService implements OnModuleInit {
       createdAt: new Date().toISOString(),
     }));
     this.txs.push(...created);
+    this.appendTxs(created);
     this.store.persist();
     return created;
   }
@@ -186,6 +365,7 @@ export class BillingService implements OnModuleInit {
       createdAt: new Date().toISOString(),
     };
     this.txs.push(rec);
+    this.appendTxs([rec]);
     this.store.persist();
     return rec;
   }
@@ -451,6 +631,7 @@ export class BillingService implements OnModuleInit {
       vatRatePercent: this.vatRatePercent(),
     };
     this.invoices.push(inv);
+    this.saveInvoice(inv);
     this.store.persist();
     this.post([
       {
@@ -482,6 +663,7 @@ export class BillingService implements OnModuleInit {
       ...this.vatFields(organizationId, amountTiyin),
     };
     this.invoices.push(inv);
+    this.saveInvoice(inv);
     this.store.persist();
     this.post([
       { type: 'invoice.issued', debit: 'ar', credit: 'advances', amountTiyin, invoiceId: inv.id, comment: `СФ ${inv.number}: абонентка ${organizationName}` },
@@ -512,6 +694,7 @@ export class BillingService implements OnModuleInit {
       ...this.vatFields(organizationId, amountTiyin),
     };
     this.invoices.push(inv);
+    this.saveInvoice(inv);
     this.store.persist();
     this.post([
       {
@@ -532,6 +715,7 @@ export class BillingService implements OnModuleInit {
     if (inv.status === 'paid') throw new BadRequestException({ code: 'ALREADY_PAID' });
     inv.status = 'paid';
     inv.paidAt = new Date().toISOString();
+    this.saveInvoice(inv);
     this.store.persist();
     this.post([
       { type: 'invoice.paid', debit: 'settlement', credit: 'ar', amountTiyin: inv.amountTiyin, invoiceId: inv.id, comment: `Оплата СФ ${inv.number}` },
@@ -584,12 +768,14 @@ export class BillingService implements OnModuleInit {
     };
     if (!check.ok) throw new BadRequestException({ code: 'BALANCE_CHECK_FAILED', message: 'Баланс-чекер красный — закрытие запрещено (A-22 блокер)' });
     this.closedPeriods.add(month);
+    this.savePeriod(month, true);
     this.store.persist();
     return { month, closed: true, checklist };
   }
 
   reopenPeriod(month: string): void {
     this.closedPeriods.delete(month);
+    this.savePeriod(month, false);
     this.store.persist();
   }
 

@@ -878,6 +878,10 @@ model Transaction {
   invoiceId       String?  @map("invoice_id") @db.Uuid
   isStorno        Boolean  @default(false) @map("is_storno")
   reversedTxId    String?  @map("reversed_tx_id") @db.Uuid
+  /** Доли и удержания считаются и штатному мастеру оператора — карточки нет (см. m21) */
+  masterId        String?  @map("master_id")
+  /** Основание проводки прямым текстом: бухгалтер читает ведомость, не выходя из неё */
+  comment         String?
   idemKey         String?  @map("idem_key") // (provider, payment_id) для вебхуков
   periodLocked    Boolean  @default(false) @map("period_locked") // проводки в закрытый период отклоняет триггер
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
@@ -912,6 +916,14 @@ model Invoice {
   amountTiyin    BigInt    @map("amount_tiyin")
   vatTiyin       BigInt    @default(0) @map("vat_tiyin") // НДС изнутри (÷1.12) для плательщиков
   status         String    @default("issued") // issued | paid | overdue | cancelled
+  /**
+   * Снимок на момент выставления: организация может сменить название или
+   * перестать быть плательщиком НДС, а выставленный счёт от этого не меняется
+   * — это бухгалтерский факт, а не текущее состояние справочника.
+   */
+  organizationName String  @default("") @map("organization_name")
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz()
+  vatRatePercent Int       @default(0) @map("vat_rate_percent")
   dueOn          DateTime? @map("due_on") @db.Date
   pdfS3Key       String?   @map("pdf_s3_key")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
@@ -1577,4 +1589,106 @@ model PermitSyncOp {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
   @@map("permit_sync_op")
+}
+
+/**
+ * Закрытый учётный период (A-19).
+ *
+ * Отдельная сущность, а не флаг у проводки: закрывается период, а не запись,
+ * и это самостоятельное решение с автором и временем.
+ */
+model AccountingPeriod {
+  tenantId String   @map("tenant_id") @db.Uuid
+  /** 'YYYY-MM' — период закрывается целым месяцем */
+  period   String
+  closedAt DateTime @default(now()) @map("closed_at") @db.Timestamptz()
+  closedBy String?  @map("closed_by")
+
+  @@id([tenantId, period])
+  @@map("accounting_period")
+}
+
+/**
+ * Смена мастера (ТЗ 17.3).
+ *
+ * Время — минуты от полуночи, а не момент: смена принадлежит дате и не
+ * переезжает между часовыми поясами.
+ */
+model Shift {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  masterId   String   @map("master_id")
+  /** Снимок имени: в наряде на день стоит то, что было напечатано */
+  masterName String   @default("") @map("master_name")
+  date       DateTime @db.Date
+  startMin   Int      @map("start_min")
+  endMin     Int      @map("end_min")
+  /** Дежурный: плановые заявки на него не бронируются */
+  isDuty     Boolean  @default(false) @map("is_duty")
+  zone       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  bookings Booking[]
+
+  @@index([tenantId, date])
+  @@index([tenantId, masterId, date])
+  @@map("shift")
+}
+
+/**
+ * Бронь слота под заявку.
+ *
+ * Номер заявки лежит рядом с идентификатором: наряд на день печатается из
+ * брони, а запрос за номером в orders означал бы зависимость планировщика
+ * от заявок (DEV-07 §3).
+ */
+model Booking {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  shiftId     String   @map("shift_id") @db.Uuid
+  masterId    String   @map("master_id")
+  orderId     String   @map("order_id") @db.Uuid
+  orderNumber String   @default("") @map("order_number")
+  startMin    Int      @map("start_min")
+  endMin      Int      @map("end_min")
+  slots       Int      @default(1)
+  normHours   Decimal  @default(0) @map("norm_hours") @db.Decimal(5, 2)
+  /** Буфер на дорогу — часть брони, а не константа: зависит от зоны */
+  bufferMin   Int      @default(0) @map("buffer_min")
+  /** Якорная — жёсткое окно клиента; гибкую можно двигать */
+  anchored    Boolean  @default(false)
+  priority    Int      @default(8)
+  /**
+   * Двухчасовое окно, которое видит клиент. Хранится, а не считается из
+   * слота: клиенту названо конкретное окно, и пересчёт при изменении правил
+   * округления означал бы, что обещание поменялось задним числом.
+   */
+  clientWindowFromMin Int @default(0) @map("client_window_from_min")
+  clientWindowToMin   Int @default(0) @map("client_window_to_min")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, shiftId])
+  @@index([tenantId, orderId])
+  @@map("booking")
+}
+
+/**
+ * Лист ожидания: заявка без брони, ждущая освободившийся слот.
+ *
+ * Ключ — заявка: она стоит в очереди один раз, и повторная попытка записаться
+ * не должна двигать её вперёд.
+ */
+model WaitlistEntry {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  orderId     String   @map("order_id") @db.Uuid
+  orderNumber String   @default("") @map("order_number")
+  normHours   Decimal  @default(0) @map("norm_hours") @db.Decimal(5, 2)
+  priority    Int      @default(8)
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  @@id([tenantId, orderId])
+  @@index([tenantId, priority, at])
+  @@map("waitlist_entry")
 }
