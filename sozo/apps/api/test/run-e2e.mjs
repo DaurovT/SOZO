@@ -28,7 +28,7 @@ const ROOT = `http://localhost:${PORT}`;
 // вход с настоящим SMS, а общий сервер прогона работает на журнальном
 // отправителе. Держать оба режима в одном процессе нельзя — поставщик
 // выбирается один раз при старте.
-const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'otp-sms'];
+const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'otp-sms'];
 const suites = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 
 /** Свободен ли порт: занятый означает забытый сервер от прошлого прогона */
@@ -136,6 +136,13 @@ function cleanup() {
   // родителю оставлял внука жить и держать порт
   try { process.kill(-api.pid, 'SIGKILL'); } catch { api.kill('SIGKILL'); }
   rmSync(stateDir, { recursive: true, force: true });
+  // E2E_KEEP_DB=1 оставляет базу прогона: без этого убедиться, что записи
+  // действительно легли в PostgreSQL, можно только доверием к зелёному
+  // прогону — а он зелёный и тогда, когда запись молча падала
+  if (process.env.E2E_KEEP_DB === '1') {
+    console.log(`[e2e] база прогона оставлена: ${scratchDb}`);
+    return;
+  }
   dropScratchDb(scratchDb);
 }
 
