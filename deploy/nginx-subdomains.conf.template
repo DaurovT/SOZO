@@ -1,0 +1,73 @@
+# SOZO — раскладка по поддоменам. Подставляется deploy/set-address.sh.
+# Каждая панель на своём имени и отдаётся из корня: подпути с vite base и
+# basename роутера были обходом закрытых портов, с поддоменами они не нужны.
+
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+
+# --- API + веб-карточка заявки ---------------------------------------------
+server {
+    listen 80;
+    server_name api.__DOMAIN__;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl http2;
+    server_name api.__DOMAIN__;
+    ssl_certificate     /etc/letsencrypt/live/__CERT__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__CERT__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    client_max_body_size 12m;   # фото уходят dataURL, в API лимит 10 МБ
+
+    # Веб-карточка живёт вне префикса /v1: её адрес уходит в SMS,
+    # где каждый символ платный
+    location /v1/ { proxy_pass http://127.0.0.1:3000; include /etc/nginx/snippets/sozo-proxy.conf; }
+    location /w/  { proxy_pass http://127.0.0.1:3000; include /etc/nginx/snippets/sozo-proxy.conf; }
+    location /    { proxy_pass http://127.0.0.1:3000; include /etc/nginx/snippets/sozo-proxy.conf; }
+}
+
+# --- Админка ----------------------------------------------------------------
+server {
+    listen 80;
+    server_name admin.__DOMAIN__;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl http2;
+    server_name admin.__DOMAIN__;
+    ssl_certificate     /etc/letsencrypt/live/__CERT__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__CERT__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    root /home/azureuser/SOZO/sozo/apps/admin-web/dist;
+    index index.html;
+    location / { try_files $uri $uri/ /index.html; }
+}
+
+# --- Диспетчерская ----------------------------------------------------------
+server {
+    listen 80;
+    server_name dispatch.__DOMAIN__;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl http2;
+    server_name dispatch.__DOMAIN__;
+    ssl_certificate     /etc/letsencrypt/live/__CERT__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__CERT__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    root /home/azureuser/SOZO/sozo/apps/dispatcher-web/dist;
+    index index.html;
+    location / { try_files $uri $uri/ /index.html; }
+}
+
+# --- Всё, что пришло не на наши имена: не отвечаем ---------------------------
+server {
+    listen 80 default_server;
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_certificate     /etc/letsencrypt/live/__CERT__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__CERT__/privkey.pem;
+    return 444;
+}

@@ -33,7 +33,10 @@ export default function BuildingPage() {
       .finally(() => setLoading(false));
   }, [code]);
 
-  async function submitDemand(e: React.FormEvent) {
+  // Имя обработчика намеренно отличается от submitDemand из api: одноимённая
+  // локальная функция перекрывала импорт и вызывала саму себя — форма уходила
+  // в бесконечную рекурсию вместо запроса
+  async function onDemandSubmit(e: React.FormEvent) {
     e.preventDefault();
     // Ошибку сети не показываем: человек уже нажал, повторять ему нечего,
     // а спрос — не заявка, чтобы ради него городить экран отказа
@@ -119,7 +122,7 @@ export default function BuildingPage() {
                 <p className="muted">Мы посчитаем ваше обращение и свяжемся с управляющей компанией дома.</p>
               </div>
             ) : (
-              <form className="stack" onSubmit={submitDemand}>
+              <form className="stack" onSubmit={onDemandSubmit}>
                 <div className="field">
                   <label className="field-label" htmlFor="addr">Адрес дома</label>
                   <input

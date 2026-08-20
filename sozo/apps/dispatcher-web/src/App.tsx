@@ -20,7 +20,7 @@ import { PermitsPage } from './pages/Permits';
 
 export function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <BrowserRouter>
       <ToastProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

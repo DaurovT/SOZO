@@ -20,7 +20,7 @@ class Session extends ChangeNotifier {
   /// уже ходит на него. Перекрывается при сборке: `--dart-define=SOZO_API=...`
   /// (так поднимают приложение против локального сервера). На устройстве
   /// меняется долгим нажатием по версии на первом экране.
-  static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'https://20-52-250-154.sslip.io');
+  static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'https://api.sozo.uz');
 
   late ApiClient api = ApiClient(baseUrl: defaultBase);
 

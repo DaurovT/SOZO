@@ -175,4 +175,4 @@ export function logActionLabel(action: string): string {
 }
 
 /** Адрес диспетчерской: управление конвейером живёт там (PRD-03). */
-export const DISPATCHER_URL = 'https://20-52-250-154.sslip.io/dispatch/';
+export const DISPATCHER_URL = 'https://dispatch.sozo.uz';
