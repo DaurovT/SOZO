@@ -105,13 +105,20 @@ export class PricingService implements OnModuleInit {
     }
   }
 
+  /** До первой загрузки в памяти лежит сид из конструктора, а не данные базы */
+  private loaded = false;
+
   async onModuleInit(): Promise<void> {
-    if (!this.prisma.enabled) return;
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
     const rows = await this.prisma.withContext(async (tx) =>
       tx.priceListRelease.findMany({ include: { items: true }, orderBy: { number: 'asc' } }),
     );
     if (rows.length === 0) {
       // Базы ещё нет — записываем стартовый релиз, собранный в конструкторе
+      this.loaded = true;
       for (const r of this.releases) await this.saveRelease(r);
       // eslint-disable-next-line no-console
       console.log(`[Pricing] стартовый релиз записан в базу: позиций ${this.releases[0]?.items.length ?? 0}`);
@@ -146,6 +153,7 @@ export class PricingService implements OnModuleInit {
           .sort((a, b) => a.num - b.num),
       });
     }
+    this.loaded = true;
     this.syncCatalogNames();
     // eslint-disable-next-line no-console
     console.log(`[Pricing] релизов из базы: ${this.releases.length}`);
@@ -214,6 +222,7 @@ export class PricingService implements OnModuleInit {
       this.store.persist();
       return;
     }
+    if (!this.loaded) return;
     void this.prisma
       .withContext(async (tx) => {
         await tx.priceItem.deleteMany({ where: { releaseId: r.id } });
@@ -230,7 +239,7 @@ export class PricingService implements OnModuleInit {
       this.store.persist();
       return;
     }
-    if (!r) return;
+    if (!r || !this.loaded) return;
     void this.saveRelease(r).catch((e: unknown) => {
       // eslint-disable-next-line no-console
       console.error('[Pricing] релиз не сохранён в базу:', (e as Error).message, r.id);

@@ -118,6 +118,16 @@ model Organization {
   vatPayer      Boolean  @default(false) @map("vat_payer")
   vatRate       Int?     @map("vat_rate") // проценты; ставку подтверждает бухгалтер (ТЗ 8.10)
   contractType  String   @map("contract_type") // subscription | one_off
+  /**
+   * Годовой договор замораживает цены, месячный переводится на текущий релиз
+   * при продлении (ТЗ 3.7). Схема знала только тип договора, но не срок, а от
+   * него зависит, по какому релизу считать заявку.
+   */
+  contractKind         String?  @map("contract_kind")
+  subscriptionTiyin    BigInt?  @map("subscription_tiyin")
+  /** Релиз, замороженный годовым договором; заполняется первой заявкой */
+  priceReleaseIdFrozen String?  @map("price_release_id_frozen") @db.Uuid
+  terminationNote      String?  @map("termination_note")
   orgRoles      String[] @map("org_roles") // client | operator | contractor — множество (DEV-15 §1); поле `roles` занято связью UserRole
   status        String   @default("active") // active | suspended | terminated (ТЗ 3.1)
   settingsJson  Json     @default("{}") @map("settings_json")
@@ -141,7 +151,9 @@ model Location {
   id                String   @id @db.Uuid
   tenantId          String   @map("tenant_id") @db.Uuid
   organizationId    String   @map("organization_id") @db.Uuid
-  cityId            String   @map("city_id") @db.Uuid // с первого дня (ТЗ 17.4)
+  // Город нужен с первого дня (ТЗ 17.4), но B2B-точки заводятся адресом без
+  // выбора города: пока справочника городов нет, поле пустое, а не выдуманное
+  cityId            String?  @map("city_id") @db.Uuid
   name              String
   address           String
   geoLat            Decimal? @map("geo_lat") @db.Decimal(9, 6)
@@ -157,13 +169,70 @@ model Location {
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  building     Building?    @relation(fields: [buildingId], references: [id])
-  orders       Order[]
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  building        Building?        @relation(fields: [buildingId], references: [id])
+  orders          Order[]
+  representatives Representative[]
 
   @@index([tenantId, organizationId])
   @@index([tenantId, cityId])
   @@map("location")
+}
+
+/**
+ * Ответственный на точке B2B.
+ *
+ * В схеме этой сущности не было вовсе, хотя на ней держится вся матрица
+ * утверждений: потолок ответственного решает, кто он — сотрудник,
+ * руководитель точки или руководитель организации (`roleOf`). Не путать с
+ * `BuildingStaff`: там штат эксплуатирующей организации в контуре «Дом»,
+ * здесь — люди клиента.
+ */
+model Representative {
+  id                 String   @id @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  locationId         String   @map("location_id") @db.Uuid
+  fullName           String   @map("full_name")
+  phone              String
+  role               String
+  position           String?
+  /**
+   * Потолок утверждения. null — уровень организации, без ограничения;
+   * 0 — сотрудник. Разница смысловая, и подставлять ноль вместо null
+   * значит молча понизить человека в правах.
+   */
+  approvalLimitTiyin BigInt?  @map("approval_limit_tiyin")
+  /** Кому уходит акт. Роль от этого флага НЕ зависит (DEV-15, HANDOVER §5) */
+  primary            Boolean  @default(false)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@unique([tenantId, locationId, phone])
+  @@index([tenantId, phone])
+  @@map("representative")
+}
+
+/** Приглашение человека на точку: код живёт ограниченное время и отзывается */
+model CrmInvite {
+  id                 String    @id @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  locationId         String    @map("location_id") @db.Uuid
+  code               String
+  fullName           String?   @map("full_name")
+  role               String
+  position           String?
+  approvalLimitTiyin BigInt?   @map("approval_limit_tiyin")
+  primary            Boolean   @default(false)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz()
+  usedAt             DateTime? @map("used_at") @db.Timestamptz()
+  usedByPhone        String?   @map("used_by_phone")
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz()
+
+  @@unique([tenantId, code])
+  @@index([tenantId, locationId])
+  @@map("crm_invite")
 }
 
 model Contract {

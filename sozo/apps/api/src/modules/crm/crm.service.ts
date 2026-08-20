@@ -1,6 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 
 export interface ContractTerms {
   /** Пороги утверждений 1–3 уровня (ТЗ 5.2): пример — рук. точки 1 млн, рук. организации 5 млн, свыше — двойное */
@@ -142,11 +144,28 @@ export interface LocationRec {
 
 /** crm (DEV-07 §2 п.6): организации, точки, договоры — A-06/A-07/A-09 */
 @Injectable()
-export class CrmService {
+export class CrmService implements OnModuleInit {
   private readonly orgs: OrganizationRec[] = [];
   private readonly invites: InviteRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  /**
+   * Рабочий набор в памяти и при работе на базе.
+   *
+   * Здесь причина другая, чем у прайса: организации и лимиты меняются, и
+   * неизменяемостью это не оправдать. Оправдывает единственный писатель —
+   * приложение работает одним процессом (systemd, монолит DEV-07), и кеш не
+   * может разойтись сам с собой. `crm` читают из 61 места в глубине
+   * обработки запроса, включая проверку прав, и переводить их на async
+   * значит тронуть заявки, клиентские контроллеры и контур «Дом» разом.
+   *
+   * ОГРАНИЧЕНИЕ, о котором надо знать при масштабировании: со вторым
+   * экземпляром приложения этот кеш обязан уйти. Пока прод — один процесс,
+   * это верно; станет два — правки одного не увидит другой.
+   */
+  constructor(
+    private readonly store: StateStore,
+    private readonly prisma: PrismaService,
+  ) {
     // Демо-организация для разработки (is_demo-контур — вне биллинга и отчётов)
     this.create({
       name: 'Демо-сеть аптек «Шифо»',
@@ -186,23 +205,254 @@ export class CrmService {
         ],
       },
     );
-    this.store.register(
-      'crm',
-      () => this.orgs,
-      (d) => {
-        this.orgs.length = 0;
-        this.orgs.push(...(d as OrganizationRec[]));
-      },
-    );
-    this.store.register(
-      'crmInvites',
-      () => this.invites,
-      (d) => {
-        this.invites.length = 0;
-        this.invites.push(...((d ?? []) as InviteRec[]));
-        this.normalizePrimaries();
-      },
-    );
+    if (!this.prisma.enabled) {
+      this.store.register(
+        'crm',
+        () => this.orgs,
+        (d) => {
+          this.orgs.length = 0;
+          this.orgs.push(...((d ?? []) as OrganizationRec[]));
+        },
+      );
+      this.store.register(
+        'crmInvites',
+        () => this.invites,
+        (d) => {
+          this.invites.length = 0;
+          this.invites.push(...((d ?? []) as InviteRec[]));
+          this.normalizePrimaries();
+        },
+      );
+    }
+  }
+
+  /**
+   * Пока начальная загрузка не прошла, записывать нечего и нельзя: в памяти
+   * ещё лежат демо-объекты из конструктора со свежими идентификаторами, и
+   * попытка их сохранить упирается в уникальность ИНН уже существующей
+   * организации. Тесты это не ловили — одноразовая база всегда пустая.
+   */
+  private loaded = false;
+
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
+    const { orgs, invites } = await this.prisma.withContext(async (tx) => ({
+      orgs: await tx.organization.findMany({
+        include: { locations: { include: { representatives: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      invites: await tx.crmInvite.findMany(),
+    }));
+
+    if (orgs.length === 0) {
+      // База пустая — записываем демо-организации, собранные в конструкторе
+      this.loaded = true;
+      for (const o of this.orgs) await this.saveOrg(o);
+      // eslint-disable-next-line no-console
+      console.log(`[CRM] демо-организации записаны в базу: ${this.orgs.length}`);
+      return;
+    }
+
+    this.orgs.length = 0;
+    for (const o of orgs) {
+      this.orgs.push({
+        id: o.id,
+        name: o.name,
+        inn: o.inn,
+        vatPayer: o.vatPayer,
+        contractType: o.contractType as OrganizationRec['contractType'],
+        contractKind: (o.contractKind ?? 'monthly') as OrganizationRec['contractKind'],
+        subscriptionTiyin: o.subscriptionTiyin === null ? null : Number(o.subscriptionTiyin),
+        status: o.status as OrganizationRec['status'],
+        terms: (o.settingsJson ?? DEFAULT_TERMS) as unknown as ContractTerms,
+        priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? undefined,
+        terminationNote: o.terminationNote ?? undefined,
+        createdAt: o.createdAt.toISOString(),
+        locations: o.locations.map((l) => ({
+          id: l.id,
+          name: l.name,
+          address: l.address,
+          lat: l.geoLat === null ? undefined : Number(l.geoLat),
+          lng: l.geoLng === null ? undefined : Number(l.geoLng),
+          orderLimitTiyin: l.orderLimitTiyin === null ? null : Number(l.orderLimitTiyin),
+          monthlyLimitTiyin: l.monthlyLimitTiyin === null ? null : Number(l.monthlyLimitTiyin),
+          photoForbidden: l.photoForbidden,
+          passport: (l.passportJson ?? {}) as unknown as LocationRec['passport'],
+          access: (l.accessJson ?? {}) as unknown as LocationRec['access'],
+          preferredMasterId: l.preferredMasterId ?? undefined,
+          blacklistMasterIds: l.blacklistMasters,
+          representatives: l.representatives.map((r) => ({
+            id: r.id,
+            fullName: r.fullName,
+            phone: r.phone,
+            role: r.role,
+            position: r.position ?? undefined,
+            approvalLimitTiyin: r.approvalLimitTiyin === null ? null : Number(r.approvalLimitTiyin),
+            primary: r.primary,
+          })),
+        })) as LocationRec[],
+      } as OrganizationRec);
+    }
+    this.invites.length = 0;
+    for (const i of invites) {
+      this.invites.push({
+        id: i.id,
+        locationId: i.locationId,
+        code: i.code,
+        fullName: i.fullName ?? undefined,
+        role: i.role,
+        position: i.position ?? undefined,
+        approvalLimitTiyin: i.approvalLimitTiyin === null ? null : Number(i.approvalLimitTiyin),
+        primary: i.primary,
+        createdAt: i.createdAt.toISOString(),
+        expiresAt: i.expiresAt.toISOString(),
+        usedAt: i.usedAt?.toISOString(),
+        usedByPhone: i.usedByPhone ?? undefined,
+        revokedAt: i.revokedAt?.toISOString(),
+      } as InviteRec);
+    }
+    this.loaded = true;
+    this.normalizePrimaries();
+    // eslint-disable-next-line no-console
+    console.log(`[CRM] организаций из базы: ${this.orgs.length}, приглашений: ${this.invites.length}`);
+  }
+
+  /** Организация целиком: точки и ответственные переписываются вместе с ней */
+  private async saveOrg(o: OrganizationRec): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    await this.prisma.withContext(async (tx) => {
+      await tx.organization.upsert({
+        where: { id: o.id },
+        create: {
+          id: o.id,
+          tenantId,
+          name: o.name,
+          inn: o.inn,
+          vatPayer: o.vatPayer,
+          contractType: o.contractType,
+          contractKind: o.contractKind,
+          subscriptionTiyin: o.subscriptionTiyin === null ? null : BigInt(o.subscriptionTiyin),
+          priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? null,
+          terminationNote: o.terminationNote ?? null,
+          status: o.status,
+          settingsJson: o.terms as unknown as object,
+          createdAt: new Date(o.createdAt),
+        },
+        update: {
+          name: o.name,
+          inn: o.inn,
+          vatPayer: o.vatPayer,
+          contractType: o.contractType,
+          contractKind: o.contractKind,
+          subscriptionTiyin: o.subscriptionTiyin === null ? null : BigInt(o.subscriptionTiyin),
+          priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? null,
+          terminationNote: o.terminationNote ?? null,
+          status: o.status,
+          settingsJson: o.terms as unknown as object,
+        },
+      });
+      for (const l of o.locations) {
+        await tx.location.upsert({
+          where: { id: l.id },
+          create: {
+            id: l.id,
+            tenantId,
+            organizationId: o.id,
+            name: l.name,
+            address: l.address,
+            geoLat: l.lat ?? null,
+            geoLng: l.lng ?? null,
+            photoForbidden: l.photoForbidden,
+            orderLimitTiyin: l.orderLimitTiyin === null ? null : BigInt(l.orderLimitTiyin),
+            monthlyLimitTiyin: l.monthlyLimitTiyin === null ? null : BigInt(l.monthlyLimitTiyin),
+            passportJson: (l.passport ?? {}) as object,
+            accessJson: (l.access ?? {}) as object,
+            preferredMasterId: l.preferredMasterId ?? null,
+            blacklistMasters: l.blacklistMasterIds ?? [],
+          },
+          update: {
+            name: l.name,
+            address: l.address,
+            geoLat: l.lat ?? null,
+            geoLng: l.lng ?? null,
+            photoForbidden: l.photoForbidden,
+            orderLimitTiyin: l.orderLimitTiyin === null ? null : BigInt(l.orderLimitTiyin),
+            monthlyLimitTiyin: l.monthlyLimitTiyin === null ? null : BigInt(l.monthlyLimitTiyin),
+            passportJson: (l.passport ?? {}) as object,
+            accessJson: (l.access ?? {}) as object,
+            preferredMasterId: l.preferredMasterId ?? null,
+            blacklistMasters: l.blacklistMasterIds ?? [],
+          },
+        });
+        await tx.representative.deleteMany({ where: { locationId: l.id } });
+        for (const r of l.representatives ?? []) {
+          await tx.representative.create({
+            data: {
+              id: r.id,
+              tenantId,
+              locationId: l.id,
+              fullName: r.fullName,
+              phone: r.phone,
+              role: r.role,
+              position: r.position ?? null,
+              approvalLimitTiyin: r.approvalLimitTiyin === null ? null : BigInt(r.approvalLimitTiyin),
+              primary: r.primary,
+            },
+          });
+        }
+      }
+    });
+  }
+
+  private async saveInvites(): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    await this.prisma.withContext(async (tx) => {
+      await tx.crmInvite.deleteMany({});
+      for (const i of this.invites) {
+        await tx.crmInvite.create({
+          data: {
+            id: i.id,
+            tenantId,
+            locationId: i.locationId,
+            code: i.code,
+            fullName: i.fullName ?? null,
+            role: i.role,
+            position: i.position ?? null,
+            approvalLimitTiyin: i.approvalLimitTiyin === null ? null : BigInt(i.approvalLimitTiyin),
+            primary: i.primary,
+            createdAt: new Date(i.createdAt),
+            expiresAt: new Date(i.expiresAt),
+            usedAt: i.usedAt ? new Date(i.usedAt) : null,
+            usedByPhone: i.usedByPhone ?? null,
+            revokedAt: i.revokedAt ? new Date(i.revokedAt) : null,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * Запись изменения. Точечного сохранения нет намеренно: мутации CRM
+   * затрагивают то организацию, то точку, то список людей, и вычислять, что
+   * именно изменилось, значит держать вторую модель предметной области.
+   * Набор мал (единицы организаций), запись редкая — переписываем целиком.
+   */
+  private persistAll(): void {
+    if (!this.prisma.enabled) {
+      this.store.persist();
+      return;
+    }
+    if (!this.loaded) return; // до загрузки в памяти демо-объекты, а не данные
+    void (async () => {
+      for (const o of this.orgs) await this.saveOrg(o);
+      await this.saveInvites();
+    })().catch((e: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[CRM] изменение не сохранено в базу:', (e as Error).message);
+    });
   }
 
   /**
@@ -228,7 +478,7 @@ export class CrmService {
         changed = true;
       }
     }
-    if (changed) this.store.persist();
+    if (changed) this.persistAll();
   }
 
   /**
@@ -282,13 +532,13 @@ export class CrmService {
       const rep = loc?.representatives?.find((r) => r.id === m.repId);
       if (rep) rep.approvalLimitTiyin = m.contractTiyin;
     }
-    if (mismatches.length) this.store.persist();
+    if (mismatches.length) this.persistAll();
     return mismatches;
   }
 
   /** Сохранить изменения, сделанные снаружи (заморозка релиза по годовому договору) */
   touch(): void {
-    this.store.persist();
+    this.persistAll();
   }
 
   /**
@@ -322,14 +572,14 @@ export class CrmService {
       createdAt: new Date().toISOString(),
     };
     this.orgs.push(org);
-    this.store.persist();
+    this.persistAll();
     return org;
   }
 
   updateTerms(id: string, patch: Partial<ContractTerms>): OrganizationRec {
     const org = this.get(id);
     Object.assign(org.terms, patch);
-    this.store.persist();
+    this.persistAll();
     return org;
   }
 
@@ -344,7 +594,7 @@ export class CrmService {
   update(id: string, patch: Partial<Pick<OrganizationRec, 'name' | 'vatPayer' | 'subscriptionTiyin' | 'status' | 'contractKind'>>): OrganizationRec {
     const org = this.get(id);
     Object.assign(org, patch);
-    this.store.persist();
+    this.persistAll();
     return org;
   }
 
@@ -360,7 +610,7 @@ export class CrmService {
       representatives: [],
     };
     org.locations.push(loc);
-    this.store.persist();
+    this.persistAll();
     return loc;
   }
 
@@ -378,7 +628,7 @@ export class CrmService {
     if (patch.photoForbidden !== undefined) loc.photoForbidden = patch.photoForbidden;
     // Старые записи в state.json заведены до появления ответственных
     loc.representatives ??= [];
-    this.store.persist();
+    this.persistAll();
     return loc;
   }
 
@@ -468,7 +718,7 @@ export class CrmService {
       expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000).toISOString(),
     };
     this.invites.push(rec);
-    this.store.persist();
+    this.persistAll();
     return rec;
   }
 
@@ -488,7 +738,7 @@ export class CrmService {
     if (!me) throw new ForbiddenException({ code: 'NOT_IN_ORGANIZATION' });
     if (inv.usedAt) throw new BadRequestException({ code: 'INVITE_USED', message: 'Приглашение уже принято' });
     inv.revokedAt = new Date().toISOString();
-    this.store.persist();
+    this.persistAll();
     return inv;
   }
 
@@ -515,7 +765,7 @@ export class CrmService {
     });
     inv.usedAt = new Date().toISOString();
     inv.usedByPhone = phone;
-    this.store.persist();
+    this.persistAll();
     return { organization: found.org.name, location: found.loc.name, role: rep.role };
   }
 
@@ -554,7 +804,7 @@ export class CrmService {
     if (rep.primary) loc.representatives.forEach((r) => (r.primary = false));
     if (loc.representatives.length === 0) rep.primary = true;
     loc.representatives.push(rep);
-    this.store.persist();
+    this.persistAll();
     return rep;
   }
 
@@ -578,7 +828,7 @@ export class CrmService {
     if (patch.role?.trim()) rep.role = patch.role.trim();
     if (patch.approvalLimitTiyin !== undefined) rep.approvalLimitTiyin = patch.approvalLimitTiyin;
     if (patch.primary === true) loc.representatives.forEach((r) => (r.primary = r.id === repId));
-    this.store.persist();
+    this.persistAll();
     return rep;
   }
 
@@ -592,7 +842,7 @@ export class CrmService {
     const [gone] = loc.representatives.splice(idx, 1);
     // Точка без главного осталась бы без адресата актов — назначаем первого
     if (gone.primary && loc.representatives.length > 0) loc.representatives[0].primary = true;
-    this.store.persist();
+    this.persistAll();
     return { removed: true };
   }
 }
