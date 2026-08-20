@@ -129,7 +129,10 @@ const api = spawn('npx', ['ts-node', '--project', 'tsconfig.json', 'src/main.ts'
     ...process.env,
     STATE_FILE: join(stateDir, 'state.json'),
     PORT: String(PORT),
-    ...(scratchDb ? { DATABASE_URL: `postgresql://sozo:sozo@127.0.0.1:5432/${scratchDb}` } : {}),
+    // Приложение ходит в базу ролью sozo_app, а не владельцем: владелец здесь
+    // суперпользователь, а суперпользователь обходит RLS целиком. Прогон под
+    // владельцем проверял бы схему без изоляции — то есть не ту систему
+    ...(scratchDb ? { DATABASE_URL: `postgresql://sozo_app:sozo_app@127.0.0.1:5432/${scratchDb}` } : {}),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
   detached: true, // своя группа процессов — иначе внука не снять

@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
+import { dbFailure } from '../../common/db-failure';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import type { BuildingConnectionStatus, ObservationSeverity, ObservationSource } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
@@ -259,7 +260,7 @@ export class InMemoryBuildingRepository implements OnModuleInit {
       .then(() => this.writeAll())
       .catch((e: unknown) => {
         // eslint-disable-next-line no-console
-        console.error('[Buildings] запись в базу не удалась:', (e as Error).message);
+        console.error('[Buildings] запись в базу не удалась:', dbFailure(e));
       });
   }
 

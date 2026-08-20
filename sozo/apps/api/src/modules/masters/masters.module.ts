@@ -3,6 +3,7 @@ import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { IdentityService } from '../identity/identity.service';
 import { StateStore } from '../../common/state-store';
+import { dbFailure } from '../../common/db-failure';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import { seedingAllowed } from '../../common/seeding';
@@ -235,7 +236,7 @@ export class MastersService implements OnModuleInit {
       for (const m of this.masters) await this.saveMaster(m);
     })().catch((e: unknown) => {
       // eslint-disable-next-line no-console
-      console.error('[Masters] изменение не сохранено в базу:', (e as Error).message);
+      console.error('[Masters] изменение не сохранено в базу:', dbFailure(e));
     });
   }
 

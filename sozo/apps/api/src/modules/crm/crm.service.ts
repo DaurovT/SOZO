@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { dbFailure } from '../../common/db-failure';
 import { PrismaService } from '../../common/prisma.service';
 import { seedingAllowed } from '../../common/seeding';
 import { currentDbContext, systemContext } from '../../common/db-context';
@@ -493,7 +494,7 @@ export class CrmService implements OnModuleInit {
       await this.saveInvites();
     })().catch((e: unknown) => {
       // eslint-disable-next-line no-console
-      console.error('[CRM] изменение не сохранено в базу:', (e as Error).message);
+      console.error('[CRM] изменение не сохранено в базу:', dbFailure(e));
     });
   }
 

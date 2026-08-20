@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { PermitStatus, PermitApprovalKind, PassType, ShutdownStatus, ResourceType } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
+import { dbFailure } from '../../common/db-failure';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
@@ -114,7 +115,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
       .then(() => this.writeAll())
       .catch((e: unknown) => {
         // eslint-disable-next-line no-console
-        console.error('[Access] запись в базу не удалась:', (e as Error).message);
+        console.error('[Access] запись в базу не удалась:', dbFailure(e));
       });
   }
 
@@ -224,7 +225,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
       for (const [key, permitId] of this.ops) {
         await tx.permitSyncOp.upsert({
           where: { clientOpUuid: key },
-          create: { clientOpUuid: key, permitId },
+          create: { clientOpUuid: key, tenantId, permitId },
           update: {},
         });
       }

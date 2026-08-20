@@ -18,7 +18,15 @@ ROOT=/home/azureuser/SOZO/sozo
 ENV_FILE=/etc/sozo/sozo.env
 STATE=/var/lib/sozo/state.json
 DB_NAME=sozo
-DB_URL="postgresql://sozo:sozo@127.0.0.1:5432/${DB_NAME}"
+# Приложение ходит в базу ролью sozo_app, а не владельцем.
+#
+# Владелец `sozo` — суперпользователь, а суперпользователь обходит RLS
+# целиком: политики на него не действуют, и FORCE тоже. Пока прод подключался
+# владельцем, изоляция арендаторов была написана, объявлена в документации и
+# не работала ни секунды. Пароль генерируется здесь и живёт только в
+# /etc/sozo/sozo.env.
+APP_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24)
+DB_URL="postgresql://sozo_app:${APP_PASSWORD}@127.0.0.1:5432/${DB_NAME}"
 STAMP=$(date +%Y%m%d%H%M%S)
 SNAPSHOT="/var/lib/sozo/state.pre-pg.${STAMP}.json"
 # Как разрешать конфликты снимка со схемой. Умолчание — ничего не терять:
@@ -54,6 +62,13 @@ for m in $(ls -d prisma/migrations/*/ | xargs -n1 basename | sort -V); do
     || { echo "Миграция ${m} не применилась"; systemctl start sozo-api; exit 1; }
 done
 echo "миграции применены"
+
+# Пароль роли приложения — свой на каждой установке. Миграция заводит роль с
+# разработческим паролем, и оставить его в проде значит держать открытой
+# дверь, о которой все забудут
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U sozo -d postgres -tAq -c "ALTER ROLE sozo_app LOGIN PASSWORD '${APP_PASSWORD}'" >/dev/null
+echo "пароль роли приложения обновлён"
 
 say "4/7 Что поедет (ничего не пишется)"
 STATE_FILE="$SNAPSHOT" DATABASE_URL="$DB_URL" node apps/api/dist/tools/import-state.js --dry

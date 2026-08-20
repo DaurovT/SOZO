@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { masterShare, roundTo100Soums, uuidv7, serviceFee, SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
+import { dbFailure } from '../../common/db-failure';
 import { StateStore } from '../../common/state-store';
 import { CrmService } from '../crm/crm.service';
 import { ParametersService } from '../platform/parameters.service';
@@ -233,7 +234,7 @@ export class BillingService implements OnModuleInit {
       .then(() => this.prisma.withContext((tx) => work(tx, tenantId)))
       .catch((e: unknown) => {
         // eslint-disable-next-line no-console
-        console.error('[Billing] запись в базу не удалась:', (e as Error).message);
+        console.error('[Billing] запись в базу не удалась:', dbFailure(e));
       });
   }
 

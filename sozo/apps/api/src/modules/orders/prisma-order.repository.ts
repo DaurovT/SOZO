@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { OrderStatus } from '@sozo/contracts';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
+import { dbFailure } from '../../common/db-failure';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import type { OrderRecord, OrderRepository } from './order.repository';
 
@@ -128,7 +129,7 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
     this.timer = setTimeout(() => {
       void this.flush().catch((e: unknown) => {
         // eslint-disable-next-line no-console
-        console.error('[Orders] отложенная запись не удалась:', (e as Error).message);
+        console.error('[Orders] отложенная запись не удалась:', dbFailure(e));
       });
     }, 500);
   }

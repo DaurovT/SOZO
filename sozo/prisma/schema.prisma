@@ -1585,9 +1585,17 @@ model UnitAccessRequest {
  */
 model PermitSyncOp {
   clientOpUuid String   @id @map("client_op_uuid")
+  /**
+   * Арендатор нужен собственный (m35). Изоляция «видно, если виден наряд»
+   * превращала идемпотентность в зависимость от порядка записи, а смысл
+   * таблицы ровно обратный: помнить о применённой операции даже тогда, когда
+   * всё остальное пошло не так.
+   */
+  tenantId     String   @map("tenant_id") @db.Uuid
   permitId     String   @map("permit_id")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
+  @@index([tenantId])
   @@map("permit_sync_op")
 }
 
@@ -1691,4 +1699,1512 @@ model WaitlistEntry {
   @@id([tenantId, orderId])
   @@index([tenantId, priority, at])
   @@map("waitlist_entry")
+}
+
+// ===========================================================================
+// Разделы без таблиц (DEV-19). Проектирование, а не портирование: этих
+// сущностей в DEV-02 не было — они появились в коде позже схемы.
+//
+// Общие правила, по которым здесь всё сделано:
+//   · человек опознаётся телефоном, а не ссылкой на `User` — учётной записи
+//     у жителя, консьержа и заявителя может не быть вовсе (см. m21);
+//   · деньги — BigInt в тийинах с CHECK на неотрицательность;
+//   · снимок (имя, номер, подпись) хранится рядом с идентификатором: документ
+//     обязан читаться так, как был напечатан, даже если справочник изменили;
+//   · jsonb — только для того, что читается целиком и никогда не ищется:
+//     на него не наложить CHECK и не построить внятный индекс;
+//   · дочерние коллекции — таблицы, если по ним считают или ищут.
+// ===========================================================================
+
+/**
+ * Профиль клиента B2C.
+ *
+ * Ключ — телефон, а не выданный идентификатор: клиент входит по телефону, по
+ * нему же приходят заявки из веб-карточки и по ссылке из SMS, где никакого
+ * профиля ещё нет. Отдельный uuid добавил бы второй способ назвать того же
+ * человека, и первый же импорт разложил бы его на два профиля.
+ */
+model ClientProfile {
+  tenantId String @map("tenant_id") @db.Uuid
+  phone    String
+  fullName String @default("") @map("full_name")
+  locale   String @default("ru") // ru | uz
+
+  /**
+   * Согласия — колонки, а не jsonb: по ним отвечают регулятору, и вопрос
+   * «сколько человек дали согласие на маркетинг» должен быть запросом,
+   * а не выгрузкой с разбором.
+   */
+  consentPersonalData Boolean   @default(false) @map("consent_personal_data")
+  consentMarketing    Boolean   @default(false) @map("consent_marketing")
+  consentAt           DateTime? @map("consent_at") @db.Timestamptz()
+
+  /** Любимый мастер: снимок имени рядом — карточка могла быть переименована */
+  favoriteMasterId   String? @map("favorite_master_id")
+  favoriteMasterName String? @map("favorite_master_name")
+  /** payme | click | uzum | card | cash — подставляется в оплату по умолчанию */
+  preferredPaymentProvider String? @map("preferred_payment_provider")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  addresses         ClientAddress[]
+  complaints        ClientComplaint[]
+  promoWallet       ClientPromoWallet[]
+  readNotifications ClientReadNotification[]
+
+  @@id([tenantId, phone])
+  @@map("client_profile")
+}
+
+/**
+ * Адрес клиента.
+ *
+ * Подъезд, этаж и домофон — отдельные колонки, а не одна строка адреса:
+ * мастер читает их по дороге, диспетчер по ним подсказывает, а слитая строка
+ * заставляет разбирать её глазами в момент, когда человек стоит у подъезда.
+ */
+model ClientAddress {
+  id          String  @id @db.Uuid
+  tenantId    String  @map("tenant_id") @db.Uuid
+  clientPhone String  @map("client_phone")
+  label       String?
+  street      String
+  apartment   String?
+  entrance    String?
+  floor       String?
+  intercom    String?
+  hasLift     Boolean @default(false) @map("has_lift")
+  comment     String?
+  geoLat      Float?  @map("geo_lat")
+  geoLng      Float?  @map("geo_lng")
+  /** Основной адрес ровно один — частичный уникальный индекс в миграции */
+  isPrimary   Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  client ClientProfile @relation(fields: [tenantId, clientPhone], references: [tenantId, phone], onDelete: Cascade)
+
+  @@index([tenantId, clientPhone])
+  @@map("client_address")
+}
+
+/**
+ * Обращение клиента из приложения.
+ *
+ * Отдельно от `QualityComplaint`: сюда клиент пишет что угодно, включая
+ * «не понравился запах» — а жалоба качества это уже заведённое дело со
+ * сроками ответа и влиянием на рейтинг мастера. Ссылка ведёт от первого ко
+ * второму, когда обращение признали жалобой.
+ */
+model ClientComplaint {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  clientPhone String   @map("client_phone")
+  type        String
+  text        String
+  orderId     String?  @map("order_id") @db.Uuid
+  orderNumber String?  @map("order_number")
+  photoIds    String[] @map("photo_ids")
+  status      String   @default("new") // new | in_progress | resolved | closed
+  resolution  String?
+  /** Дело в качестве, если обращение переросло в жалобу */
+  qualityId   String?  @map("quality_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  client ClientProfile @relation(fields: [tenantId, clientPhone], references: [tenantId, phone], onDelete: Cascade)
+
+  @@index([tenantId, clientPhone, createdAt(sort: Desc)])
+  @@map("client_complaint")
+}
+
+/**
+ * Промокод в кошельке клиента.
+ *
+ * Таблица, а не список в профиле: по ней проверяют, не потрачен ли код, и
+ * считают, сколько кодов раздали и сколько дошло до заказа.
+ */
+model ClientPromoWallet {
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  clientPhone String    @map("client_phone")
+  code        String
+  addedAt     DateTime  @default(now()) @map("added_at") @db.Timestamptz()
+  usedAt      DateTime? @map("used_at") @db.Timestamptz()
+  orderNumber String?   @map("order_number")
+
+  client ClientProfile @relation(fields: [tenantId, clientPhone], references: [tenantId, phone], onDelete: Cascade)
+
+  @@unique([tenantId, clientPhone, code])
+  @@map("client_promo_wallet")
+}
+
+/**
+ * Отметка «уведомление прочитано».
+ *
+ * Таблица, а не массив в профиле: массив рос бы без предела у активного
+ * клиента и переписывался целиком на каждое открытие списка.
+ */
+model ClientReadNotification {
+  tenantId       String   @map("tenant_id") @db.Uuid
+  clientPhone    String   @map("client_phone")
+  notificationId String   @map("notification_id")
+  readAt         DateTime @default(now()) @map("read_at") @db.Timestamptz()
+
+  client ClientProfile @relation(fields: [tenantId, clientPhone], references: [tenantId, phone], onDelete: Cascade)
+
+  @@id([tenantId, clientPhone, notificationId])
+  @@map("client_read_notification")
+}
+
+/**
+ * Предложение заявки мастеру (M-12).
+ *
+ * Живёт секунды и умирает по сроку, но переживать перезапуск обязано: иначе
+ * после выкладки все висящие предложения исчезают, а заявки остаются
+ * нераспределёнными и никто об этом не узнаёт.
+ *
+ * Вилка оценки и доля мастера — снимок на момент предложения: мастер
+ * принимает решение по названным цифрам, и пересчёт их задним числом при
+ * смене прайса означал бы, что он согласился не на то.
+ */
+model MasterOffer {
+  id          String @id @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  orderId     String @map("order_id") @db.Uuid
+  orderNumber String @map("order_number")
+  masterId    String @map("master_id")
+  masterName  String @default("") @map("master_name")
+  category    String @default("")
+  district    String @default("")
+  urgency     String @default("normal") // normal | urgent | emergency
+
+  slotStart DateTime? @map("slot_start") @db.Timestamptz()
+  slotEnd   DateTime? @map("slot_end") @db.Timestamptz()
+
+  estimateFromTiyin    BigInt @default(0) @map("estimate_from_tiyin")
+  estimateToTiyin      BigInt @default(0) @map("estimate_to_tiyin")
+  masterShareFromTiyin BigInt @default(0) @map("master_share_from_tiyin")
+
+  distanceHint String? @map("distance_hint")
+  /** Парная заявка: едут двое, и отказ одного снимает обоих */
+  isPaired     Boolean @default(false) @map("is_paired")
+  kind         String  @default("personal") // personal | express | helper
+  ttlSeconds   Int     @default(60) @map("ttl_seconds")
+  waitingSince DateTime? @map("waiting_since") @db.Timestamptz()
+
+  status        String    @default("pending") // pending | accepted | declined | expired | revoked
+  declineReason String?   @map("decline_reason")
+  respondedAt   DateTime? @map("responded_at") @db.Timestamptz()
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz()
+
+  @@index([tenantId, masterId, status])
+  @@index([tenantId, orderId])
+  // Прогон таймера ищет только то, что ещё ждёт ответа
+  @@index([tenantId, expiresAt])
+  @@map("master_offer")
+}
+
+/**
+ * Смена мастера: на линии или нет.
+ *
+ * Одна строка на мастера — состояние, а не журнал. Последняя геометка лежит
+ * здесь же колонками: её спрашивают на каждом распределении, и join ради
+ * двух чисел на горячем пути не окупается.
+ */
+model MasterShiftState {
+  tenantId String   @map("tenant_id") @db.Uuid
+  masterId String   @map("master_id")
+  online   Boolean  @default(false)
+  since    DateTime @default(now()) @db.Timestamptz()
+
+  lastLat      Float?    @map("last_lat")
+  lastLng      Float?    @map("last_lng")
+  lastAccuracy Float?    @map("last_accuracy")
+  lastPingAt   DateTime? @map("last_ping_at") @db.Timestamptz()
+
+  @@id([tenantId, masterId])
+  @@map("master_shift_state")
+}
+
+/**
+ * Геособытие мастера.
+ *
+ * Append-only и отдельно от состояния: по нему разбирают спор «мастер не
+ * выехал» и снимают санкцию, и переписывать его нельзя. Координаты
+ * обнуляемы — отказ в доступе к геолокации это тоже событие, и молчание
+ * приложения должно быть видно, а не выглядеть как отсутствие записи.
+ */
+model MasterGeoEvent {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  masterId String   @map("master_id")
+  event    String
+  lat      Float?
+  lng      Float?
+  orderId  String?  @map("order_id") @db.Uuid
+  at       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, masterId, at(sort: Desc)])
+  @@map("master_geo_event")
+}
+
+/**
+ * Уведомление мастеру.
+ *
+ * Текст хранится собранным, а аргументы — рядом: приложение показывает его на
+ * языке мастера, и перевод делается при показе. Хранить только ключ нельзя —
+ * тогда старое уведомление меняет смысл при правке словаря.
+ */
+model MasterNotification {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  masterId  String   @map("master_id")
+  kind      String
+  title     String
+  body      String
+  bodyArgs  Json     @default("[]") @map("body_args")
+  priority  String   @default("normal")
+  deepLink  String?  @map("deep_link")
+  orderId   String?  @map("order_id") @db.Uuid
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, masterId, createdAt(sort: Desc)])
+  @@map("master_notification")
+}
+
+/**
+ * Апелляция мастера: на оценку, удержание, санкцию или жалобу.
+ *
+ * `reference` — свободная ссылка на то, что оспаривают: номер заявки, код
+ * удержания, идентификатор жалобы. Внешнего ключа нет намеренно: предметы
+ * спора живут в четырёх разных таблицах, и связь на все сразу означала бы
+ * четыре обнуляемых колонки, из которых заполнена одна.
+ */
+model MasterAppeal {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  masterId   String    @map("master_id")
+  subject    String // rating | deduction | sanction | complaint
+  reference  String
+  text       String
+  status     String    @default("open") // open | accepted | rejected
+  resolution String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz()
+
+  @@index([tenantId, masterId, status])
+  @@map("master_appeal")
+}
+
+/** Чаевые мастеру: деньги мимо расчёта по заявке, но в его доходе */
+model MasterTip {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  masterId    String   @map("master_id")
+  orderId     String   @map("order_id") @db.Uuid
+  orderNumber String   @map("order_number")
+  amountTiyin BigInt   @map("amount_tiyin")
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, masterId, at(sort: Desc)])
+  @@map("master_tip")
+}
+
+/**
+ * Анкета кандидата в мастера (M-01…M-05).
+ *
+ * Ключ — телефон: анкета заводится до того, как у человека появляется
+ * карточка мастера, и до первого входа в приложение. `masterId`
+ * проставляется, когда кандидат принят, и до этого пуст — это и есть
+ * граница между кандидатом и мастером.
+ */
+model MasterApplication {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  phone           String
+  masterId        String?  @map("master_id")
+  fullName        String   @map("full_name")
+  experienceYears Int      @default(0) @map("experience_years")
+  about           String?
+  skillTags       String[] @map("skill_tags")
+  zones           String[]
+  transport       String   @default("public") // own_car | public
+  taxMode         String   @default("self_employed") @map("tax_mode") // self_employed | gph
+  referralCode    String?  @map("referral_code")
+  facePhoto       String?  @map("face_photo")
+
+  stage           String    @default("new")
+  interviewAt     DateTime? @map("interview_at") @db.Timestamptz()
+  rejectionReason String?   @map("rejection_reason")
+  /** Пройденные модули обучения — коды, порядок неважен */
+  trainingDone    String[]  @map("training_done")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  documents    MasterApplicationDocument[]
+  toolChecks   MasterApplicationToolCheck[]
+  examAttempts MasterApplicationExam[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, stage])
+  @@map("master_application")
+}
+
+/**
+ * Документ кандидата.
+ *
+ * Таблица, а не jsonb: по ней строится очередь проверки — «покажи всех, у
+ * кого паспорт загружен, но не проверен», — и это запрос, а не разбор
+ * снимка в приложении.
+ */
+model MasterApplicationDocument {
+  id            String  @id @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  applicationId String  @map("application_id") @db.Uuid
+  code          String
+  name          String
+  status        String  @default("missing") // missing | uploaded | verified | rejected
+  file          String?
+  comment       String?
+
+  application MasterApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, code])
+  @@index([tenantId, status])
+  @@map("master_application_document")
+}
+
+/** Подтверждение инструмента по навыку: без него мастера не выпускают на линию */
+model MasterApplicationToolCheck {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  skill         String
+  items         String[]
+  confirmed     Boolean  @default(false)
+  photo         String?
+
+  application MasterApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, skill])
+  @@map("master_application_tool_check")
+}
+
+/**
+ * Попытка экзамена.
+ *
+ * Каждая попытка — строка, а не перезапись результата: по числу попыток и по
+ * тому, какие темы валятся, правят обучение. Перезапись оставила бы только
+ * последнюю, и вопрос «где мы теряем людей» стал бы неотвечаемым.
+ */
+model MasterApplicationExam {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  applicationId String    @map("application_id") @db.Uuid
+  score         Int
+  wrongTopics   String[]  @map("wrong_topics")
+  passedAt      DateTime? @map("passed_at") @db.Timestamptz()
+  at            DateTime  @default(now()) @db.Timestamptz()
+
+  application MasterApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, applicationId, at])
+  @@map("master_application_exam")
+}
+
+/**
+ * Расходники у мастера в машине.
+ *
+ * Остаток, а не журнал: ключ — мастер и позиция каталога. Движения пишутся
+ * пополнениями и списаниями по заявке, а здесь лежит то, что есть сейчас.
+ */
+model MasterStock {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  masterId  String   @map("master_id")
+  catalogId String   @map("catalog_id")
+  qty       Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@id([tenantId, masterId, catalogId])
+  @@map("master_stock")
+}
+
+/** Пополнение сумки мастера: чек, сумма и что именно куплено */
+model MasterStockRefill {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  id          String   @id @db.Uuid
+  masterId    String   @map("master_id")
+  receiptFile String?  @map("receipt_file")
+  totalTiyin  BigInt   @default(0) @map("total_tiyin")
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  items MasterStockRefillItem[]
+
+  @@index([tenantId, masterId, at(sort: Desc)])
+  @@map("master_stock_refill")
+}
+
+model MasterStockRefillItem {
+  id        String @id @db.Uuid
+  refillId  String @map("refill_id") @db.Uuid
+  catalogId String @map("catalog_id")
+  qty       Int
+  costTiyin BigInt @default(0) @map("cost_tiyin")
+
+  refill MasterStockRefill @relation(fields: [refillId], references: [id], onDelete: Cascade)
+
+  @@map("master_stock_refill_item")
+}
+
+/**
+ * Код закупки: разрешение потратить деньги платформы в партнёрском магазине.
+ *
+ * Лимит — колонка с CHECK: код без потолка означает открытый кошелёк.
+ * Накладная лежит рядом отдельной таблицей — по её позициям сверяют, что
+ * куплено то, ради чего код выдавался.
+ */
+model PurchaseCode {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  code       String
+  orderId    String   @map("order_id") @db.Uuid
+  masterId   String   @map("master_id")
+  limitTiyin BigInt   @map("limit_tiyin")
+  status     String   @default("active") // active | used | expired
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz()
+
+  invoiceFile       String?   @map("invoice_file")
+  invoiceTotalTiyin BigInt?   @map("invoice_total_tiyin")
+  invoiceAt         DateTime? @map("invoice_at") @db.Timestamptz()
+
+  invoiceItems PurchaseInvoiceItem[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, masterId, status])
+  @@map("purchase_code")
+}
+
+model PurchaseInvoiceItem {
+  id             String @id @db.Uuid
+  purchaseCodeId String @map("purchase_code_id") @db.Uuid
+  name           String
+  amountTiyin    BigInt @map("amount_tiyin")
+
+  purchaseCode PurchaseCode @relation(fields: [purchaseCodeId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_invoice_item")
+}
+
+/**
+ * Единица оборудования платформы.
+ *
+ * Одна таблица на два реестра. В коде их было два: в `registry` — с
+ * инвентарным номером, стоимостью и датой обслуживания, в `master-api` — с
+ * категорией, требуемым навыком и фотографией. Это одна и та же вещь,
+ * описанная дважды: перфоратор с инвентарным номером, который выдают мастеру
+ * под акт. Два описания означали два ответа на вопрос «где сейчас этот
+ * перфоратор», и расходились они бы ровно в момент спора о пропаже.
+ *
+ * Состояния сведены тоже: `repair` и `maintenance` — одно и то же, а вот
+ * `lost` и `written_off` разное: утерянное ищут и взыскивают, списанное
+ * закрыто.
+ */
+model EquipmentUnit {
+  id            String  @id @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  inventoryNo   String  @map("inventory_no")
+  name          String
+  category      String  @default("")
+  requiredSkill String? @map("required_skill")
+  costTiyin     BigInt  @default(0) @map("cost_tiyin")
+  /** in_stock | issued | maintenance | lost | written_off */
+  status        String  @default("in_stock")
+
+  holderMasterId    String?   @map("holder_master_id")
+  holderMasterName  String?   @map("holder_master_name")
+  issuedAt          DateTime? @map("issued_at") @db.Timestamptz()
+  nextMaintenanceAt DateTime? @map("next_maintenance_at") @db.Timestamptz()
+  photoFile         String?   @map("photo_file")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  acts EquipmentAct[]
+
+  @@unique([tenantId, inventoryNo])
+  @@index([tenantId, status])
+  @@index([tenantId, holderMasterId])
+  @@map("equipment_unit")
+}
+
+/**
+ * Акт выдачи или возврата оборудования.
+ *
+ * Код подтверждения и признак подтверждения — колонки: акт без подтверждения
+ * второй стороной не акт, а заявление одной из них, и по нему нельзя
+ * взыскивать. Комплектность лежит строками — по ней спорят поимённо.
+ */
+model EquipmentAct {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  equipmentId String   @map("equipment_id") @db.Uuid
+  masterId    String   @map("master_id")
+  kind        String // issue | return
+  photos      String[]
+  discrepancy String?
+  confirmCode String   @map("confirm_code")
+  confirmed   Boolean  @default(false)
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  equipment    EquipmentUnit          @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  completeness EquipmentActItem[]
+
+  @@index([tenantId, equipmentId, at(sort: Desc)])
+  @@map("equipment_act")
+}
+
+model EquipmentActItem {
+  id    String  @id @db.Uuid
+  actId String  @map("act_id") @db.Uuid
+  item  String
+  ok    Boolean @default(true)
+
+  act EquipmentAct @relation(fields: [actId], references: [id], onDelete: Cascade)
+
+  @@map("equipment_act_item")
+}
+
+/**
+ * Партнёрский магазин.
+ *
+ * Кредитный лимит и текущая задолженность — колонки с CHECK: закупка сверх
+ * лимита это решение, которое принимает человек, а не следствие того, что
+ * никто не посчитал.
+ */
+model PartnerStore {
+  id               String   @id @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  name             String
+  categories       String[]
+  creditLimitTiyin BigInt   @default(0) @map("credit_limit_tiyin")
+  payableTiyin     BigInt   @default(0) @map("payable_tiyin")
+  status           String   @default("active") // active | paused
+
+  @@index([tenantId, status])
+  @@map("partner_store")
+}
+
+/**
+ * Расходник в каталоге «сумки мастера».
+ *
+ * Фикс-прайс, а не закупочная цена: по ТЗ 8.4 расходник из сумки идёт без
+ * чека и вся сумма достаётся мастеру. Цена здесь — то, что видит клиент, и
+ * менять её задним числом нельзя, поэтому в заявку она уходит снимком.
+ */
+model ConsumableCatalog {
+  id            String  @id @db.Uuid
+  tenantId      String  @map("tenant_id") @db.Uuid
+  name          String
+  unit          String
+  fixPriceTiyin BigInt  @map("fix_price_tiyin")
+  normPerOrder  String? @map("norm_per_order")
+
+  @@unique([tenantId, name])
+  @@map("consumable_catalog")
+}
+
+/**
+ * Позиция склада платформы.
+ *
+ * Отдельно от сумки мастера и от оборудования: тут спецтехника, инструмент,
+ * расходники и мерч, которые лежат на складе и выдаются под расписку или
+ * продаются мастеру. Остаток — колонка, движения — своя таблица.
+ */
+model StockItem {
+  id        String @id @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  category  String // special_equipment | tool | consumable | uniform_merch | other
+  name      String
+  unit      String
+  qtyOnHand Int    @default(0) @map("qty_on_hand")
+  /** Ниже этого остатка склад просит пополнения */
+  minQty    Int    @default(0) @map("min_qty")
+  costTiyin BigInt @default(0) @map("cost_tiyin")
+
+  movements StockMovement[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, category])
+  @@map("stock_item")
+}
+
+/**
+ * Движение по складу.
+ *
+ * Append-only: остаток пересчитывается из движений, а не правится руками.
+ * Имя позиции продублировано снимком — накладная должна читаться так, как
+ * была выписана, даже если позицию потом переименовали.
+ */
+model StockMovement {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  stockItemId String   @map("stock_item_id") @db.Uuid
+  itemName    String   @map("item_name")
+  type        String // receipt | temp_use | sale_to_master | write_off | return
+  qty         Int
+  masterId    String?  @map("master_id")
+  masterName  String?  @map("master_name")
+  priceTiyin  BigInt?  @map("price_tiyin")
+  comment     String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  item StockItem @relation(fields: [stockItemId], references: [id])
+
+  @@index([tenantId, stockItemId, createdAt(sort: Desc)])
+  @@map("stock_movement")
+}
+
+/**
+ * Развилка мастера на заявке (M-20…M-27).
+ *
+ * Одна таблица на восемь видов, а не восемь таблиц: у всех одинаковый
+ * жизненный цикл — мастер сообщил, диспетчер разобрал, — и различаются они
+ * только содержимым, которое читается целиком и не ищется. Поэтому вид
+ * колонкой, а подробности jsonb: разложить их по колонкам значило бы завести
+ * два десятка обнуляемых полей, из которых заполнены два.
+ */
+model OrderBranch {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  orderId    String    @map("order_id") @db.Uuid
+  masterId   String    @map("master_id")
+  kind       String // no_access | client_unavailable | unsafe_abort | cant_go | conservation | shopping_list | helper_request | delay
+  reasonCode String?   @map("reason_code")
+  comment    String?
+  payload    Json      @default("{}")
+  status     String    @default("open") // open | resolved
+  resolution String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz()
+
+  @@index([tenantId, orderId])
+  @@index([tenantId, status, createdAt])
+  @@map("order_branch")
+}
+
+/**
+ * Выбор запчасти по трём уровням (M-24).
+ *
+ * Варианты — своя таблица, а не jsonb: в них деньги, а на jsonb не наложить
+ * CHECK на неотрицательность и не посчитать, как часто клиент выбирает
+ * дешёвый уровень. Второе — прямой вход в разговор о марже.
+ */
+model SpareTierOffer {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  orderId      String    @map("order_id") @db.Uuid
+  masterId     String    @map("master_id")
+  partName     String    @map("part_name")
+  mode         String    @default("catalog") // catalog | photo
+  chosenTier   String?   @map("chosen_tier") // economy | standard | premium
+  status       String    @default("sent") // sent | chosen | expired
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  chosenAt     DateTime? @map("chosen_at") @db.Timestamptz()
+  procuredAt   DateTime? @map("procured_at") @db.Timestamptz()
+  procuredNote String?   @map("procured_note")
+
+  variants SpareTierVariant[]
+
+  @@index([tenantId, orderId])
+  @@map("spare_tier_offer")
+}
+
+model SpareTierVariant {
+  id          String  @id @db.Uuid
+  offerId     String  @map("offer_id") @db.Uuid
+  tier        String // economy | standard | premium
+  title       String
+  amountTiyin BigInt  @map("amount_tiyin")
+  note        String?
+
+  offer SpareTierOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, tier])
+  @@map("spare_tier_variant")
+}
+
+/**
+ * Допработы по фото (M-25).
+ *
+ * Два варианта — минимальный и полный, — и молчание клиента тоже исход:
+ * `silent` это не «нет ответа», а состояние, из которого работа продолжается
+ * по минимальному варианту. Ступени эскалации лежат строками: по ним видно,
+ * дошло ли до звонка диспетчера, и это спрашивают при разборе.
+ */
+model AddworkOffer {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  orderId       String    @map("order_id") @db.Uuid
+  masterId      String    @map("master_id")
+  photoCount    Int       @default(0) @map("photo_count")
+  status        String    @default("sent") // sent | approved | declined | silent
+  chosenVariant String?   @map("chosen_variant") // minimal | full
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resolvedAt    DateTime? @map("resolved_at") @db.Timestamptz()
+
+  variants   AddworkVariant[]
+  escalation AddworkEscalation[]
+
+  @@index([tenantId, orderId])
+  @@map("addwork_offer")
+}
+
+model AddworkVariant {
+  id         String @id @db.Uuid
+  offerId    String @map("offer_id") @db.Uuid
+  kind       String // minimal | full
+  title      String
+  totalTiyin BigInt @map("total_tiyin")
+
+  offer AddworkOffer  @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  lines AddworkLine[]
+
+  @@unique([offerId, kind])
+  @@map("addwork_variant")
+}
+
+model AddworkLine {
+  id          String @id @db.Uuid
+  variantId   String @map("variant_id") @db.Uuid
+  name        String
+  amountTiyin BigInt @map("amount_tiyin")
+  qty         Int    @default(1)
+
+  variant AddworkVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("addwork_line")
+}
+
+model AddworkEscalation {
+  id      String   @id @db.Uuid
+  offerId String   @map("offer_id") @db.Uuid
+  step    String
+  at      DateTime @db.Timestamptz()
+  done    Boolean  @default(false)
+
+  offer AddworkOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@map("addwork_escalation")
+}
+
+/**
+ * Рекомендация мастера на будущее (M-26).
+ *
+ * Не заявка и не смета: мастер увидел, что скоро потечёт, и назвал цену.
+ * Отложенная рекомендация — отдельный исход, а не отказ: по ней возвращаются
+ * через месяц, и путать её с «клиент отказался» значит терять работу.
+ */
+model Recommendation {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  orderId   String   @map("order_id") @db.Uuid
+  masterId  String   @map("master_id")
+  comment   String?
+  status    String   @default("sent") // sent | accepted | declined | postponed
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  lines RecommendationLine[]
+
+  @@index([tenantId, orderId])
+  @@index([tenantId, status])
+  @@map("recommendation")
+}
+
+model RecommendationLine {
+  id               String @id @db.Uuid
+  recommendationId String @map("recommendation_id") @db.Uuid
+  name             String
+  amountTiyin      BigInt @map("amount_tiyin")
+  qty              Int    @default(1)
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@map("recommendation_line")
+}
+
+/**
+ * Объект обслуживания у клиента: котёл, кондиционер, машина.
+ *
+ * Заводится по заявке и живёт дольше неё: по нему видно историю работ и
+ * подходит ли запчасть. `plateUnreadable` — не мелочь: если шильдик не
+ * читается, марка и модель записаны со слов, и полагаться на них при заказе
+ * запчасти нельзя.
+ */
+model ClientAsset {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  orderId         String   @map("order_id") @db.Uuid
+  clientPhone     String   @map("client_phone")
+  type            String
+  brand           String?
+  model           String?
+  year            Int?
+  plateUnreadable Boolean  @default(false) @map("plate_unreadable")
+  linkedWork      String[] @map("linked_work")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, clientPhone])
+  @@map("client_asset")
+}
+
+/**
+ * План работы этапами (M-27).
+ *
+ * Одна строка на заявку: этапность — свойство работы, а не отдельная
+ * сущность. Паузы между этапами хранятся минимумом и максимумом: бетон
+ * должен схватиться не меньше суток, но и не больше трёх, иначе шов
+ * придётся вырубать.
+ */
+model StagePlan {
+  tenantId          String  @map("tenant_id") @db.Uuid
+  orderId           String  @map("order_id") @db.Uuid
+  allSlotsConfirmed Boolean @default(false) @map("all_slots_confirmed")
+
+  stages StagePlanStage[]
+
+  @@id([tenantId, orderId])
+  @@map("stage_plan")
+}
+
+model StagePlanStage {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  orderId       String    @map("order_id") @db.Uuid
+  index         Int
+  title         String
+  normHours     Decimal   @default(0) @map("norm_hours") @db.Decimal(5, 2)
+  pauseMinHours Int       @default(0) @map("pause_min_hours")
+  pauseMaxHours Int       @default(0) @map("pause_max_hours")
+  slotAt        DateTime? @map("slot_at") @db.Timestamptz()
+  status        String    @default("planned") // planned | booked | done
+
+  plan StagePlan @relation(fields: [tenantId, orderId], references: [tenantId, orderId], onDelete: Cascade)
+
+  @@unique([tenantId, orderId, index])
+  @@map("stage_plan_stage")
+}
+
+/**
+ * Акт осмотра B2B (F-01…F-06).
+ *
+ * Документ, который подписывает ответственный на точке, и по которому потом
+ * заводятся заявки на устранение. Отсюда всё остальное: снимки имён и
+ * подписи хранятся рядом, а не подтягиваются связями — акт обязан читаться
+ * так, как был подписан, даже если человек уволился, а точка переименована.
+ *
+ * `representativeAbsent` — не то же самое, что пустой представитель: акт,
+ * составленный при отсутствии ответственного, имеет другой вес в споре, и
+ * это должно быть видно в самом акте, а не выводиться из пустоты поля.
+ */
+model InspectionAct {
+  id             String  @id @db.Uuid
+  tenantId       String  @map("tenant_id") @db.Uuid
+  number         String
+  orderId        String  @map("order_id") @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  locationId     String  @map("location_id") @db.Uuid
+  locationName   String  @map("location_name")
+  masterId       String  @map("master_id")
+  masterName     String  @map("master_name")
+
+  status String @default("draft") // draft | sent | signed | rejected | expired
+
+  representativeName  String? @map("representative_name")
+  representativePhone String? @map("representative_phone")
+  representativeAbsent Boolean @default(false) @map("representative_absent")
+  decidedByName       String? @map("decided_by_name")
+  decidedByPhone      String? @map("decided_by_phone")
+  rejectionReason     String? @map("rejection_reason")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  sentAt    DateTime? @map("sent_at") @db.Timestamptz()
+  decidedAt DateTime? @map("decided_at") @db.Timestamptz()
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz()
+
+  checklist ActChecklistZone[]
+  items     ActDefectItem[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, organizationId, createdAt(sort: Desc)])
+  @@index([tenantId, orderId])
+  @@map("inspection_act")
+}
+
+/**
+ * Зона чек-листа в акте.
+ *
+ * Строками, а не jsonb: «в скольких актах за квартал котельная отмечена
+ * неисправной» — это запрос, ради которого чек-лист и заполняют.
+ */
+model ActChecklistZone {
+  id    String  @id @db.Uuid
+  actId String  @map("act_id") @db.Uuid
+  zone  String
+  ok    Boolean @default(true)
+  note  String?
+
+  act InspectionAct @relation(fields: [actId], references: [id], onDelete: Cascade)
+
+  @@unique([actId, zone])
+  @@map("act_checklist_zone")
+}
+
+/**
+ * Позиция дефекта в акте.
+ *
+ * Решение по каждой позиции принимается отдельно — часть устраняют сразу,
+ * часть откладывают, часть отклоняют с причиной. Заявка, заведённая по
+ * позиции, ссылается сюда: так видно, что из акта дошло до работы.
+ */
+model ActDefectItem {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  actId         String   @map("act_id") @db.Uuid
+  category      String
+  description   String
+  severity      String   @default("medium") // low | medium | high
+  photoIds      String[] @map("photo_ids")
+  estimateTiyin BigInt?  @map("estimate_tiyin")
+  decision      String   @default("pending") // pending | accepted | declined | postponed
+  declineReason String?  @map("decline_reason")
+  /** Заявка, заведённая по этой позиции */
+  orderId       String?  @map("order_id") @db.Uuid
+
+  act InspectionAct @relation(fields: [actId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, decision])
+  @@map("act_defect_item")
+}
+
+/**
+ * Замена мастера на заявке (D-11).
+ *
+ * Причина и стадия — колонки: по ним считают, сколько замен из-за невыезда,
+ * и это прямой вход в санкции. `clientNotified` отдельным полем, потому что
+ * правило «молчание запрещено» проверяется по факту уведомления, а не по
+ * намерению уведомить.
+ */
+model MasterReplacement {
+  id          String @id @db.Uuid
+  tenantId    String @map("tenant_id") @db.Uuid
+  orderId     String @map("order_id") @db.Uuid
+  orderNumber String @map("order_number")
+  reason      String // no_departure | declined | geo_stale | manual
+  stage       String @default("detected") // detected | broadcast | assigned | escalated | closed
+
+  fromMasterId   String? @map("from_master_id")
+  fromMasterName String? @map("from_master_name")
+  toMasterId     String? @map("to_master_id")
+  toMasterName   String? @map("to_master_name")
+
+  detectedAt         DateTime  @default(now()) @map("detected_at") @db.Timestamptz()
+  broadcastStartedAt DateTime? @map("broadcast_started_at") @db.Timestamptz()
+  /** Окно веерной рассылки: первый принявший забирает заявку */
+  broadcastSeconds   Int       @default(120) @map("broadcast_seconds")
+  resolvedAt         DateTime? @map("resolved_at") @db.Timestamptz()
+
+  clientNotified Boolean @default(false) @map("client_notified")
+  sanction       String  @default("none") // none | warning | no_show | blocked
+  note           String?
+
+  @@index([tenantId, stage])
+  @@index([tenantId, orderId])
+  @@map("master_replacement")
+}
+
+/**
+ * Инцидент диспетчерской: авария на районе, отключение, массовый сбой.
+ *
+ * Заявки связаны отдельной таблицей, а не массивом: по ним считают масштаб
+ * («сколько заявок задел этот инцидент»), а массив в строке пришлось бы
+ * разбирать в приложении и переписывать целиком на каждую новую заявку.
+ */
+model DispatchIncident {
+  id       String    @id @db.Uuid
+  tenantId String    @map("tenant_id") @db.Uuid
+  title    String
+  zone     String
+  category String
+  openedAt DateTime  @default(now()) @map("opened_at") @db.Timestamptz()
+  closedAt DateTime? @map("closed_at") @db.Timestamptz()
+  openedBy String    @map("opened_by")
+  note     String?
+
+  orders DispatchIncidentOrder[]
+
+  @@index([tenantId, openedAt(sort: Desc)])
+  @@map("dispatch_incident")
+}
+
+model DispatchIncidentOrder {
+  incidentId String @map("incident_id") @db.Uuid
+  orderId    String @map("order_id") @db.Uuid
+
+  incident DispatchIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@id([incidentId, orderId])
+  @@map("dispatch_incident_order")
+}
+
+/**
+ * Передача смены диспетчеров (D-20).
+ *
+ * Каждый пункт принимается отдельно и с подписью: «принял смену» целиком —
+ * это способ не заметить незакрытый спор. Пока пункт не принят, он остаётся
+ * висящим у сдающего.
+ */
+model ShiftHandover {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  fromPhone  String    @map("from_phone")
+  toPhone    String?   @map("to_phone")
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz()
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz()
+
+  items ShiftHandoverItem[]
+
+  @@index([tenantId, startedAt(sort: Desc)])
+  @@map("shift_handover")
+}
+
+model ShiftHandoverItem {
+  id         String    @id @db.Uuid
+  handoverId String    @map("handover_id") @db.Uuid
+  kind       String // replacement | incident | blocked | dispute | complaint | awaiting_payment | approval
+  title      String
+  detail     String
+  accepted   Boolean   @default(false)
+  acceptedBy String?   @map("accepted_by")
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz()
+
+  handover ShiftHandover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+
+  @@map("shift_handover_item")
+}
+
+/**
+ * Обращение клиента, которое требует действия диспетчера (D-19).
+ *
+ * Перенос, низкая оценка, сообщение — три разных повода с одним общим
+ * свойством: у них есть срок и ответственный. Поэтому одна таблица с видом
+ * колонкой, а не три очереди, каждую из которых надо не забыть посмотреть.
+ */
+model ClientRequest {
+  id          String    @id @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  kind        String // reschedule | low_rating | message
+  orderId     String    @map("order_id") @db.Uuid
+  orderNumber String    @map("order_number")
+  clientPhone String    @map("client_phone")
+  clientName  String?   @map("client_name")
+  masterId    String?   @map("master_id")
+  masterName  String?   @map("master_name")
+  title       String
+  detail      String
+  dueAt       DateTime? @map("due_at") @db.Timestamptz()
+  status      String    @default("new") // new | in_work | done
+  takenByPhone String?  @map("taken_by_phone")
+  resolution  String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  closedAt    DateTime? @map("closed_at") @db.Timestamptz()
+
+  @@index([tenantId, status, dueAt])
+  @@map("client_request")
+}
+
+/**
+ * Жалоба качества (Q-01…Q-05).
+ *
+ * Два срока — на первый ответ и на резолюцию — хранятся моментами, а не
+ * длительностями: они посчитаны один раз по политике, действовавшей в момент
+ * подачи, и правка политики не должна задним числом делать жалобу
+ * просроченной или наоборот.
+ *
+ * `confirmed` отдельно от `status`: жалоба может быть закрыта и при этом не
+ * подтверждена. На рейтинг мастера влияет только подтверждённая — иначе
+ * достаточно нажаловаться, чтобы испортить человеку доход.
+ */
+model QualityComplaint {
+  id               String  @id @db.Uuid
+  tenantId         String  @map("tenant_id") @db.Uuid
+  orderId          String? @map("order_id") @db.Uuid
+  orderNumber      String? @map("order_number")
+  complainantPhone String  @map("complainant_phone")
+  complainantName  String? @map("complainant_name")
+  /** Жалоба руководителя организации идёт сразу старшему смены */
+  isOrgManager     Boolean @default(false) @map("is_org_manager")
+  type             String
+  text             String
+  masterId         String? @map("master_id")
+  masterName       String? @map("master_name")
+  status           String  @default("new") // new | in_progress | resolved | rejected
+
+  slaFirstResponseAt DateTime  @map("sla_first_response_at") @db.Timestamptz()
+  slaResolutionAt    DateTime  @map("sla_resolution_at") @db.Timestamptz()
+  firstResponseAt    DateTime? @map("first_response_at") @db.Timestamptz()
+  resolvedAt         DateTime? @map("resolved_at") @db.Timestamptz()
+
+  playbookCode String?  @map("playbook_code")
+  resolution   String?
+  confirmed    Boolean? // null — ещё не разобрано; false — вина не подтверждена
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, status, slaFirstResponseAt])
+  @@index([tenantId, masterId])
+  @@map("quality_complaint")
+}
+
+/**
+ * Спор по деньгам на заявке (ТЗ 4.2).
+ *
+ * `masterShareBlocked` — колонка, а не следствие статуса: доля мастера
+ * блокируется в момент открытия спора и разблокируется решением, и выводить
+ * это из статуса значило бы, что при любой правке жизненного цикла деньги
+ * молча уезжают не туда.
+ */
+model Dispute {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  orderId           String    @map("order_id") @db.Uuid
+  orderNumber       String    @map("order_number")
+  openedByPhone     String    @map("opened_by_phone")
+  openedByRole      String    @map("opened_by_role") // client | dispatcher
+  reason            String
+  amountTiyin       BigInt    @map("amount_tiyin")
+  status            String    @default("open") // open | escalated | resolved
+  resolution        String? // for_client | for_master | compromise
+  refundTiyin       BigInt?   @map("refund_tiyin")
+  masterShareBlocked Boolean  @default(true) @map("master_share_blocked")
+  handledByPhone    String?   @map("handled_by_phone")
+  comment           String?
+  escalationReason  String?   @map("escalation_reason")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz()
+
+  @@index([tenantId, status])
+  @@index([tenantId, orderId])
+  @@map("dispute")
+}
+
+/**
+ * Дело о возмещении ущерба из резервного фонда (ТЗ 17.7).
+ *
+ * Регресс к мастеру ограничен долей от суммы — CHECK в миграции. Правило
+ * держится базой, а не только кодом: это деньги человека, и ошибка здесь
+ * стоит ему зарплаты.
+ */
+model DamageCase {
+  id           String   @id @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  orderId      String?  @map("order_id") @db.Uuid
+  description  String
+  claimantName String   @map("claimant_name")
+  amountTiyin  BigInt   @map("amount_tiyin")
+  regressTiyin BigInt   @default(0) @map("regress_tiyin")
+  masterId     String?  @map("master_id")
+  masterName   String?  @map("master_name")
+  status       String   @default("filed") // filed | review | approved | rejected | paid
+  resolution   String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, status])
+  @@map("damage_case")
+}
+
+/**
+ * Лид B2B из лендинга и обзвона.
+ *
+ * `utm` — jsonb: набор меток задаёт рекламная кампания, он меняется каждый
+ * запуск, и колонки под него пришлось бы добавлять миграцией на каждую
+ * новую кампанию. Ищут по стадии и по следующему касанию, а не по меткам.
+ */
+model Lead {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  company        String
+  contactName    String    @map("contact_name")
+  phone          String
+  pointsCount    Int       @default(1) @map("points_count")
+  objectType     String?   @map("object_type")
+  stage          String    @default("new")
+  rejectReason   String?   @map("reject_reason")
+  utm            Json      @default("{}")
+  note           String?
+  /** Заполняется после конвертации в контрагента CRM */
+  organizationId String?   @map("organization_id") @db.Uuid
+  nextTouchAt    DateTime? @map("next_touch_at") @db.Timestamptz()
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, stage, nextTouchAt])
+  @@map("lead")
+}
+
+/**
+ * Задача на обзвон: заявка с лендинга, лид B2B, кандидат в мастера.
+ *
+ * Срок хранится моментом, а не минутами от создания: SLA обзвона меняется
+ * параметром, и пересчёт задним числом делал бы вчерашние задачи
+ * просроченными без единого действия человека.
+ */
+model CallTask {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  kind       String // b2c_lead | b2b_lead | master_candidate
+  title      String
+  phone      String
+  payload    Json      @default("{}")
+  slaMinutes Int       @default(15) @map("sla_minutes")
+  dueAt      DateTime  @map("due_at") @db.Timestamptz()
+  status     String    @default("open") // open | done
+  source     String
+  utm        Json      @default("{}")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  doneAt     DateTime? @map("done_at") @db.Timestamptz()
+  result     String?
+
+  @@index([tenantId, status, dueAt])
+  @@map("call_task")
+}
+
+/**
+ * Промокод.
+ *
+ * Скидка ограничена CHECK 1–50%: сто процентов — это не промокод, а
+ * бесплатная работа, и решаться она должна не опечаткой в поле.
+ * Использования лежат отдельной таблицей: по ним проверяется правило
+ * «только первый заказ» и считается, во что обошлась кампания.
+ */
+model PromoCode {
+  id              String   @id @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  code            String
+  discountPercent Int      @map("discount_percent")
+  active          Boolean  @default(true)
+  /** null — без предела использований */
+  maxUses         Int?     @map("max_uses")
+  usedCount       Int      @default(0) @map("used_count")
+  comment         String?
+  firstOrderOnly  Boolean  @default(false) @map("first_order_only")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  uses PromoUse[]
+
+  @@unique([tenantId, code])
+  @@map("promo_code")
+}
+
+model PromoUse {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  promoCodeId String   @map("promo_code_id") @db.Uuid
+  phone       String
+  orderId     String?  @map("order_id") @db.Uuid
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  promo PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+
+  // Один код — один раз на человека: правило проверяется базой, а не только
+  // кодом, потому что два одновременных заказа обходят проверку в приложении
+  @@unique([promoCodeId, phone])
+  @@map("promo_use")
+}
+
+/**
+ * Счёт лояльности клиента.
+ *
+ * Баланс — витрина: он пересчитывается из движений и хранится колонкой,
+ * потому что его показывают в приложении на каждом экране.
+ */
+model LoyaltyAccount {
+  tenantId     String   @map("tenant_id") @db.Uuid
+  phone        String
+  balanceTiyin BigInt   @default(0) @map("balance_tiyin")
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  entries LoyaltyEntry[]
+
+  @@id([tenantId, phone])
+  @@map("loyalty_account")
+}
+
+/** Движение по счёту лояльности: начисление, ваучер, сторно */
+model LoyaltyEntry {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  phone       String
+  kind        String // accrual | voucher | storno
+  amountTiyin BigInt   @map("amount_tiyin")
+  note        String   @default("")
+  at          DateTime @default(now()) @db.Timestamptz()
+
+  account LoyaltyAccount @relation(fields: [tenantId, phone], references: [tenantId, phone], onDelete: Cascade)
+
+  @@index([tenantId, phone, at(sort: Desc)])
+  @@map("loyalty_entry")
+}
+
+/**
+ * Ваучер.
+ *
+ * Выдаётся по FEFO — первым уходит ближайший к сгоранию, поэтому индекс по
+ * сроку среди свободных. Номинал и срок неизменяемы после выпуска: ваучер —
+ * обязательство, а не запись в справочнике.
+ */
+model Voucher {
+  id            String    @id @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  code          String
+  nominalTiyin  BigInt    @map("nominal_tiyin")
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz()
+  status        String    @default("free") // free | issued
+  issuedToPhone String?   @map("issued_to_phone")
+  issuedAt      DateTime? @map("issued_at") @db.Timestamptz()
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status, expiresAt])
+  @@map("voucher")
+}
+
+/**
+ * Короткая ссылка на публичную страницу.
+ *
+ * Одна таблица на три вида ссылок — веб-карточка заявки (W-01…W-05),
+ * согласование наряда-допуска (W-06) и ответ жителя о доступе (C-56). В коде
+ * они жили тремя наборами с одинаковыми полями, и код для них уже выдаётся
+ * общей функцией общим алфавитом: человек диктует его по телефону, и два
+ * разных алфавита означали бы, что он диктует то так, то этак.
+ *
+ * Общими стали и правила, которые иначе пришлось бы писать трижды: срок,
+ * отзыв, счётчик открытий. Отзыв — то, ради чего это вообще ссылка, а не
+ * подписанный токен: токен нельзя отозвать, а ссылку на отменённый наряд
+ * открывать нельзя.
+ */
+model ShortLink {
+  code     String   @id
+  tenantId String   @map("tenant_id") @db.Uuid
+  /** web_card | permit_approval | unit_access */
+  kind     String
+  /** Заявка, наряд или запрос доступа — на что ведёт ссылка */
+  targetId String   @map("target_id") @db.Uuid
+  /** Кому отправлена: по нему же ищут в журнале, кто согласовал */
+  phone    String
+  /** Объект — только у согласования наряда: очередь строится по объектам */
+  buildingId String? @map("building_id") @db.Uuid
+
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz()
+  usedAt       DateTime? @map("used_at") @db.Timestamptz()
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz()
+  opens        Int       @default(0)
+  lastOpenedAt DateTime? @map("last_opened_at") @db.Timestamptz()
+
+  @@index([tenantId, kind, targetId])
+  @@index([tenantId, phone])
+  @@map("short_link")
+}
+
+/**
+ * Состояние SLA по заявке.
+ *
+ * Три срока посчитаны один раз по политике, действовавшей на момент приёма
+ * заявки, и хранятся моментами: правка политики не должна задним числом
+ * делать заявку просроченной. `pausedMs` — накопленная пауза (ожидание
+ * клиента, доступа, запчасти): без неё срок считался бы и тогда, когда
+ * работать было нельзя.
+ */
+model SlaState {
+  tenantId String @map("tenant_id") @db.Uuid
+  orderId  String @map("order_id") @db.Uuid
+  policyId String @map("policy_id") @db.Uuid
+
+  responseDue   DateTime @map("response_due") @db.Timestamptz()
+  arrivalDue    DateTime @map("arrival_due") @db.Timestamptz()
+  resolutionDue DateTime @map("resolution_due") @db.Timestamptz()
+
+  /** Что уже нарушено и что уже выполнено — разные вещи, и обе нужны */
+  breached String[]
+  reached  String[]
+  pausedMs Int      @default(0) @map("paused_ms")
+
+  @@id([tenantId, orderId])
+  @@index([tenantId, resolutionDue])
+  @@map("sla_state")
+}
+
+/**
+ * Строка расчёта с оператором.
+ *
+ * Подписка, взаимозачёт по заявкам, сервисный сбор — в одном журнале со
+ * знаком: нетто-расчёт с оператором это разница, и считать её по трём
+ * таблицам значит трижды не сойтись.
+ */
+model OperatorLedgerRow {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  operatorOrgId String   @map("operator_org_id")
+  kind          String // subscription | claim | service_fee
+  amountTiyin   BigInt   @map("amount_tiyin")
+  note          String   @default("")
+  at            DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, operatorOrgId, at(sort: Desc)])
+  @@map("operator_ledger_row")
+}
+
+/**
+ * Прогон таймера (PRD-05 §8).
+ *
+ * Журнал того, что делали фоновые правила: сколько заявок задето, что
+ * получилось. Признак `simulated` обязателен — прогон вхолостую и прогон
+ * по-настоящему различаются только им, и спутать их значит не понять,
+ * почему у клиентов ничего не изменилось.
+ */
+model TimerRun {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  timer     String
+  title     String
+  result    String
+  affected  Int      @default(0)
+  simulated Boolean  @default(false)
+  at        DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, timer, at(sort: Desc)])
+  @@map("timer_run")
+}
+
+/**
+ * Неудовлетворённый спрос.
+ *
+ * Клиент искал окно и не нашёл — это и есть самая дорогая аналитика в
+ * системе: она показывает, где не хватает мастеров, причём до того, как это
+ * увидят в выручке. Причина колонкой, потому что по ней и группируют.
+ */
+model DemandMiss {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  /** Дата, на которую искали окно, — календарный день, а не момент */
+  date     DateTime @db.Date
+  reason   String // no_windows | window_taken | out_of_zone
+  category String?
+  zone     String?
+  at       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, date])
+  @@index([tenantId, reason, at])
+  @@map("demand_miss")
 }

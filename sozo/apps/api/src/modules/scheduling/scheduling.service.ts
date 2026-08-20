@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { dbFailure } from '../../common/db-failure';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
@@ -189,7 +190,7 @@ export class SchedulingService implements OnModuleInit {
       .then(() => this.writeAll())
       .catch((e: unknown) => {
         // eslint-disable-next-line no-console
-        console.error('[Scheduling] запись в базу не удалась:', (e as Error).message);
+        console.error('[Scheduling] запись в базу не удалась:', dbFailure(e));
       });
   }
 
