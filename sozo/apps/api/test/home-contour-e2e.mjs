@@ -1122,6 +1122,30 @@ async function main() {
     Array.isArray(facets.actors) && Array.isArray(facets.entities) && facets.actionGroups.length > 0,
     JSON.stringify(facets).slice(0, 140));
 
+  group('28. Параметры системы — второй модуль на PostgreSQL');
+
+  const paramsAll = (await call('/admin/parameters', { token: t })).body;
+  check('таблица параметров отдаётся целиком', Array.isArray(paramsAll) && paramsAll.length > 100, String(paramsAll.length));
+  check('метаданные приходят из PRD, а не из хранилища',
+    paramsAll.every((p) => p.name && Array.isArray(p.levels)), JSON.stringify(paramsAll[0] ?? {}).slice(0, 120));
+
+  // Параметр 5 — наценка за срочность; на нём считается заявка, и он читается
+  // из глубины расчёта синхронно, поэтому значение обязано быть в кеше
+  const before = paramsAll.find((p) => p.num === 5);
+  const changed = (await call('/admin/parameters/5', { token: t, method: 'PUT', body: { value: '+45%' } })).body;
+  check('значение меняется', changed.value === '+45%', String(changed.value));
+
+  const afterList = (await call('/admin/parameters', { token: t })).body.find((p) => p.num === 5);
+  check('изменение видно сразу в следующем запросе', afterList.value === '+45%', String(afterList.value));
+
+  // Возвращаем как было: параметр влияет на суммы в других наборах
+  await call('/admin/parameters/5', { token: t, method: 'PUT', body: { value: before.value } });
+  const restored = (await call('/admin/parameters', { token: t })).body.find((p) => p.num === 5);
+  check('значение возвращается', restored.value === before.value, String(restored.value));
+
+  const p_missing = await call('/admin/parameters/99999', { token: t, method: 'PUT', body: { value: 'x' } });
+  check('несуществующий параметр не заводится молча', p_missing.status >= 400, String(p_missing.status));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

@@ -21,8 +21,10 @@ export class PlatformController {
 
   @Put('parameters/:num')
   @Roles('admin') // бухгалтер параметры не редактирует (PRD-04 §6)
-  update(@Param('num') num: string, @Body() body: { value: string }, @Req() req: { auth: JwtClaims }) {
-    const updated = this.parameters.update(Number(num), String(body.value));
+  async update(@Param('num') num: string, @Body() body: { value: string }, @Req() req: { auth: JwtClaims }) {
+    // Аудит пишется после успешной записи: строка «параметр изменён» при
+    // неудавшемся изменении хуже, чем её отсутствие
+    const updated = await this.parameters.update(Number(num), String(body.value));
     this.audit.write({
       actorPhone: req.auth.phone,
       action: 'parameter.updated',

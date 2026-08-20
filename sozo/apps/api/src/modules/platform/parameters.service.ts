@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import seed from '../../seed/system-parameters.json';
+import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 
 export interface SystemParam {
   num: number;
@@ -52,22 +55,51 @@ const OPERATIONAL: SystemParam[] = [
 ];
 
 @Injectable()
-export class ParametersService {
+export class ParametersService implements OnModuleInit {
   private readonly params = new Map<number, SystemParam>(
     [...(seed.params as SystemParam[]), ...OPERATIONAL].map((p) => [p.num, { ...p }]),
   );
 
-  constructor(private readonly store: StateStore) {
-    this.store.register(
-      'parameters',
-      () => [...this.params.values()],
-      (d) => {
-        for (const p of d as SystemParam[]) {
-          const cur = this.params.get(p.num);
-          if (cur) cur.value = p.value; // из файла берём только значения, метаданные — из PRD
-        }
-      },
-    );
+  /**
+   * Значения держатся в памяти и при работе на базе.
+   *
+   * Это не срез ради скорости, а единственная разумная форма: `text()` зовут
+   * из глубины расчётов — наценка за срочность, лимит наличных, пороги
+   * таймеров, — и запрос в базу на каждое обращение превратил бы расчёт
+   * заявки в десяток round-trip'ов ради строки, которая меняется раз в месяц.
+   * Поэтому загрузка на старте и запись насквозь при изменении.
+   *
+   * Метаданные (имя, уровни, ссылка на ТЗ) не хранятся нигде, кроме
+   * seed-файла: они принадлежат документу PRD-04, а не эксплуатации.
+   * В базе и в файле лежат только значения.
+   */
+  constructor(
+    private readonly store: StateStore,
+    private readonly prisma: PrismaService,
+  ) {
+    if (!this.prisma.enabled) {
+      this.store.register(
+        'parameters',
+        () => [...this.params.values()],
+        (d) => {
+          for (const p of (d ?? []) as SystemParam[]) {
+            const cur = this.params.get(p.num);
+            if (cur) cur.value = p.value; // из файла берём только значения, метаданные — из PRD
+          }
+        },
+      );
+    }
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) return;
+    const rows = await this.prisma.withContext(async (tx) => tx.systemParameter.findMany());
+    for (const r of rows) {
+      const cur = this.params.get(Number(r.code));
+      if (cur && typeof r.value === 'string') cur.value = r.value;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[Parameters] значений из базы: ${rows.length}`);
   }
 
   list(): SystemParam[] {
@@ -79,11 +111,28 @@ export class ParametersService {
     return this.params.get(num)?.value?.trim() || fallback;
   }
 
-  update(num: number, value: string): SystemParam {
+  async update(num: number, value: string): Promise<SystemParam> {
     const p = this.params.get(num);
     if (!p) throw new NotFoundException({ code: 'PARAM_NOT_FOUND', param: num });
     p.value = value;
-    this.store.persist();
+    if (this.prisma.enabled) {
+      const ctx = currentDbContext() ?? systemContext();
+      await this.prisma.withContext(async (tx) => {
+        await tx.systemParameter.upsert({
+          where: { tenantId_code: { tenantId: ctx.tenantId, code: String(num) } },
+          create: {
+            id: uuidv7(),
+            tenantId: ctx.tenantId,
+            code: String(num),
+            value,
+            level: p.levels[0] ?? 'global',
+          },
+          update: { value },
+        });
+      });
+    } else {
+      this.store.persist();
+    }
     return p;
   }
 }
