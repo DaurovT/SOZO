@@ -1,5 +1,7 @@
-import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit, UnauthorizedException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common';
 import { signJwt } from '../../common/jwt';
+import { SmsService } from '../../common/sms.service';
+import { OtpStore, OTP_TTL_MS } from './otp.store';
 import type { IdentityRepository, LoginEventRec, UserRecord } from './identity.repository';
 
 export const IDENTITY_REPOSITORY = Symbol('IDENTITY_REPOSITORY');
@@ -38,7 +40,11 @@ export class IdentityService implements OnModuleInit {
   private readonly logins: LoginEventRec[] = [];
 
 
-  constructor(@Inject(IDENTITY_REPOSITORY) private readonly repo: IdentityRepository) {}
+  constructor(
+    @Inject(IDENTITY_REPOSITORY) private readonly repo: IdentityRepository,
+    private readonly sms: SmsService,
+    private readonly otp: OtpStore,
+  ) {}
 
   /**
    * Сид служебных учёток. Раньше стоял в конструкторе, но с базой запись в
@@ -79,10 +85,47 @@ export class IdentityService implements OnModuleInit {
         reason: known.blockedReason ?? null,
       });
     }
-    // SMS_PROVIDER=log (DEV-04 §1): на dev код не отправляется, всегда «00000»
-    // eslint-disable-next-line no-console
-    console.log(`[OTP] ${phone} → код ${DEV_OTP_CODE} (dev-заглушка)`);
-    return { sent: true, channel: 'log' };
+    // Лимиты отправки применяются только к настоящей доставке.
+    //
+    // Пауза и часовой предел защищают деньги и абонента: каждая SMS платная,
+    // а поток кодов на чужой номер — способ травли. Когда сообщения только
+    // пишутся в журнал, защищать нечего, и лимиты мешали бы разработке и
+    // тестам, не давая ничего взамен. Предел неверных попыток, в отличие от
+    // этих двух, действует всегда: он про подбор, а не про стоимость.
+    if (this.sms.delivers) {
+      const left = this.otp.cooldownLeft(phone);
+      if (left > 0) {
+        throw new HttpException(
+          { code: 'OTP_TOO_SOON', message: `Новый код можно запросить через ${left} с`, retryAfterSec: left },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (this.otp.hourlyExhausted(phone)) {
+        throw new HttpException(
+          { code: 'OTP_RATE_LIMITED', message: 'Слишком много запросов кода. Попробуйте через час' },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    // На журнальном отправителе код предсказуем: те же «пять нулей», что и
+    // раньше. Иначе разработка и тесты читали бы код из вывода сервера, а
+    // ветка проверки кода осталась бы той же самой — предсказуемость здесь
+    // ничего не ослабляет, потому что ослаблять нечего: SMS никуда не идёт.
+    const { code } = this.otp.issue(phone, this.sms.delivers ? undefined : DEV_OTP_CODE);
+    const minutes = Math.round(OTP_TTL_MS / 60_000);
+    const res = await this.sms.send(phone, `Код входа SOZO: ${code}. Действует ${minutes} мин. Никому его не сообщайте.`);
+    if (!res.sent) {
+      // Поставщик не принял сообщение — код бесполезен, и держать его значит
+      // заставить человека ждать паузу до следующей попытки ни за что
+      this.otp.issue(phone, undefined, 0);
+      await this.trackLogin(phone, false, known?.roles ?? [], `SMS не отправлена: ${res.error ?? 'причина неизвестна'}`);
+      throw new HttpException(
+        { code: 'SMS_SEND_FAILED', message: 'Не удалось отправить код. Попробуйте ещё раз' },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    return { sent: true, channel: res.channel };
   }
 
   registerRoleProvider(fn: (phone: string) => string[]): void {
@@ -124,9 +167,33 @@ export class IdentityService implements OnModuleInit {
         message: 'Вход по коду временно недоступен: SMS-провайдер не подключён',
       });
     }
-    if (code !== DEV_OTP_CODE) {
-      await this.trackLogin(phone, false, [], 'неверный код');
-      throw new UnauthorizedException({ code: 'OTP_INVALID' });
+    // Проверка кода.
+    //
+    // На журнальном отправителе принимается и «пять нулей» без запроса: так
+    // работали разработка и тесты до появления SMS, и ломать это нечем —
+    // отправки всё равно нет. С настоящим поставщиком проходит только код,
+    // который действительно уходил на этот номер, с его сроком и лимитом
+    // попыток.
+    const verdict = this.otp.verify(phone, code);
+    const devFallback = !this.sms.delivers && code === DEV_OTP_CODE;
+    if (verdict !== 'ok' && !devFallback) {
+      const reason = {
+        none: 'код не запрашивался или уже использован',
+        expired: 'код истёк',
+        attempts: 'исчерпаны попытки ввода',
+        wrong: 'неверный код',
+        ok: '',
+      }[verdict];
+      await this.trackLogin(phone, false, [], reason);
+      throw new UnauthorizedException({
+        code: verdict === 'expired' ? 'OTP_EXPIRED' : verdict === 'attempts' ? 'OTP_ATTEMPTS_EXCEEDED' : 'OTP_INVALID',
+        message:
+          verdict === 'expired'
+            ? 'Код истёк. Запросите новый'
+            : verdict === 'attempts'
+              ? 'Слишком много попыток. Запросите новый код'
+              : 'Неверный код',
+      });
     }
     const known = await this.repo.byPhone(phone);
     if (known?.blockedAt) {

@@ -24,7 +24,11 @@ const API_DIR = join(HERE, '..');
 const PORT = Number(process.env.E2E_PORT ?? 3111);
 const ROOT = `http://localhost:${PORT}`;
 
-const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale'];
+// otp-sms поднимает свой сервер и свою заглушку поставщика: он проверяет
+// вход с настоящим SMS, а общий сервер прогона работает на журнальном
+// отправителе. Держать оба режима в одном процессе нельзя — поставщик
+// выбирается один раз при старте.
+const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'otp-sms'];
 const suites = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 
 /** Свободен ли порт: занятый означает забытый сервер от прошлого прогона */

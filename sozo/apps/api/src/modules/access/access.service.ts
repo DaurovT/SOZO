@@ -422,6 +422,17 @@ export class AccessService {
     };
     this.repo.saveUnitAccess(rec);
     this.bus.publish('unit_access.requested', { requestId: rec.id, unitId: rec.unitId, buildingId: rec.buildingId });
+    // Отдельное событие на каждого жителя помещения: у квартиры бывает
+    // несколько взрослых, и решить может любой из них. Телефон и код едут в
+    // событии — подписчик доставки не должен ходить в buildings за ними
+    // (DEV-07 §3)
+    for (const r of this.buildings.listResidents(tenantId, rec.unitId)) {
+      this.bus.publish('unit_access.link_issued', {
+        requestId: rec.id,
+        residentPhone: r.userPhone,
+        accessCode: rec.accessCode,
+      });
+    }
     return rec;
   }
 

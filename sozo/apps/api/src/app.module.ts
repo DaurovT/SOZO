@@ -32,6 +32,7 @@ import { OperatorApiModule } from './modules/operator-api/operator-api.module';
 import { FieldModule } from './modules/field/field.module';
 import { ClientApiModule } from './modules/client-api/client-api.module';
 import { ClientB2CModule } from './modules/client-b2c/client-b2c.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 /**
  * Доступ к базе — глобальный модуль: подключение одно на процесс, и таскать
@@ -69,6 +70,7 @@ class HealthController {
 @Module({
   imports: [
     PrismaModule,
+    NotificationsModule,
     BuildingsModule,
     AccessModule,
     SubscriptionsModule,

@@ -5,11 +5,16 @@ import { InMemoryIdentityRepository, PrismaIdentityRepository, type IdentityRepo
 import { PrismaService } from '../../common/prisma.service';
 import { StateStore } from '../../common/state-store';
 import { AuthGuard } from './auth.guard';
+import { SmsService } from '../../common/sms.service';
+import { OtpStore } from './otp.store';
 
 /**
  * identity (DEV-07 §2 п.15): OTP, JWT, контексты ролей.
- * DEV-ЗАГЛУШКА (решение владельца от 30.07.2026): SMS не отправляется,
- * любой телефон подтверждается кодом «00000». Заменить на SMS-провайдер в M1 (M0-E2-S2).
+ *
+ * Код подтверждения настоящий: пятизначный, живёт три минуты, сгорает после
+ * пяти неверных попыток. Куда он уходит, решает SMS_PROVIDER — журнал или
+ * Eskiz. На журнальном отправителе код по-прежнему «00000»: отправки нет,
+ * и предсказуемость там ничего не ослабляет.
  */
 @Global()
 @Module({
@@ -17,6 +22,8 @@ import { AuthGuard } from './auth.guard';
   providers: [
     IdentityService,
     AuthGuard,
+    SmsService,
+    OtpStore,
     {
       provide: IDENTITY_REPOSITORY,
       inject: [PrismaService, StateStore],
@@ -24,6 +31,6 @@ import { AuthGuard } from './auth.guard';
         prisma.enabled ? new PrismaIdentityRepository(prisma) : new InMemoryIdentityRepository(store),
     },
   ],
-  exports: [IdentityService, AuthGuard],
+  exports: [IdentityService, AuthGuard, SmsService],
 })
 export class IdentityModule {}
