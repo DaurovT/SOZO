@@ -595,6 +595,13 @@ model AuditLog {
   id        String   @id @db.Uuid
   tenantId  String   @map("tenant_id") @db.Uuid
   actorId   String?  @map("actor_id") @db.Uuid
+  /**
+   * Телефон действующего лица. Схема писалась по DEV-02 раньше сервиса, и
+   * они разошлись: код везде пишет `actorPhone`, а `actor_id` — uuid, куда
+   * телефон не ложится. Держать одно вместо другого нельзя: разбор инцидента
+   * начинается с номера, по которому пришла жалоба.
+   */
+  actorPhone String? @map("actor_phone")
   actorRole String?  @map("actor_role")
   action    String
   entity    String

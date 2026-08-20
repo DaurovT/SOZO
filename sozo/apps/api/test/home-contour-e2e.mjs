@@ -1098,6 +1098,30 @@ async function main() {
   check('несуществующий код не раскрывает, есть ли такая квартира',
     (await badCode.text()).includes('недействительна'), String(badCode.status));
 
+  group('27. Аудит — первый модуль на PostgreSQL');
+
+  // Записи аудита уже наделали предыдущие секции: пропуска, замечания,
+  // решения по доступу. Проверяем, что журнал их видит — и видит одинаково
+  // независимо от того, лежит он в файле или в базе
+  const audit = (await call('/admin/audit?limit=200', { token: t })).body;
+  check('журнал читается', Array.isArray(audit), typeof audit);
+  check('в журнале есть выдача гостевого пропуска',
+    audit.some((e) => e.action === 'building.guest_pass_issued'), String(audit.length));
+  check('в журнале есть решение по доступу в помещение',
+    audit.some((e) => String(e.action).startsWith('unit_access.')), String(audit.length));
+  check('у записи сохранён телефон действующего лица',
+    audit.every((e) => typeof e.actorPhone === 'string'), JSON.stringify(audit[0] ?? {}).slice(0, 120));
+
+  // Фильтры складываются, а свободный запрос ищет по всем полям сразу
+  const byAction = (await call('/admin/audit?action=building.guest_pass_issued', { token: t })).body;
+  check('фильтр по действию отбирает только его',
+    byAction.length > 0 && byAction.every((e) => e.action === 'building.guest_pass_issued'), String(byAction.length));
+
+  const facets = (await call('/admin/audit/facets', { token: t })).body;
+  check('фасеты отдают встречавшиеся значения',
+    Array.isArray(facets.actors) && Array.isArray(facets.entities) && facets.actionGroups.length > 0,
+    JSON.stringify(facets).slice(0, 140));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

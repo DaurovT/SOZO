@@ -1,86 +1,52 @@
-import { Injectable } from '@nestjs/common';
-import { uuidv7 } from '@sozo/kernel';
-import { StateStore } from '../../common/state-store';
+import { Inject, Injectable } from '@nestjs/common';
+import type { AuditEntry, AuditFilter, AuditRepository } from './audit.repository';
 
-export interface AuditEntry {
-  id: string;
-  actorPhone: string;
-  action: string;
-  entity: string;
-  entityId?: string;
-  payload?: unknown;
-  createdAt: string;
-}
+export const AUDIT_REPOSITORY = Symbol('AUDIT_REPOSITORY');
+export type { AuditEntry } from './audit.repository';
 
-/** Append-only аудит (ТЗ 14): значимые действия админки пишутся всегда (DoD п.7) */
+/**
+ * Append-only аудит (ТЗ 14): значимые действия пишутся всегда (DoD п.7).
+ *
+ * Сервис стал тонкой обёрткой над репозиторием — хранилище выбирается один раз
+ * на процесс: PostgreSQL, если задан DATABASE_URL, иначе файл.
+ *
+ * `write` возвращает промис, но 159 мест в коде вызывают его без `await`, и
+ * переписывать их все ради журнала неправильно: аудит не должен менять форму
+ * бизнес-кода. Поэтому ошибка записи не всплывает наверх, а громко пишется в
+ * журнал процесса — потерять запись аудита молча нельзя, но и уронить из-за
+ * неё оплату заявки тоже.
+ */
 @Injectable()
 export class AuditService {
-  private readonly log: AuditEntry[] = [];
-
-  constructor(private readonly store: StateStore) {
-    this.store.register(
-      'audit',
-      () => this.log,
-      (d) => {
-        this.log.length = 0;
-        this.log.push(...(d as AuditEntry[]));
-      },
-    );
-  }
+  constructor(@Inject(AUDIT_REPOSITORY) private readonly repo: AuditRepository) {}
 
   write(entry: Omit<AuditEntry, 'id' | 'createdAt'>): void {
-    this.log.push({ id: uuidv7(), createdAt: new Date().toISOString(), ...entry });
-    this.store.persist(); // append-only журнал переживает рестарт (ТЗ 14)
+    void this.repo.write(entry).catch((e: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[Audit] запись не сохранена:', (e as Error).message, JSON.stringify(entry));
+    });
   }
 
-  recent(limit = 100): AuditEntry[] {
-    return this.log.slice(-limit).reverse();
+  recent(limit = 100): Promise<AuditEntry[]> {
+    return this.repo.search({ limit });
   }
 
   /**
-   * Поиск по журналу.
-   *
-   * Фильтры складываются: телефон И сущность И действие. Свободный запрос `q`
-   * идёт поверх и ищет по всем полям сразу, включая payload, — разбирающий
-   * помнит номер заявки, а не то, в каком поле он записан.
+   * Поиск по журналу. Фильтры складываются: телефон И сущность И действие.
+   * Свободный запрос `q` идёт поверх и ищет по всем полям сразу, включая
+   * payload, — разбирающий помнит номер заявки, а не то, в каком поле он записан.
    */
-  search(f: { limit?: number; actor?: string; entity?: string; entityId?: string; action?: string; q?: string }): AuditEntry[] {
-    const q = f.q?.trim().toLowerCase();
-    const rows = this.log.filter((e) => {
-      if (f.actor && e.actorPhone !== f.actor) return false;
-      if (f.entity && e.entity !== f.entity) return false;
-      if (f.entityId && e.entityId !== f.entityId) return false;
-      if (f.action && !e.action.startsWith(f.action)) return false;
-      if (!q) return true;
-      const hay = `${e.actorPhone} ${e.action} ${e.entity} ${e.entityId ?? ''} ${JSON.stringify(e.payload ?? {})}`.toLowerCase();
-      return hay.includes(q);
-    });
-    return rows.slice(-(f.limit ?? 100)).reverse();
+  search(f: AuditFilter): Promise<AuditEntry[]> {
+    return this.repo.search(f);
   }
 
   /** Значения, которые реально встречались, — для выпадающих списков фильтра */
-  facets(): { actors: string[]; entities: string[]; actionGroups: string[] } {
-    const actors = new Set<string>();
-    const entities = new Set<string>();
-    const groups = new Set<string>();
-    for (const e of this.log) {
-      if (e.actorPhone) actors.add(e.actorPhone);
-      if (e.entity) entities.add(e.entity);
-      // Группа — часть до точки: «client», «master», «billing». По ней ищут
-      // «что делали клиенты», а не конкретное действие
-      groups.add(e.action.includes('.') ? e.action.split('.')[0] : 'order');
-    }
-    return {
-      actors: [...actors].sort(),
-      entities: [...entities].sort(),
-      actionGroups: [...groups].sort(),
-    };
+  facets() {
+    return this.repo.facets();
   }
 
   /** Записи по префиксу действия — на этом строятся сводки телеметрии */
-  byPrefix(prefix: string, sinceMs?: number): AuditEntry[] {
-    return this.log.filter(
-      (e) => e.action.startsWith(prefix) && (sinceMs === undefined || new Date(e.createdAt).getTime() >= sinceMs),
-    );
+  byPrefix(prefix: string, sinceMs?: number): Promise<AuditEntry[]> {
+    return this.repo.byPrefix(prefix, sinceMs);
   }
 }

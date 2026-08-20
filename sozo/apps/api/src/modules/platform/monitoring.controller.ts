@@ -72,10 +72,10 @@ export class MonitoringController {
    * осталось 40%» не говорит, где именно теряются люди.
    */
   @Get('funnel')
-  funnel(@Query('days') days?: string) {
+  async funnel(@Query('days') days?: string) {
     const window = Math.max(1, Math.min(90, Number(days) || 7));
     const since = Date.now() - window * 24 * 3_600_000;
-    const events = this.audit.byPrefix('client_app.', since);
+    const events = await this.audit.byPrefix('client_app.', since);
 
     // Считаем людей, а не события: один человек мог начинать заявку трижды,
     // и три брошенных черновика одного клиента — не три отвалившихся клиента
