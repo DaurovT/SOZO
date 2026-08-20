@@ -308,6 +308,11 @@ class ApiClient {
   Future<Map<String, dynamic>> wallet({String period = 'week'}) async =>
       (await get('/master/wallet', query: {'period': period})) as Map<String, dynamic>;
 
+  /// M-46 «Моя выработка» — экран сотрудника оператора вместо кошелька.
+  /// Денег в ответе нет по устройству эндпоинта, не по фильтрации на клиенте.
+  Future<Map<String, dynamic>> output({String? from, String? to}) async =>
+      (await get('/master/output', query: {'from': ?from, 'to': ?to})) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> cashDeposit(int amountSoums) async =>
       (await post('/master/cash-deposit', {'amountSoums': amountSoums})) as Map<String, dynamic>;
 

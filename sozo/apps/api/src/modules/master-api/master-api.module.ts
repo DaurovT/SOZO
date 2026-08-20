@@ -8,6 +8,7 @@ import type { JwtClaims } from '../../common/jwt';
 import { AdminMasterOpsController } from './admin-master-ops.controller';
 import { MasterApiController } from './master-api.controller';
 import { MasterWalkthroughController } from './master-walkthrough.controller';
+import { MasterOutputController } from './master-output.controller';
 import { MasterOpsController } from './master-ops.controller';
 import { MasterOpsService } from './master-ops.service';
 import { MasterPhotoService } from './photo.service';
@@ -29,6 +30,7 @@ import { QualityModule } from '../quality/quality.module';
 import { FieldModule } from '../field/field.module';
 import { CrmModule } from '../crm/crm.module';
 import { BuildingsModule } from '../buildings/buildings.module';
+import { SlaModule } from '../sla/sla.module';
 
 /** Район из адреса — dev-заглушка геокодера: до принятия мастер видит район, не точку */
 function districtOf(address: string): string {
@@ -133,8 +135,10 @@ class DispatchOffersController {
  * а не роль в JWT), свой узкий набор действий и своя офлайн-семантика.
  */
 @Module({
-  imports: [AccessModule, BuildingsModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule],
-  controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController],
+  imports: [AccessModule, BuildingsModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule, SlaModule,
+  ],
+  controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController, MasterOutputController,
+  ],
   providers: [MasterWalkthroughController, MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
   exports: [MasterOffersService, MasterOpsService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService],
 })

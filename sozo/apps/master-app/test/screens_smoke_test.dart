@@ -28,6 +28,7 @@ import 'package:sozo_master/screens/resources_screens.dart';
 import 'package:sozo_master/screens/route_screen.dart';
 import 'package:sozo_master/screens/stages_helper_payment.dart';
 import 'package:sozo_master/screens/today_screen.dart';
+import 'package:sozo_master/screens/output_screen.dart';
 import 'package:sozo_master/screens/wallet_screen.dart';
 import 'package:sozo_master/screens/walkthrough_screen.dart';
 
@@ -85,6 +86,12 @@ void main() {
     testWidgets('сегодня', (t) => check(t, 'Сегодня', const TodayScreen()));
     testWidgets('мои заявки', (t) => check(t, 'Мои заявки', const OrdersScreen()));
     testWidgets('профиль', (t) => check(t, 'Профиль', const ProfileScreen()));
+    // M-46 замещает кошелёк в сменах оператора: экран обязан строиться
+    // и на данных, и на отказе «вы не в штате» — второй случай приходит
+    // чаще, чем кажется, и раньше такие ветки роняли вкладку
+    testWidgets('моя выработка', (t) => check(t, 'Моя выработка', const OutputScreen()));
+    testWidgets('выработка или кошелёк', (t) => check(t, 'Выработка или кошелёк', const WalletOrOutputScreen()));
+
     testWidgets('кошелёк', (t) => check(t, 'Кошелёк', const WalletScreen()));
     testWidgets('карточка заявки', (t) => check(t, 'Карточка', const OrderScreen(orderId: 'o1')));
     testWidgets('оффер', (t) async {

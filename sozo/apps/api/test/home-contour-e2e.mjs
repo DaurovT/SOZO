@@ -594,6 +594,40 @@ async function main() {
   const mOrders = (await call('/master/orders', { token: mt })).body;
   check('лента мастера открывается', mOrders !== null && mOrders !== undefined);
 
+  group('18. M-46 — моя выработка в смене оператора');
+
+  const out = (await call('/master/output', { token: mt })).body;
+  check('мастер в штате получает выработку', out.isOperatorStaff === true, JSON.stringify(out).slice(0, 120));
+  check('объект штата перечислен', (out.buildings ?? []).some((b) => b.id === uk), String(out.buildings?.length));
+  check('завершённый обход попал в выработку', out.walkthroughs?.done >= 1, JSON.stringify(out.walkthroughs));
+  check('зафиксированное замечание попало в выработку', out.observations?.created >= 1, JSON.stringify(out.observations));
+  check('светофор SLA присутствует', out.sla && typeof out.sla.green === 'number', JSON.stringify(out.sla));
+  check('период по умолчанию — текущий месяц', out.period?.from?.endsWith('-01') && out.period?.to >= out.period?.from, JSON.stringify(out.period));
+  // Экран кешируется и работает офлайн — без метки давности человек не поймёт,
+  // на какой момент цифры (DEV-15 §10.8.1)
+  check('метка давности отдана', typeof out.generatedAt === 'string' && out.generatedAt.length > 0);
+
+  // Главное требование спецификации: сотрудник оператора на окладе, и денег
+  // на этом экране быть не должно вообще. Проверяем не глазами, а ключами:
+  // достаточно один раз подставить сюда долю мастера, и экран станет вредным
+  const moneyKeys = JSON.stringify(out).match(/"[^"]*(?:[Tt]iyin|earn|amount|salary|payout|wallet)[^"]*"/g) ?? [];
+  check('ни одной денежной величины в ответе', moneyKeys.length === 0, moneyKeys.join(', '));
+
+  // Мастер платформы, не состоящий в штате, должен получить честный отказ,
+  // а не нули: по этому признаку приложение показывает кошелёк M-34
+  const platformOnly = await login(masters[1]?.phone ?? masters[0].phone);
+  const outPlatform = (await call('/master/output', { token: platformOnly })).body;
+  if (masters[1]?.phone) {
+    check('мастер вне штата оператора выработки не получает', outPlatform.isOperatorStaff === false, JSON.stringify(outPlatform).slice(0, 120));
+    check('и списка объектов тоже', (outPlatform.buildings ?? []).length === 0, String(outPlatform.buildings?.length));
+  }
+
+  // Период задаётся явно: в прошлом месяце работы не было
+  const outPast = (await call('/master/output?from=2020-01-01&to=2020-01-31', { token: mt })).body;
+  check('за пустой период выработка нулевая, а не с прошлыми числами',
+    outPast.walkthroughs?.done === 0 && outPast.observations?.created === 0,
+    JSON.stringify({ w: outPast.walkthroughs, o: outPast.observations }));
+
   group('19. M-14 — «наряд есть, не пускают»');
 
   const reasons = (await call('/master/dictionaries', { token: mt })).body.noAccessReasons ?? [];
@@ -652,7 +686,7 @@ async function main() {
   const pauseCard = (await call(`/dispatch/orders/${pauseOrder.id}`, { token: t })).body;
   check('пауза записана с причиной', Boolean(pauseCard.pause?.reason), JSON.stringify(pauseCard.pause));
 
-  group('18. Офлайн-очередь обхода');
+  group('20. Офлайн-очередь обхода');
 
   // Одно испорченное замечание не должно запирать очередь со снимками остальных
   const syncRes = (await call('/master/sync', {
@@ -676,7 +710,7 @@ async function main() {
     afterSync.some((o) => o.zoneKey === 'подъезд 2'), String(afterSync.length));
 
   // ---------------------------------------------------------------
-  group('14. L-10 — публичная карточка объекта по QR');
+  group('21. L-10 — публичная карточка объекта по QR');
 
   // Житель приходит с наклейки в подъезде: ни токена, ни регистрации
   const card = await call(`/public/buildings/${uk}`);

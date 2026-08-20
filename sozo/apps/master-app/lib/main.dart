@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'design_tokens.dart';
 import 'widgets/figma_icon.dart';
 import 'i18n.dart';
-import 'screens/wallet_screen.dart';
+import 'screens/output_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/orders_screen.dart';
@@ -134,7 +134,8 @@ class _MasterShellState extends State<MasterShell> {
                   TodayScreen(onOpenWallet: () => setState(() => _tab = 3)),
                   const OrdersScreen(),
                   const ScheduleTab(),
-                  const WalletScreen(),
+                  // M-34 или M-46 — решает аффилиация, не пользователь (DEV-09)
+                  const WalletOrOutputScreen(),
                   const ProfileScreen(),
                 ],
               ),
