@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccessController } from './access.controller';
+import { UnitAccessPageController } from './unit-access-page.controller';
 import { PublicBuildingController } from './public-building.controller';
 import { AccessService } from './access.service';
 import { InMemoryPermitRepository } from './permit.repository';
@@ -14,7 +15,7 @@ import { BuildingsModule } from '../buildings/buildings.module';
  */
 @Module({
   imports: [BuildingsModule],
-  controllers: [AccessController, PermitPageController, PublicBuildingController],
+  controllers: [AccessController, PermitPageController, PublicBuildingController, UnitAccessPageController],
   providers: [AccessService, InMemoryPermitRepository, PermitLinksService],
   exports: [AccessService],
 })

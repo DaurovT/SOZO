@@ -3,8 +3,8 @@ import { createPermitStateMachine, uuidv7, type PermitContext } from '@sozo/kern
 import type { PermitAction, PassType } from '@sozo/contracts';
 import { EventBus } from '../../common/event-bus';
 import { BuildingsService } from '../buildings/buildings.service';
-import { PermitLinksService } from './permit-links.service';
-import { InMemoryPermitRepository, type PermitRecord, type PassRecord, type ShutdownRecord } from './permit.repository';
+import { PermitLinksService, newLinkCode } from './permit-links.service';
+import { InMemoryPermitRepository, type PermitRecord, type PassRecord, type ShutdownRecord, type UnitAccessRequest } from './permit.repository';
 import type { ResourceType } from '@sozo/contracts';
 
 /** Срок публикации планового отключения — таймер 62 (PRD-05 §8.2) */
@@ -344,6 +344,162 @@ export class AccessService {
     this.repo.savePass(rec);
     this.bus.publish('pass.issued', { passId: rec.id, orderId: rec.orderId, masterId: rec.masterId });
     return rec;
+  }
+
+  // ============================================================
+  // C-56. Согласование доступа в моё помещение (DEV-15 §10.3)
+  // ============================================================
+
+  /**
+   * Запрос доступа в чужую квартиру.
+   *
+   * Обратная сторона допуска, о которой легко забыть: чтобы починить стояк,
+   * часто нужно попасть к соседу. Альтернатива для мастера сейчас — стучать
+   * в дверь и надеяться, что дома кто-то есть.
+   *
+   * Молчание не согласие: истёкший запрос становится `expired`, а не
+   * «одобрен по умолчанию». В чужое жильё без явного ответа не входят — это
+   * не тот случай, где авто-согласие уместно, в отличие от общих зон.
+   */
+  requestUnitAccess(
+    tenantId: string,
+    dto: {
+      buildingId: string;
+      unitId: string;
+      requestedByPhone: string;
+      reason: string;
+      windowFrom: string;
+      windowTo: string;
+      permitId?: string | null;
+      orderId?: string | null;
+      masterId?: string | null;
+      masterName?: string | null;
+      waitHours?: number;
+    },
+  ): UnitAccessRequest {
+    const unit = this.buildings.unitById(tenantId, dto.unitId);
+    if (!unit) throw new NotFoundException({ code: 'UNIT_NOT_FOUND', message: 'Помещение не найдено' });
+    if (!dto.reason?.trim()) {
+      throw new BadRequestException({ code: 'REASON_REQUIRED', message: 'Житель должен понять, зачем к нему идут' });
+    }
+    const from = Date.parse(dto.windowFrom);
+    const to = Date.parse(dto.windowTo);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+      throw new BadRequestException({ code: 'WINDOW_INVALID', message: 'Окно доступа: конец должен быть позже начала' });
+    }
+    // Повторный запрос в то же помещение по тому же наряду не плодим: жителю
+    // два одинаковых сообщения читаются как неисправность
+    const live = this.repo
+      .unitAccessByUnits(tenantId, [dto.unitId])
+      .find((x) => x.status === 'requested' && x.permitId === (dto.permitId ?? null));
+    if (live) return live;
+
+    const rec: UnitAccessRequest = {
+      id: uuidv7(),
+      tenantId,
+      buildingId: dto.buildingId,
+      unitId: dto.unitId,
+      unitLabel: unit.number,
+      permitId: dto.permitId ?? null,
+      orderId: dto.orderId ?? null,
+      requestedByPhone: dto.requestedByPhone,
+      masterId: dto.masterId ?? null,
+      masterName: dto.masterName ?? null,
+      reason: dto.reason.trim(),
+      windowFrom: dto.windowFrom,
+      windowTo: dto.windowTo,
+      status: 'requested',
+      decidedByPhone: null,
+      decidedAt: null,
+      declineReason: null,
+      proposedFrom: null,
+      proposedTo: null,
+      // Ждём до конца окна, но не дольше суток: запрос на послезавтра не
+      // должен висеть открытым двое суток
+      expiresAt: new Date(Math.min(to, Date.now() + (dto.waitHours ?? 24) * 3_600_000)).toISOString(),
+      accessCode: newLinkCode((c) => Boolean(this.repo.unitAccessByCode(c))),
+      createdAt: new Date().toISOString(),
+    };
+    this.repo.saveUnitAccess(rec);
+    this.bus.publish('unit_access.requested', { requestId: rec.id, unitId: rec.unitId, buildingId: rec.buildingId });
+    return rec;
+  }
+
+  /** Запрос по коду из ссылки — страница жителя без установки приложения */
+  unitAccessByCode(code: string): UnitAccessRequest | undefined {
+    return this.repo.unitAccessByCode((code ?? '').trim().toUpperCase());
+  }
+
+  /** Свои запросы: помещения, где человек числится жителем */
+  unitAccessFor(tenantId: string, unitIds: string[]): UnitAccessRequest[] {
+    return this.repo.unitAccessByUnits(tenantId, unitIds);
+  }
+
+  decideUnitAccess(
+    tenantId: string,
+    id: string,
+    dto: { decision: 'approve' | 'decline' | 'propose'; byPhone: string; reason?: string; from?: string; to?: string },
+  ): UnitAccessRequest {
+    const r = this.repo.getUnitAccess(tenantId, id);
+    if (!r) throw new NotFoundException({ code: 'UNIT_ACCESS_NOT_FOUND', message: 'Запрос не найден' });
+    if (r.status !== 'requested') {
+      throw new ConflictException({
+        code: 'ALREADY_DECIDED',
+        message: `Решение уже принято: ${r.status}`,
+        status: r.status,
+        decidedAt: r.decidedAt,
+      });
+    }
+    if (dto.decision === 'approve') {
+      r.status = 'approved';
+    } else if (dto.decision === 'decline') {
+      if (!dto.reason?.trim()) {
+        throw new BadRequestException({
+          code: 'REASON_REQUIRED',
+          message: 'Укажите причину — мастеру надо понять, что делать дальше',
+        });
+      }
+      r.status = 'declined';
+      r.declineReason = dto.reason.trim();
+    } else {
+      const f = Date.parse(dto.from ?? '');
+      const t2 = Date.parse(dto.to ?? '');
+      if (!Number.isFinite(f) || !Number.isFinite(t2) || t2 <= f) {
+        throw new BadRequestException({ code: 'WINDOW_INVALID', message: 'Предложите окно: конец позже начала' });
+      }
+      r.status = 'rescheduled';
+      r.proposedFrom = dto.from!;
+      r.proposedTo = dto.to!;
+    }
+    r.decidedByPhone = dto.byPhone;
+    r.decidedAt = new Date().toISOString();
+    this.repo.saveUnitAccess(r);
+    this.bus.publish(`unit_access.${r.status}`, { requestId: r.id, unitId: r.unitId, buildingId: r.buildingId });
+    return r;
+  }
+
+  /** Прогон таймером: молчание закрывает запрос как «нет ответа», а не как согласие */
+  expireUnitAccess(tenantId: string, now = new Date()): UnitAccessRequest[] {
+    const out = this.repo.unitAccessExpired(tenantId, now);
+    for (const r of out) {
+      r.status = 'expired';
+      this.repo.saveUnitAccess(r);
+      this.bus.publish('unit_access.expired', { requestId: r.id, unitId: r.unitId, buildingId: r.buildingId });
+    }
+    return out;
+  }
+
+  /**
+   * Гейт наряда: есть ли согласованный доступ во все помещения, куда мастер
+   * собирается зайти. Пока хоть одно молчит — выезжать рано.
+   */
+  unitAccessReady(tenantId: string, permitId: string): { ready: boolean; pending: string[]; declined: string[] } {
+    const rows = this.repo.unitAccessByPermit(tenantId, permitId);
+    return {
+      ready: rows.every((x) => x.status === 'approved'),
+      pending: rows.filter((x) => x.status === 'requested' || x.status === 'rescheduled').map((x) => x.unitLabel),
+      declined: rows.filter((x) => x.status === 'declined' || x.status === 'expired').map((x) => x.unitLabel),
+    };
   }
 
   /**

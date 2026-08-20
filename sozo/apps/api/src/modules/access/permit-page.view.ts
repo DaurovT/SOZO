@@ -10,7 +10,7 @@
  * тёмный (белый по янтарю не читается).
  */
 
-const CSS = `
+export const PAGE_CSS = `
   *{box-sizing:border-box}
   body{margin:0;background:#F6F6F8;color:#141518;font:16px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
   .wrap{max-width:520px;margin:0 auto;padding:16px 16px 40px;min-height:100vh;display:flex;flex-direction:column}
@@ -44,7 +44,7 @@ function page(title: string, body: string): string {
   return `<!doctype html><html lang="ru"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>${esc(title)}</title><style>${CSS}</style></head>
+<title>${esc(title)}</title><style>${PAGE_CSS}</style></head>
 <body><div class="wrap">
 <header><span class="logo"></span><span class="muted">SOZO · согласование доступа</span></header>
 ${body}

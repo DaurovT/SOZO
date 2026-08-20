@@ -14,7 +14,23 @@ import { StateStore } from '../../common/state-store';
  */
 
 /** Без нуля, О, единицы и I: код диктуют по телефону */
-const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const LINK_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/**
+ * Код короткой ссылки. Вынесен из класса, потому что тем же алфавитом и той же
+ * длиной пользуется запрос доступа в помещение (C-56): два разных алфавита
+ * означали бы, что человек по телефону диктует то так, то этак.
+ */
+export function newLinkCode(taken: (code: string) => boolean): string {
+  for (let i = 0; i < 10; i++) {
+    let code = '';
+    for (let j = 0; j < 8; j++) code += LINK_ALPHABET[randomInt(LINK_ALPHABET.length)];
+    if (!taken(code)) return code;
+  }
+  throw new Error('Не удалось выдать уникальный код ссылки');
+}
+
+const ALPHABET = LINK_ALPHABET;
 
 export interface PermitLinkRec {
   code: string;

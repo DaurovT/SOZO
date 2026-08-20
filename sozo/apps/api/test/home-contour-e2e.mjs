@@ -987,6 +987,117 @@ async function main() {
   check('отозванный пропуск перестаёт пускать', afterRevoke.valid === false && afterRevoke.reason === 'revoked',
     JSON.stringify(afterRevoke));
 
+  group('25. C-56 — доступ в чужую квартиру');
+
+  // Жителя надо завести в реестре помещения: доступ просят в конкретную
+  // квартиру, а не по адресу из профиля
+  const ukUnits = (await call(`/buildings/${uk}/units`, { token: t })).body;
+  const myUnit = ukUnits[0];
+  await call(`/buildings/units/${myUnit.id}/residents`, {
+    token: t, body: { userPhone: resident, fullName: 'Житель', residentRole: 'owner' },
+  });
+
+  const winFrom = new Date(Date.now() + 3600_000).toISOString();
+  const winTo = new Date(Date.now() + 3 * 3600_000).toISOString();
+
+  const u_noReason = await call('/unit-access', {
+    token: t, body: { buildingId: uk, unitId: myUnit.id, windowFrom: winFrom, windowTo: winTo, reason: '' },
+  });
+  check('без причины запрос не создаётся', u_noReason.status >= 400, errText(u_noReason.body));
+
+  const ua = (await call('/unit-access', {
+    token: t,
+    body: {
+      buildingId: uk, unitId: myUnit.id, permitId: 'p-c56',
+      reason: 'Сосед снизу заливает — нужен доступ к стояку',
+      windowFrom: winFrom, windowTo: winTo, masterName: 'Алишер',
+    },
+  })).body;
+  check('запрос доступа создан', Boolean(ua.id) && ua.status === 'requested', JSON.stringify(ua).slice(0, 100));
+  check('у запроса есть код ссылки для жителя без приложения', /^[A-Z2-9]{8}$/.test(String(ua.accessCode)), String(ua.accessCode));
+  check('квартира названа номером, а не идентификатором', ua.unitLabel === myUnit.number, String(ua.unitLabel));
+
+  // Повтор по тому же наряду не плодит второе сообщение жителю
+  const u_again = (await call('/unit-access', {
+    token: t,
+    body: { buildingId: uk, unitId: myUnit.id, permitId: 'p-c56', reason: 'То же самое', windowFrom: winFrom, windowTo: winTo },
+  })).body;
+  check('повторный запрос по тому же наряду возвращает прежний', u_again.id === ua.id, `${ua.id} / ${u_again.id}`);
+
+  // Гейт наряда: пока молчит — выезжать рано
+  const gate = (await call(`/permits/${'p-c56'}/unit-access`, { token: t })).body;
+  check('наряд не готов, пока доступ не согласован', gate.ready === false && gate.pending.includes(myUnit.number),
+    JSON.stringify(gate));
+
+  const mineReq = (await call('/app/my-building/access-requests', { token: rt })).body.requests ?? [];
+  check('житель видит запрос в своё помещение', mineReq.some((x) => x.id === ua.id), String(mineReq.length));
+  check('текст причины доезжает до жителя целиком',
+    mineReq.find((x) => x.id === ua.id)?.reason?.includes('стояку'), String(mineReq[0]?.reason));
+
+  // Сосед из другой квартиры чужой запрос видеть не должен
+  const alienList = (await call('/app/my-building/access-requests', { token: nt })).body.requests ?? [];
+  check('чужой запрос соседу не показывается', !alienList.some((x) => x.id === ua.id), String(alienList.length));
+
+  const noWhy = await call(`/app/my-building/access-requests/${ua.id}/decide`, {
+    token: rt, body: { decision: 'decline' },
+  });
+  check('отказ без причины не принимается', noWhy.status >= 400, errText(noWhy.body));
+
+  const proposed = (await call(`/app/my-building/access-requests/${ua.id}/decide`, {
+    token: rt,
+    body: { decision: 'propose', from: new Date(Date.now() + 26 * 3600_000).toISOString(), to: new Date(Date.now() + 28 * 3600_000).toISOString() },
+  })).body;
+  check('житель может предложить своё окно', proposed.status === 'rescheduled' && Boolean(proposed.proposedFrom),
+    JSON.stringify(proposed).slice(0, 120));
+
+  const twice = await call(`/app/my-building/access-requests/${ua.id}/decide`, { token: rt, body: { decision: 'approve' } });
+  check('второе решение по тому же запросу не принимается', twice.status === 409, String(twice.status));
+
+  // Молчание — это «нет ответа», а не согласие: в чужое жильё так не входят
+  const silent = (await call('/unit-access', {
+    token: t,
+    body: { buildingId: uk, unitId: myUnit.id, reason: 'Плановая замена крана', windowFrom: winFrom, windowTo: winTo },
+  })).body;
+  const expired = (await call(`/unit-access/expire?now=${encodeURIComponent(new Date(Date.now() + 48 * 3600_000).toISOString())}`, {
+    token: t, method: 'POST',
+  })).body;
+  check('молчание закрывает запрос как «нет ответа»', (expired.expired ?? []).some((x) => x.id === silent.id),
+    String((expired.expired ?? []).length));
+  const afterExpire = ((await call('/app/my-building/access-requests', { token: rt })).body.requests ?? [])
+    .find((x) => x.id === silent.id);
+  check('и статус именно expired, а не approved', afterExpire?.status === 'expired', String(afterExpire?.status));
+
+  group('26. C-56 по ссылке — житель без приложения');
+
+  const linkReq = (await call('/unit-access', {
+    token: t,
+    body: {
+      buildingId: uk, unitId: myUnit.id, permitId: 'p-link',
+      reason: 'Течь в стояке, нужен доступ', windowFrom: winFrom, windowTo: winTo, masterName: 'Бахтиёр',
+    },
+  })).body;
+
+  const page = await fetch(`${ROOT}/u/${linkReq.accessCode}`);
+  const l_pageHtml = await page.text();
+  check('страница открывается по коду без авторизации', page.status === 200, String(page.status));
+  check('заголовок прямым текстом, без канцелярита', l_pageHtml.includes('Соседу нужен доступ'), l_pageHtml.slice(0, 80));
+  check('номер квартиры и причина на странице',
+    l_pageHtml.includes(String(myUnit.number)) && l_pageHtml.includes('Течь в стояке'));
+  check('страница закрыта от индексации', /noindex/i.test(l_pageHtml));
+
+  const approveRes = await fetch(`${ROOT}/u/${linkReq.accessCode}/approve`, { method: 'POST' });
+  check('согласование по ссылке принимается', approveRes.status === 201 || approveRes.status === 200, String(approveRes.status));
+
+  const afterLink = (await call(`/permits/p-link/unit-access`, { token: t })).body;
+  check('наряд стал готов после согласия жителя', afterLink.ready === true, JSON.stringify(afterLink));
+
+  const l_reused = await (await fetch(`${ROOT}/u/${linkReq.accessCode}`)).text();
+  check('повторное открытие показывает принятое решение', l_reused.includes('Решение уже принято'), l_reused.slice(0, 80));
+
+  const badCode = await fetch(`${ROOT}/u/ZZZZZZZZ`);
+  check('несуществующий код не раскрывает, есть ли такая квартира',
+    (await badCode.text()).includes('недействительна'), String(badCode.status));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

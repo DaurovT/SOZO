@@ -157,6 +157,11 @@ export class BuildingsService {
     return rec;
   }
 
+  /** Помещение по id — нужно запросу доступа (C-56), чтобы назвать квартиру жителю */
+  unitById(tenantId: string, id: string) {
+    return this.repo.getUnit(tenantId, id);
+  }
+
   listUnits(tenantId: string, buildingId: string) {
     return this.repo.listUnits(tenantId, buildingId);
   }

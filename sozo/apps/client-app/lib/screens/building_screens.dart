@@ -618,3 +618,202 @@ class _BuildingPassScreenState extends State<BuildingPassScreen> {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// C-56. Согласование доступа в моё помещение
+// ---------------------------------------------------------------------------
+
+/// Обратная сторона допуска: чтобы починить стояк, часто нужно попасть
+/// в чужую квартиру (DEV-15 §10.3). Альтернатива для мастера сейчас —
+/// стучать в дверь и надеяться, что дома кто-то есть.
+///
+/// Заголовок прямым текстом, без канцелярита: человек должен понять, кто и
+/// зачем к нему просится, за одну секунду.
+class UnitAccessScreen extends StatefulWidget {
+  const UnitAccessScreen({super.key});
+
+  @override
+  State<UnitAccessScreen> createState() => _UnitAccessScreenState();
+}
+
+class _UnitAccessScreenState extends State<UnitAccessScreen> {
+  List<Map<String, dynamic>> _items = const [];
+  bool _loading = true;
+  String? _busyId;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await session.api.myAccessRequests();
+      if (!mounted) return;
+      setState(() {
+        _items = ((r['requests'] as List?) ?? const []).cast<Map<String, dynamic>>();
+        _loading = false;
+      });
+    } on ApiError {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _decide(Map<String, dynamic> r, String decision) async {
+    String? reason;
+    String? from;
+    String? to;
+
+    if (decision == 'decline') {
+      final ctrl = TextEditingController();
+      reason = await showSozoPrompt(
+        context,
+        title: t('c56.pochemu'),
+        controller: ctrl,
+        confirmLabel: t('c56.otkazat'),
+        hint: t('c56.pochemuHint'),
+      );
+      ctrl.dispose();
+      if (reason == null || reason.trim().isEmpty) return;
+    }
+    if (decision == 'propose') {
+      final picked = await _pickWindow();
+      if (picked == null) return;
+      from = picked.$1.toUtc().toIso8601String();
+      to = picked.$2.toUtc().toIso8601String();
+    }
+
+    setState(() => _busyId = '${r['id']}');
+    try {
+      await session.api.decideAccessRequest('${r['id']}', decision: decision, reason: reason, from: from, to: to);
+      if (!mounted) return;
+      showSozoToast(context, t('c56.otvetOtpravlen'));
+      await _load();
+    } on ApiError catch (e) {
+      if (mounted) showSozoToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
+  Future<(DateTime, DateTime)?> _pickWindow() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().add(const Duration(days: 1)),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 14)),
+    );
+    if (d == null || !mounted) return null;
+    final tm = await showTimePicker(context: context, initialTime: const TimeOfDay(hour: 10, minute: 0));
+    if (tm == null) return null;
+    final start = DateTime(d.year, d.month, d.day, tm.hour, tm.minute);
+    return (start, start.add(const Duration(hours: 2)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SozoColors.bg,
+      appBar: SozoAppBar(title: t('c56.title')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _items.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(SozoSpace.s24),
+                    child: Text(t('c56.pusto'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: SozoColors.textSecondary)),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.all(SozoSpace.s16),
+                    children: [for (final r in _items) _card(r)],
+                  ),
+                ),
+    );
+  }
+
+  Widget _card(Map<String, dynamic> r) {
+    final status = '${r['status']}';
+    final pending = status == 'requested';
+    final busy = _busyId == '${r['id']}';
+    final from = '${r['windowFrom'] ?? ''}';
+    final to = '${r['windowTo'] ?? ''}';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: SozoSpace.s12),
+      child: SozoCard(
+        children: [
+          // Прямым текстом, без «уведомляем вас о необходимости обеспечить»
+          Text(
+            t('c56.zagolovok', {'p1': '${r['unitLabel'] ?? ''}'}),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, height: 1.3),
+          ),
+          const SizedBox(height: SozoSpace.s8),
+          Text('${r['reason'] ?? ''}', style: const TextStyle(fontSize: 14, height: 1.4)),
+          const SizedBox(height: SozoSpace.s8),
+          InfoRowLike(label: t('c56.kogda'), value: _window(from, to)),
+          if (r['masterName'] != null) InfoRowLike(label: t('c56.master'), value: '${r['masterName']}'),
+          if (!pending) ...[
+            const SizedBox(height: SozoSpace.s8),
+            TagChip(_statusLabel(status)),
+            if (r['declineReason'] != null)
+              Text('${r['declineReason']}',
+                  style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
+          ],
+          if (pending) ...[
+            const SizedBox(height: SozoSpace.s12),
+            PrimaryButton(t('c56.podtverdit'), onTap: busy ? null : () => _decide(r, 'approve')),
+            const SizedBox(height: SozoSpace.s8),
+            SecondaryButton(t('c56.drugoeVremya'), onTap: busy ? null : () => _decide(r, 'propose')),
+            const SizedBox(height: SozoSpace.s8),
+            TextAction(t('c56.otkazat'), onTap: busy ? null : () => _decide(r, 'decline')),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _window(String from, String to) {
+    String hm(String iso) {
+      final parts = iso.split('T');
+      return parts.length > 1 ? parts[1].substring(0, 5) : '';
+    }
+    return '${from.split('T').first} ${hm(from)}–${hm(to)}';
+  }
+
+  String _statusLabel(String s) => switch (s) {
+        'approved' => t('c56.stPodtverzhden'),
+        'declined' => t('c56.stOtkazan'),
+        'rescheduled' => t('c56.stPredlozheno'),
+        'expired' => t('c56.stNetOtveta'),
+        'cancelled' => t('c56.stOtmenen'),
+        _ => s,
+      };
+}
+
+/// Строка «подпись — значение» внутри карточки запроса.
+/// Отдельный маленький виджет вместо InfoRow из общего набора: тот тянет
+/// иконку и денежное форматирование, которые здесь ни к чему.
+class InfoRowLike extends StatelessWidget {
+  const InfoRowLike({super.key, required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$label  ', style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary)),
+            Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
+          ],
+        ),
+      );
+}

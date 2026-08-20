@@ -7,6 +7,7 @@ export class InMemoryPermitRepository {
   private permits = new Map<string, PermitRecord>();
   private passes = new Map<string, PassRecord>();
   private shutdowns = new Map<string, ShutdownRecord>();
+  private unitAccess = new Map<string, UnitAccessRequest>();
   /** идемпотентность офлайн-синка мастера: client_op_uuid → результат перехода */
   private ops = new Map<string, string>();
 
@@ -17,6 +18,7 @@ export class InMemoryPermitRepository {
         permits: [...this.permits.values()],
         passes: [...this.passes.values()],
         shutdowns: [...this.shutdowns.values()],
+        unitAccess: [...this.unitAccess.values()],
         ops: [...this.ops],
       }),
       (data) => {
@@ -24,11 +26,13 @@ export class InMemoryPermitRepository {
           permits?: PermitRecord[];
           passes?: PassRecord[];
           shutdowns?: ShutdownRecord[];
+          unitAccess?: UnitAccessRequest[];
           ops?: [string, string][];
         };
         this.permits = new Map((d.permits ?? []).map((p) => [p.id, p]));
         this.passes = new Map((d.passes ?? []).map((p) => [p.id, p]));
         this.shutdowns = new Map((d.shutdowns ?? []).map((p) => [p.id, p]));
+        this.unitAccess = new Map((d.unitAccess ?? []).map((p) => [p.id, p]));
         this.ops = new Map(d.ops ?? []);
       },
     );
@@ -92,6 +96,32 @@ export class InMemoryPermitRepository {
       }
     }
     return n;
+  }
+
+  saveUnitAccess(x: UnitAccessRequest): void {
+    this.unitAccess.set(x.id, x);
+  }
+  getUnitAccess(tenantId: string, id: string): UnitAccessRequest | undefined {
+    const x = this.unitAccess.get(id);
+    return x && x.tenantId === tenantId ? x : undefined;
+  }
+  /** Запросы по помещению — их видит житель */
+  unitAccessByUnits(tenantId: string, unitIds: string[]): UnitAccessRequest[] {
+    return [...this.unitAccess.values()]
+      .filter((x) => x.tenantId === tenantId && unitIds.includes(x.unitId))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }
+  unitAccessByCode(code: string): UnitAccessRequest | undefined {
+    return [...this.unitAccess.values()].find((x) => x.accessCode === code);
+  }
+  unitAccessByPermit(tenantId: string, permitId: string): UnitAccessRequest[] {
+    return [...this.unitAccess.values()].filter((x) => x.tenantId === tenantId && x.permitId === permitId);
+  }
+  /** Просроченные ожидания — для прогона таймером */
+  unitAccessExpired(tenantId: string, now: Date): UnitAccessRequest[] {
+    return [...this.unitAccess.values()].filter(
+      (x) => x.tenantId === tenantId && x.status === 'requested' && Date.parse(x.expiresAt) <= now.getTime(),
+    );
   }
 
   saveShutdown(x: ShutdownRecord): void {
@@ -210,6 +240,46 @@ export interface PassRecord {
   issuedByPhone?: string | null;
   unitLabel?: string | null;
 }
+
+export interface UnitAccessRequest {
+  id: string;
+  tenantId: string;
+  buildingId: string;
+  /** чьё помещение: доступ просят именно сюда */
+  unitId: string;
+  unitLabel: string;
+  /** наряд, ради которого нужен доступ; null — работа без наряда (частная заявка соседа) */
+  permitId: string | null;
+  orderId: string | null;
+  /** кто просит: мастер или диспетчер от его имени */
+  requestedByPhone: string;
+  masterId: string | null;
+  masterName: string | null;
+  /** зачем — прямым текстом для жителя, без канцелярита */
+  reason: string;
+  windowFrom: string;
+  windowTo: string;
+  status: UnitAccessStatus;
+  decidedByPhone: string | null;
+  decidedAt: string | null;
+  declineReason: string | null;
+  /** предложенное жителем окно, когда он не может в исходное */
+  proposedFrom: string | null;
+  proposedTo: string | null;
+  /** до какого момента ждём ответа; после — запрос протухает, а не висит */
+  expiresAt: string;
+  /**
+   * Код ссылки для жителя. Спецификация говорит «уходит пушем», но FCM в
+   * системе нет, и обещать доставку, которой не существует, нельзя. Пока
+   * работает тот же механизм, что у W-06: короткая ссылка в SMS, открываемая
+   * без установки приложения. Появится push — ссылка останется запасным
+   * каналом, а не исчезнет: у части жителей приложения не будет никогда.
+   */
+  accessCode: string;
+  createdAt: string;
+}
+
+export type UnitAccessStatus = 'requested' | 'approved' | 'declined' | 'rescheduled' | 'expired' | 'cancelled';
 
 export interface ShutdownRecord {
   id: string;

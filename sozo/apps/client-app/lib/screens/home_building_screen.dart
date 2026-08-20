@@ -185,6 +185,13 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
           ),
         ),
         NavRow(
+          icon: 'lock',
+          title: t('c56.title'),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const UnitAccessScreen()),
+          ),
+        ),
+        NavRow(
           icon: 'zap',
           title: t('c53.title'),
           onTap: () => Navigator.of(context).push(

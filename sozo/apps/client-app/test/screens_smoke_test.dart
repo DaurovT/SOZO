@@ -265,6 +265,7 @@ void main() {
     testWidgets('дом: проблема в доме', (t) => check(t, 'Проблема в доме', const BuildingReportScreen()));
     testWidgets('дом: отключения', (t) => check(t, 'Отключения', const BuildingShutdownsScreen()));
     testWidgets('дом: пропуск гостю', (t) => check(t, 'Пропуск гостю', const BuildingPassScreen()));
+    testWidgets('дом: доступ в квартиру', (t) => check(t, 'Доступ в квартиру', const UnitAccessScreen()));
     testWidgets('витрина экранов', (t) => check(t, 'Витрина', const ShowcaseScreen()));
   });
 }

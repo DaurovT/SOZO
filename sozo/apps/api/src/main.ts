@@ -14,7 +14,7 @@ async function bootstrap() {
 // это адреса для браузера, а не эндпоинты API. 'w' — веб-карточка заявки (W-01…W-05),
 // 'p' — согласование наряда-допуска (W-06).
   app.setGlobalPrefix('v1', {
-    exclude: ['w/:code', 'w/:code/(.*)', 'p/:code', 'p/:code/(.*)'],
+    exclude: ['w/:code', 'w/:code/(.*)', 'p/:code', 'p/:code/(.*)', 'u/:code', 'u/:code/(.*)'],
   });
   // Список источников задаётся окружением: CORS_ORIGINS через запятую.
   // `origin: true` отражает любой источник и остаётся только в dev, где

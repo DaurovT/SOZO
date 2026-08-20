@@ -365,6 +365,54 @@ export class ClientB2CController {
     return this.access.revokePass('t0', id, this.phone(req));
   }
 
+  // ---------- C-56. Согласование доступа в моё помещение ----------
+
+  /**
+   * Запросы доступа в помещения жителя.
+   *
+   * Помещения определяются по реестру жителей объекта, а не по адресу из
+   * профиля: доступ просят в конкретную квартиру, и ошибиться здесь значит
+   * показать человеку чужой запрос.
+   */
+  @Get('my-building/access-requests')
+  myUnitAccessRequests(@Req() req: AppRequest) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) return { requests: [] };
+    const myUnits = this.buildings
+      .listUnits('t0', building.id)
+      .filter((u) => this.buildings.listResidents('t0', u.id).some((r) => r.userPhone === phone))
+      .map((u) => u.id);
+    if (!myUnits.length) return { requests: [] };
+    return { requests: this.access.unitAccessFor('t0', myUnits) };
+  }
+
+  /** Три решения: подтвердить, предложить другое время, отказать */
+  @Post('my-building/access-requests/:id/decide')
+  decideUnitAccess(
+    @Param('id') id: string,
+    @Body() b: { decision?: 'approve' | 'decline' | 'propose'; reason?: string; from?: string; to?: string },
+    @Req() req: AppRequest,
+  ) {
+    const phone = this.phone(req);
+    const r = this.access.decideUnitAccess('t0', id, {
+      decision: b.decision ?? 'approve',
+      byPhone: phone,
+      reason: b.reason,
+      from: b.from,
+      to: b.to,
+    });
+    this.audit.write({
+      actorPhone: phone,
+      action: `unit_access.${r.status}`,
+      entity: 'Unit',
+      entityId: r.unitId,
+      payload: { requestId: r.id, status: r.status },
+    });
+    return r;
+  }
+
   // ---------- C-53. Отключения и работы в доме ----------
 
   /**

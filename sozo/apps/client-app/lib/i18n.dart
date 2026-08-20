@@ -68,6 +68,23 @@ final l10n = L10n();
 String t(String key, [Map<String, Object?>? args]) => l10n.t(key, args);
 
 const _uz = <String, String>{
+  'c56.title': 'Kvartiraga kirish',
+  'c56.pusto': 'Kirish so‘rovlari yo‘q',
+  'c56.zagolovok': 'Qo‘shningizga {p1} kvartirangizdagi stoyakka kirish kerak',
+  'c56.kogda': 'Qachon',
+  'c56.master': 'Usta',
+  'c56.podtverdit': 'Tasdiqlash',
+  'c56.drugoeVremya': 'Boshqa vaqt taklif qilish',
+  'c56.otkazat': 'Rad etish',
+  'c56.pochemu': 'Nega rad etilyapti',
+  'c56.pochemuHint': 'Masalan: safarda bo‘laman',
+  'c56.otvetOtpravlen': 'Javob yuborildi',
+  'c56.stPodtverzhden': 'tasdiqlangan',
+  'c56.stOtkazan': 'rad etilgan',
+  'c56.stPredlozheno': 'boshqa vaqt taklif qilingan',
+  'c56.stNetOtveta': 'javob yo‘q',
+  'c56.stOtmenen': 'bekor qilingan',
+
   'c54.title': 'Mehmon uchun ruxsatnoma',
   'c54.kogoZhdete': 'Kimni kutyapsiz',
   'c54.imyaHint': 'Mehmon yoki pudratchi ismi',
@@ -955,6 +972,23 @@ const _uz = <String, String>{
 /// Ключи те же, что в русском словаре: пропуск отдаёт русскую строку, а не
 /// пустоту (см. `L10n.t`).
 const _en = <String, String>{
+  'c56.title': 'Access to your flat',
+  'c56.pusto': 'No access requests',
+  'c56.zagolovok': 'A neighbour needs access to the riser in your flat {p1}',
+  'c56.kogda': 'When',
+  'c56.master': 'Technician',
+  'c56.podtverdit': 'Confirm',
+  'c56.drugoeVremya': 'Suggest another time',
+  'c56.otkazat': 'Decline',
+  'c56.pochemu': 'Why decline',
+  'c56.pochemuHint': 'For example: I will be away',
+  'c56.otvetOtpravlen': 'Reply sent',
+  'c56.stPodtverzhden': 'confirmed',
+  'c56.stOtkazan': 'declined',
+  'c56.stPredlozheno': 'another time suggested',
+  'c56.stNetOtveta': 'no reply',
+  'c56.stOtmenen': 'cancelled',
+
   'c54.title': 'Guest pass',
   'c54.kogoZhdete': 'Who are you expecting',
   'c54.imyaHint': 'Guest or contractor name',
@@ -1782,6 +1816,23 @@ const _en = <String, String>{
 };
 
 const _ru = <String, String>{
+  'c56.title': 'Доступ в квартиру',
+  'c56.pusto': 'Запросов на доступ нет',
+  'c56.zagolovok': 'Соседу нужен доступ к стояку в вашей квартире {p1}',
+  'c56.kogda': 'Когда',
+  'c56.master': 'Мастер',
+  'c56.podtverdit': 'Подтвердить',
+  'c56.drugoeVremya': 'Предложить другое время',
+  'c56.otkazat': 'Отказать',
+  'c56.pochemu': 'Почему отказ',
+  'c56.pochemuHint': 'Например: буду в отъезде',
+  'c56.otvetOtpravlen': 'Ответ отправлен',
+  'c56.stPodtverzhden': 'подтверждён',
+  'c56.stOtkazan': 'отказ',
+  'c56.stPredlozheno': 'предложено другое время',
+  'c56.stNetOtveta': 'нет ответа',
+  'c56.stOtmenen': 'отменён',
+
   'c54.title': 'Пропуск гостю',
   'c54.kogoZhdete': 'Кого ждёте',
   'c54.imyaHint': 'Имя гостя или подрядчика',

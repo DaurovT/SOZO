@@ -205,6 +205,24 @@ class ApiClient {
   Future<Map<String, dynamic>> myBuildingObservations() async =>
       (await get('/app/my-building/observations')) as Map<String, dynamic>;
 
+  /// C-56. Запросы доступа в моё помещение
+  Future<Map<String, dynamic>> myAccessRequests() async =>
+      (await get('/app/my-building/access-requests')) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> decideAccessRequest(
+    String id, {
+    required String decision,
+    String? reason,
+    String? from,
+    String? to,
+  }) async =>
+      (await post('/app/my-building/access-requests/$id/decide', {
+        'decision': decision,
+        'reason': ?reason,
+        'from': ?from,
+        'to': ?to,
+      })) as Map<String, dynamic>;
+
   /// C-54. Пропуск гостю: житель выписывает сам, без заявки и мастера
   Future<Map<String, dynamic>> issueGuestPass({
     required String guestName,

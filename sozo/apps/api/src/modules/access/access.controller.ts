@@ -60,6 +60,46 @@ export class AccessController {
     return this.access.autoApproveExpired('t0', now ? new Date(now) : new Date());
   }
 
+  // ---------- C-56. Доступ в помещение ----------
+
+  /**
+   * Запрос доступа в чужую квартиру. Создаёт мастер или диспетчер от его
+   * имени: житель ничего не запрашивает, он отвечает.
+   */
+  @Post('unit-access')
+  requestUnitAccess(
+    @Body()
+    body: {
+      buildingId: string;
+      unitId: string;
+      reason: string;
+      windowFrom: string;
+      windowTo: string;
+      permitId?: string;
+      orderId?: string;
+      masterId?: string;
+      masterName?: string;
+    },
+    @Req() req: { auth: JwtClaims },
+  ) {
+    return this.access.requestUnitAccess('t0', { ...body, requestedByPhone: req.auth.phone });
+  }
+
+  /** Гейт наряда: во все ли помещения доступ уже согласован */
+  @Get('permits/:id/unit-access')
+  unitAccessForPermit(@Param('id') id: string) {
+    return this.access.unitAccessReady('t0', id);
+  }
+
+  /**
+   * Прогон молчащих запросов. В проде — воркер таймеров; здесь ручной триггер.
+   * `now` только для dev и тестов: иначе истечение не проверить, не подождав сутки.
+   */
+  @Post('unit-access/expire')
+  expireUnitAccess(@Query('now') now?: string) {
+    return { expired: this.access.expireUnitAccess('t0', now ? new Date(now) : new Date()) };
+  }
+
   @Post('passes')
   issuePass(
     @Body()
