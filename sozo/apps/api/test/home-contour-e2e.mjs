@@ -850,6 +850,81 @@ async function main() {
   const strangerSessions = (await call(`/master/equipment/${strangerEq.id}/maintenance`, { token: mt })).body;
   check('и сессия при отказе не создалась', (strangerSessions.history ?? []).length === 0, String(strangerSessions.history?.length));
 
+  group('23. C-51…C-53 — раздел «Мой дом» у жителя');
+
+  // Житель опознаётся по сохранённому адресу: раздел появляется сам, когда
+  // адрес совпал с подключённым объектом — просить человека «привязать дом»
+  // значит потерять большинство на лишнем шаге
+  const resident = '+998900055501';
+  const rt = await login(resident);
+  await call('/app/addresses', { token: rt, body: { label: 'Дом', street: 'Амира Темура 15', apartment: '12' } });
+
+  const myHome = (await call('/app/my-building', { token: rt })).body;
+  check('раздел «Мой дом» открывается по совпавшему адресу', myHome.building?.id === uk, JSON.stringify(myHome).slice(0, 120));
+  check('аварийный телефон отдаётся первым делом', Boolean(myHome.emergencyPhone), String(myHome.emergencyPhone));
+
+  // --- C-52
+  const rcats = (await call('/app/my-building/observation-categories', { token: rt })).body.categories ?? [];
+  check('категории жителю — тот же справочник, что мастеру', rcats.length === 11, String(rcats.length));
+
+  const r_noPhoto = await call('/app/my-building/observations', {
+    token: rt, body: { categoryId: 'lighting', zoneKey: 'подъезд 2' },
+  });
+  check('обращение без фото не принимается', r_noPhoto.status >= 400, errText(r_noPhoto.body));
+
+  const r_noCat = await call('/app/my-building/observations', {
+    token: rt, body: { photos: [uuid()], zoneKey: 'подъезд 2' },
+  });
+  check('обращение без категории не принимается', r_noCat.status >= 400, errText(r_noCat.body));
+
+  const rep = (await call('/app/my-building/observations', {
+    token: rt, body: { categoryId: 'lighting', zoneKey: 'подъезд 2', photos: [uuid()], comment: 'Не горит лампа на 3 этаже' },
+  })).body;
+  check('обращение жителя создано', Boolean(rep.observation?.id), JSON.stringify(rep).slice(0, 120));
+  check('источник проставлен «житель», а не выбирается им', rep.observation.source === 'resident', rep.observation.source);
+
+  // Второй житель того же дома видит дубль и может присоединиться, а не плодить
+  const neighbour = '+998900055502';
+  const nt = await login(neighbour);
+  await call('/app/addresses', { token: nt, body: { label: 'Дом', street: 'Амира Темура 15', apartment: '14' } });
+  const dup = (await call('/app/my-building/observations', {
+    token: nt, body: { categoryId: 'lighting', zoneKey: 'подъезд 2', photos: [uuid()] },
+  })).body;
+  check('сосед получает подсказку о дубле, а не молчаливую копию', (dup.duplicates ?? []).length > 0, String(dup.duplicates?.length));
+
+  const r_joined = (await call('/app/my-building/observations', {
+    token: nt, body: { categoryId: 'lighting', zoneKey: 'подъезд 2', photos: [uuid()], joinObservationId: rep.observation.id },
+  })).body;
+  check('присоединение не создаёт второе обращение', r_joined.joined === true, JSON.stringify(r_joined).slice(0, 100));
+
+  const mineObs = (await call('/app/my-building/observations', { token: rt })).body.observations ?? [];
+  check('своё обращение видно со статусом', mineObs.some((o) => o.id === rep.observation.id && o.status), String(mineObs.length));
+  check('подпись категории приходит готовой, а не кодом',
+    mineObs.some((o) => o.categoryLabel && o.categoryLabel !== o.categoryId), JSON.stringify(mineObs[0] ?? {}).slice(0, 120));
+
+  // Ради этого житель и возвращается в приложение: он видит, что починили
+  await call(`/buildings/observations/${rep.observation.id}/resolve`, { token: t, body: { resolvedPhotoId: uuid() } });
+  const afterFix = ((await call('/app/my-building/observations', { token: rt })).body.observations ?? [])
+    .find((o) => o.id === rep.observation.id);
+  check('после устранения житель видит статус и фото', afterFix?.status === 'resolved' && Boolean(afterFix?.resolvedPhotoId),
+    JSON.stringify(afterFix ?? {}).slice(0, 120));
+
+  // --- C-53
+  const up = (await call('/app/my-building/shutdowns', { token: rt })).body.shutdowns ?? [];
+  check('календарь отключений открывается', Array.isArray(up), String(up.length));
+  check('зона влияния переведена на язык жителя',
+    up.every((x) => typeof x.affectsMe === 'boolean' && x.resourceLabel), JSON.stringify(up[0] ?? {}).slice(0, 140));
+  const hist = (await call('/app/my-building/shutdowns?scope=history', { token: rt })).body.shutdowns ?? [];
+  check('история отделена от ближайших', Array.isArray(hist) && !hist.some((h) => up.some((u) => u.id === h.id)),
+    `${up.length} / ${hist.length}`);
+
+  // Чужой человек без адреса в этом доме раздела не получает
+  const outsider = await login('+998900055503');
+  const noHome = await call('/app/my-building', { token: outsider });
+  check('без подключённого адреса раздела нет', noHome.status === 404, String(noHome.status));
+  const noShut = (await call('/app/my-building/shutdowns', { token: outsider })).body;
+  check('и отключения чужого дома не отдаются', (noShut.shutdowns ?? []).length === 0, String(noShut.shutdowns?.length));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

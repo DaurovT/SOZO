@@ -1,5 +1,5 @@
 import { BuildingsService } from '../buildings/buildings.service';
-import { resourceLabelLower } from '@sozo/contracts';
+import { resourceLabelLower, OBSERVATION_CATEGORIES, observationCategory } from '@sozo/contracts';
 import { AccessService } from '../access/access.service';
 import {
   BadRequestException,
@@ -216,6 +216,150 @@ export class ClientB2CController {
       dispatchPhone: b.dispatchPhone,
       shutdowns,
       announcements: [],
+    };
+  }
+
+  // ---------- C-52. Сообщить о проблеме в доме ----------
+
+  /**
+   * Плитка категорий — тот же справочник A-44, что видит мастер на обходе.
+   * Общий справочник здесь не роскошь: житель и инженер обязаны называть одно
+   * и то же одинаково, иначе очередь замечаний невозможно свести.
+   */
+  @Get('my-building/observation-categories')
+  buildingObservationCategories() {
+    // Объект, а не голый массив: в этом API все ответы — объекты, и клиент
+    // разбирает их одинаково. Голый массив ронял экран на первом же ответе,
+    // формы которого он не ждал
+    return { categories: OBSERVATION_CATEGORIES };
+  }
+
+  /**
+   * Обращение жителя по общему имуществу. Создаёт то же `BUILDING_OBSERVATION`,
+   * что и обход мастера, только с источником «житель» (DEV-15 §10.3): один
+   * механизм, разные источники — и житель видит статус и фото устранения.
+   *
+   * Бесплатно и в биллинг платформы не попадает: это зона ответственности
+   * оператора целиком (DEV-15 §7.5).
+   */
+  @Post('my-building/observations')
+  createBuildingObservation(
+    @Body() b: { zoneKey?: string; categoryId?: string; photos?: string[]; comment?: string; joinObservationId?: string },
+    @Req() req: AppRequest,
+  ) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) throw new NotFoundException('Ваш дом не подключён');
+    if (!b.photos?.length) {
+      throw new BadRequestException({ code: 'PHOTO_REQUIRED', message: 'Приложите фотографию — без неё обращение не примут' });
+    }
+    if (!b.categoryId) {
+      throw new BadRequestException({ code: 'CATEGORY_REQUIRED', message: 'Выберите, что случилось' });
+    }
+    // Снимки жителя хранятся как есть: отдельного альбома у объекта нет,
+    // а идентификатором служит сам dataURL — так же, как у обхода мастера
+    const r = this.buildings.addObservation('t0', building.id, {
+      zoneKey: b.zoneKey?.trim() || 'дом',
+      categoryId: b.categoryId,
+      photoIds: b.photos,
+      source: 'resident',
+      comment: b.comment?.trim(),
+      authorPhone: phone,
+      joinObservationId: b.joinObservationId,
+    });
+    this.audit.write({
+      actorPhone: phone,
+      action: 'building.observation_reported',
+      entity: 'Building',
+      entityId: building.id,
+      payload: { categoryId: b.categoryId, joined: r.joined },
+    });
+    return r;
+  }
+
+  /**
+   * Свои обращения со статусом. Житель должен видеть, что с его обращением
+   * стало: это дешёвый и сильный эффект доверия к УК, который УК сама себе
+   * организовать не может (DEV-15 §7.5).
+   */
+  @Get('my-building/observations')
+  myBuildingObservations(@Req() req: AppRequest) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) return { observations: [] };
+    return {
+      observations: this.buildings
+        .listObservations('t0', building.id)
+        .filter((o) => o.authorPhone === phone || (o.joinedBy ?? []).includes(phone))
+        .map((o) => ({
+          id: o.id,
+          zoneKey: o.zoneKey,
+          categoryId: o.categoryId,
+          categoryLabel: observationCategory(o.categoryId)?.label ?? o.categoryId,
+          severity: o.severity,
+          status: o.status,
+          photoIds: o.photoIds,
+          comment: o.comment,
+          createdAt: o.createdAt,
+          resolvedAt: o.resolvedAt,
+          // Фото устранения — то, ради чего житель возвращается в приложение
+          resolvedPhotoId: o.resolvedPhotoId ?? null,
+          joined: (o.joinedBy ?? []).includes(phone),
+        })),
+    };
+  }
+
+  // ---------- C-53. Отключения и работы в доме ----------
+
+  /**
+   * Календарь отключений: ближайшие и история.
+   *
+   * Зона влияния переводится на язык жителя: «ваш стояк» вместо riserId —
+   * человеку нужно знать, коснётся ли это его квартиры, а не идентификатор
+   * инженерной сети.
+   */
+  @Get('my-building/shutdowns')
+  myBuildingShutdowns(@Query('scope') scope = 'upcoming', @Req() req: AppRequest) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) return { shutdowns: [] };
+
+    const now = Date.now();
+    const myUnitIds = new Set(
+      profile.addresses.map((a) => (a as { unitId?: string }).unitId).filter(Boolean) as string[],
+    );
+    const all = this.access.listShutdowns('t0', building.id);
+    const past = (x: { plannedTo: string; status: string }) =>
+      x.status === 'restored' || x.status === 'cancelled' || Date.parse(x.plannedTo) <= now;
+
+    return {
+      shutdowns: all
+        .filter((x) => (scope === 'history' ? past(x) : !past(x)))
+        .sort((a, z) =>
+          scope === 'history'
+            ? Date.parse(z.plannedFrom) - Date.parse(a.plannedFrom)
+            : Date.parse(a.plannedFrom) - Date.parse(z.plannedFrom),
+        )
+        .map((x) => ({
+          id: x.id,
+          resourceType: x.resourceType,
+          resourceLabel: resourceLabelLower(x.resourceType),
+          plannedFrom: x.plannedFrom,
+          plannedTo: x.plannedTo,
+          status: x.status,
+          reason: x.reason,
+          scope: x.scope,
+          // Касается ли лично: по стояку или по перечню помещений
+          affectsMe:
+            x.scope === 'building' ||
+            (x.affectedUnitIds ?? []).some((u) => myUnitIds.has(u)),
+          // Идущее отключение: сколько осталось по плану
+          hoursLeft:
+            x.status === 'active' ? Math.max(0, Math.round((Date.parse(x.plannedTo) - now) / 3_600_000)) : null,
+        })),
     };
   }
 

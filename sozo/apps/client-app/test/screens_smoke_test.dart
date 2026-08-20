@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sozo_client/design_tokens.dart';
 import 'package:sozo_client/main.dart';
+import 'package:sozo_client/screens/building_screens.dart';
 import 'package:sozo_client/screens/address_details_screen.dart';
 import 'package:sozo_client/screens/addresses_screen.dart';
 import 'package:sozo_client/screens/b2b/acceptance_inbox.dart';
@@ -259,6 +260,10 @@ void main() {
     testWidgets('техдолг сети', (t) => check(t, 'Техдолг сети', const OrgDebtScreen()));
     testWidgets('осмотры', (t) => check(t, 'Осмотры', const InspectionsScreen()));
     testWidgets('дашборд владельца', (t) => check(t, 'Дашборд владельца', const OwnerDashboardScreen()));
+    // C-52 и C-53. Плитка категорий строится на ответе сервера: заглушка
+    // отдаёт непустой список, но экран обязан пережить и пустой справочник
+    testWidgets('дом: проблема в доме', (t) => check(t, 'Проблема в доме', const BuildingReportScreen()));
+    testWidgets('дом: отключения', (t) => check(t, 'Отключения', const BuildingShutdownsScreen()));
     testWidgets('витрина экранов', (t) => check(t, 'Витрина', const ShowcaseScreen()));
   });
 }

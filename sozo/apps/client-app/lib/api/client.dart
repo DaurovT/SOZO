@@ -175,6 +175,41 @@ class ApiClient {
 
   Future<Map<String, dynamic>> catalog() async => (await get('/app/catalog')) as Map<String, dynamic>;
 
+  // ---------- Контур «Дом» (C-51…C-53) ----------
+
+  Future<Map<String, dynamic>> myBuilding() async =>
+      (await get('/app/my-building')) as Map<String, dynamic>;
+
+  /// C-52. Плитка категорий — общий справочник A-44: житель и инженер обязаны
+  /// называть одно и то же одинаково, иначе очередь замечаний не свести.
+  Future<List<dynamic>> buildingCategories() async {
+    final r = await get('/app/my-building/observation-categories');
+    return ((r as Map<String, dynamic>)['categories'] as List?) ?? const [];
+  }
+
+  Future<Map<String, dynamic>> reportBuildingProblem({
+    required String categoryId,
+    required List<String> photos,
+    String? zoneKey,
+    String? comment,
+    String? joinObservationId,
+  }) async =>
+      (await post('/app/my-building/observations', {
+        'categoryId': categoryId,
+        'photos': photos,
+        if (zoneKey != null && zoneKey.isNotEmpty) 'zoneKey': zoneKey,
+        if (comment != null && comment.isNotEmpty) 'comment': comment,
+        'joinObservationId': ?joinObservationId,
+      })) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> myBuildingObservations() async =>
+      (await get('/app/my-building/observations')) as Map<String, dynamic>;
+
+  /// C-53. `scope`: upcoming (по умолчанию) или history
+  Future<Map<String, dynamic>> buildingShutdowns({String scope = 'upcoming'}) async =>
+      (await get('/app/my-building/shutdowns', query: {'scope': scope})) as Map<String, dynamic>;
+
+
   /// `items` — «id:кол-во» через запятую: нормо-часы считает сервер,
   /// иначе клиент показал бы окна на час там, где работы на четыре
   Future<Map<String, dynamic>> slots({String? items, int days = 3}) async =>

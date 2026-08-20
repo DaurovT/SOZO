@@ -7,6 +7,7 @@ import '../store/session.dart';
 import '../widgets/app_chrome.dart';
 import '../widgets/blocks.dart';
 import '../widgets/figma_icon.dart';
+import 'building_screens.dart';
 
 /// C-51 «Мой дом» (PRD-01 §3.N, DEV-15 §10.3).
 ///
@@ -80,6 +81,7 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
                         _shutdownCard(_shutdowns(d).first),
                         const SizedBox(height: SozoSpace.s16),
                       ],
+                      _actionsBlock(d),
                       const SizedBox(height: SozoSpace.s24),
                       if (_announcements(d).isNotEmpty) _announcementsBlock(d),
                     ],
@@ -151,17 +153,42 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
     );
   }
 
-  // Карточка «Что можно» убрана до C-52…C-54.
-  //
-  // Она вела на именованные маршруты `/building/report`, `/building/shutdowns`
-  // и `/building/pass`, которых не существует: в MaterialApp нет ни таблицы
-  // routes, ни onGenerateRoute — во всём остальном приложении экраны
-  // открываются через MaterialPageRoute. Нажатие роняло приложение.
-  //
-  // Кнопка, которая падает, хуже отсутствующей, а заглушку «скоро» этот
-  // продукт не ставит. Ближайшие отключения житель и так видит выше на этом
-  // же экране; сообщение о проблеме и пропуск гостю вернутся вместе со
-  // своими экранами и эндпоинтами.
+  /// Быстрые действия. Карточка была снята, когда её кнопки вели на
+  /// несуществующие именованные маршруты и роняли приложение; возвращена
+  /// вместе с экранами C-52 и C-53. Пропуск гостю (C-54) ещё не сделан и
+  /// поэтому здесь не показывается: кнопка-заглушка хуже её отсутствия.
+  Widget _actionsBlock(Map<String, dynamic>? d) {
+    return SozoCard(
+      children: [
+        CardTitle(t('building.chtoMozhno')),
+        NavRow(
+          icon: 'camera',
+          title: t('c52.title'),
+          value: t('building.soobshitUk'),
+          onTap: () async {
+            final r = await Navigator.of(context).push<Object>(
+              MaterialPageRoute(builder: (_) => const BuildingReportScreen()),
+            );
+            // Аварийная категория не продолжает форму, а сразу ведёт к звонку
+            if (r == 'emergency') {
+              final phone = '${d?['emergencyPhone'] ?? ''}';
+              if (phone.isNotEmpty) await launchUrl(Uri.parse('tel:$phone'));
+            } else if (r == true && mounted) {
+              await _load();
+            }
+          },
+        ),
+        NavRow(
+          icon: 'zap',
+          title: t('c53.title'),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const BuildingShutdownsScreen()),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _announcementsBlock(Map<String, dynamic>? d) {
     return SozoCard(
       children: [
