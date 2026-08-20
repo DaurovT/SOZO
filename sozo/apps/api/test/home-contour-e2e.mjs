@@ -527,6 +527,84 @@ async function main() {
   check('закрытое замечание перемаршрутизировать нельзя', reroute.status >= 400, errText(reroute.body));
 
   // ---------------------------------------------------------------
+  group('17. M-48…M-50 — режим обхода в приложении мастера');
+
+  // Обход делает сотрудник службы оператора, поэтому мастер должен быть
+  // в штате объекта — иначе он пишет в журнал, который оператор показывает правлению
+  const walkerPhone = masters[0].phone;
+  await call(`/buildings/${uk}/staff`, {
+    token: t, body: { userPhone: walkerPhone, fullName: 'Обходчик', staffRole: 'engineer' },
+  });
+  const mt = await login(walkerPhone);
+
+  const myB = (await call('/master/buildings', { token: mt })).body;
+  check('мастер видит объекты, где он в штате', myB.some((b) => b.id === uk), String(myB.length));
+
+  const mcats = (await call('/master/observation-categories', { token: mt })).body;
+  check('плитки категорий приезжают мастеру', mcats.length === 11, String(mcats.length));
+
+  const rr = (await call(`/master/buildings/${uk}/routes`, { token: mt })).body;
+  check('маршруты обхода отдаются', Array.isArray(rr.routes) && rr.routes.length > 0, String(rr.routes?.length));
+  // Дедупликация при съёмке обязана работать в подвале, где связи нет
+  check('открытые замечания едут в устройство для дедупликации', Array.isArray(rr.openObservations));
+
+  const mwalk = (await call(`/master/routes/${rr.routes[0].id}/walks`, { token: mt, method: 'POST' })).body;
+  check('обход начат мастером', Boolean(mwalk.id) && mwalk.walkerPhone === walkerPhone);
+
+  const mobs = (await call(`/master/buildings/${uk}/observations`, {
+    token: mt,
+    body: { zoneKey: 'двор', categoryId: 'waste', photoIds: [uuid()], walkId: mwalk.id },
+  })).body;
+  check('замечание зафиксировано мастером', Boolean(mobs.observation?.id));
+  check('источник проставлен «обход», а не выбирается мастером', mobs.observation.source === 'walkthrough', mobs.observation.source);
+  check('серьёзность подставлена категорией', mobs.observation.severity === 'housekeeping', mobs.observation.severity);
+
+  // Привязка к обходу делается тем же запросом: два действия в офлайн-очереди
+  // вместо одного — два шанса рассинхронизироваться
+  const mfin = (await call(`/master/walks/${mwalk.id}/finish`, { token: mt, method: 'POST' })).body;
+  check('зона отмечена пройденной вместе с замечанием', mfin.passedZones.includes('двор'), JSON.stringify(mfin.passedZones));
+  check('замечание привязано к обходу', mfin.observations === 1, String(mfin.observations));
+
+  const mine = (await call('/master/observations', { token: mt })).body;
+  check('«Мои замечания» отдаёт свои и с именем объекта',
+    mine.some((o) => o.id === mobs.observation.id && o.buildingName), String(mine.length));
+
+  // Мастер платформы, приехавший на одну заявку, не должен писать в чужой журнал
+  const strangerB = (await call('/buildings', { token: t, body: { name: 'ЖК Чужой', address: 'Чужая 9' } })).body;
+  const stranger = await call(`/master/buildings/${strangerB.id}/observations`, {
+    token: mt, body: { zoneKey: 'двор', categoryId: 'waste', photoIds: [uuid()] },
+  });
+  check('на объекте вне штата фиксировать нельзя', stranger.status === 403, String(stranger.status));
+
+  const noCat = await call(`/master/buildings/${uk}/observations`, {
+    token: mt, body: { zoneKey: 'двор', photoIds: [uuid()] },
+  });
+  check('замечание без категории не принимается', noCat.status >= 400, errText(noCat.body));
+
+  group('18. Офлайн-очередь обхода');
+
+  // Одно испорченное замечание не должно запирать очередь со снимками остальных
+  const syncRes = (await call('/master/sync', {
+    token: mt,
+    body: {
+      ops: [
+        { clientOpUuid: uuid(), orderId: uk, kind: 'observation', deviceTime: iso(0),
+          payload: { zoneKey: 'подъезд 1', categoryId: 'выдуманная', photoIds: [uuid()] } },
+        { clientOpUuid: uuid(), orderId: uk, kind: 'observation', deviceTime: iso(0),
+          payload: { zoneKey: 'подъезд 2', categoryId: 'lighting', photoIds: [uuid()] } },
+      ],
+    },
+  })).body;
+  const statuses = (syncRes.results ?? []).map((r) => r.status);
+  check('испорченное замечание помечено неудачным', statuses[0] === 'failed', JSON.stringify(statuses));
+  check('следующее замечание всё равно применено, а не пропущено',
+    statuses[1] === 'applied', JSON.stringify(statuses));
+
+  const afterSync = (await call('/master/observations', { token: mt })).body;
+  check('замечание из очереди действительно сохранено',
+    afterSync.some((o) => o.zoneKey === 'подъезд 2'), String(afterSync.length));
+
+  // ---------------------------------------------------------------
   group('14. L-10 — публичная карточка объекта по QR');
 
   // Житель приходит с наклейки в подъезде: ни токена, ни регистрации

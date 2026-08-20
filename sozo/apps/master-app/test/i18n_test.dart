@@ -99,4 +99,30 @@ void main() {
     await l10n.set('ru');
     expect(tv('кондиционер'), 'кондиционер');
   });
+
+  test('каждый ключ, который используют экраны, есть в словаре', () {
+    // Незнакомый ключ t() возвращает как есть: на экране появляется
+    // «walk.zavershitObhod» вместо текста, а прогон при этом зелёный —
+    // кириллицы в строке нет, и проверка «не пишут мимо словаря» молчит.
+    final used = <String, String>{};
+    for (final f in Directory('lib').listSync(recursive: true)) {
+      if (f is! File || !f.path.endsWith('.dart')) continue;
+      // Сам словарь пропускаем: в его комментариях есть примеры вызова t()
+      if (f.path.endsWith('i18n.dart')) continue;
+      // Граница слева обязательна: без неё в улов попадают post('open'),
+      // split('T') и любой другой вызов, чьё имя оканчивается на «t»
+      for (final m in RegExp(r"(?<![a-zA-Z0-9_])t\('([a-zA-Z0-9_.]+)'")
+          .allMatches(f.readAsStringSync())) {
+        used[m.group(1)!] = f.path;
+      }
+    }
+    expect(used.length, greaterThan(100), reason: 'ключи не нашлись — проверьте регулярное выражение');
+
+    final missing = used.entries.where((e) => !ru.containsKey(e.key)).toList();
+    expect(
+      missing,
+      isEmpty,
+      reason: 'нет в словаре:\n${missing.map((e) => '  ${e.key} — ${e.value}').join('\n')}',
+    );
+  });
 }

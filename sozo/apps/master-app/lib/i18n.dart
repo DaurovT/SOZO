@@ -859,6 +859,36 @@ const _ru = <String, String>{
   'work.zamenaCelikom': 'Замена целиком',
   'work.zayavkaBudetZakrytaS':
       'Заявка будет закрыта с пометкой «выполнена частично». Фото проблемы и отказ клиента войдут в акт.',
+
+  // Режим «Обход» (M-48…M-50)
+  'walk.obhod': 'Обход',
+  'walk.obyektovNet': 'Объектов для обхода нет',
+  'walk.obhodTolkoDlyaShtata': 'Обход доступен сотрудникам службы объекта',
+  'walk.zamechanie': 'Замечание',
+  'walk.chisto': 'Чисто',
+  'walk.zavershitObhod': 'Завершить обход',
+  'walk.marshrutovNet': 'Маршрутов обхода нет',
+  'walk.marshrutySozdayutsyaVKabinete': 'Маршруты создаёт служба объекта в кабинете',
+  'walk.neUdalosZagruzit': 'Не удалось загрузить маршруты',
+  'walk.nachatObhodNuzhnaSvyaz': 'Чтобы начать обход, нужна связь. Замечания можно снимать и без неё',
+  'walk.zonShtuk': 'Зон: {p1}',
+  'walk.progress': 'Пройдено {p1} из {p2} · замечаний: {p3}',
+  'walk.zonaProydena': 'Зона пройдена: {p1}',
+  'walk.obhodZavershen': 'Обход завершён',
+  'walk.itogVsePro': 'Обход завершён: {p1} зон, замечаний {p2}',
+  'walk.itogSPropuskami': 'Обход завершён: {p1} зон, пропущено {p2}, замечаний {p3}',
+  'walk.zdesUzheEstZamechanie': 'Здесь уже есть замечание',
+  'walk.otAvtoraOtDaty': 'От {p1}, {p2}',
+  'walk.vseRavnoSozdat': 'Всё равно создать',
+  'walk.chtoZafiksirovali': 'Что зафиксировали?',
+  'walk.zamechanieVZone': 'Замечание: {p1}',
+  'walk.moiZamechaniya': 'Мои замечания',
+  'walk.otkrytye': 'Открытые',
+  'walk.vRabote': 'В работе',
+  'walk.ustraneny': 'Устранены',
+  'walk.zamechaniyNet': 'Замечаний нет',
+  'walk.fotoShtuk': 'Фото: {p1}',
+  'walk.zayavkaSozdana': 'Создана аварийная заявка',
 };
 
 const _uz = <String, String>{
@@ -1669,6 +1699,36 @@ const _uz = <String, String>{
   'work.zamenaCelikom': 'Butunlay almashtirish',
   'work.zayavkaBudetZakrytaS':
       'Buyurtma «qisman bajarildi» belgisi bilan yopiladi. Muammo surati va mijozning rad javobi dalolatnomaga kiradi.',
+
+  // Режим «Обход» (M-48…M-50)
+  'walk.obhod': 'Aylanib chiqish',
+  'walk.obyektovNet': 'Aylanish uchun obyektlar yoʻq',
+  'walk.obhodTolkoDlyaShtata': 'Aylanish obyekt xizmati xodimlariga ochiq',
+  'walk.zamechanie': 'Eslatma',
+  'walk.chisto': 'Toza',
+  'walk.zavershitObhod': 'Aylanishni yakunlash',
+  'walk.marshrutovNet': 'Aylanish marshrutlari yoʻq',
+  'walk.marshrutySozdayutsyaVKabinete': 'Marshrutlarni obyekt xizmati kabinetda yaratadi',
+  'walk.neUdalosZagruzit': 'Marshrutlarni yuklab boʻlmadi',
+  'walk.nachatObhodNuzhnaSvyaz': 'Aylanishni boshlash uchun aloqa kerak. Eslatmalarni aloqasiz ham olish mumkin',
+  'walk.zonShtuk': 'Hududlar: {p1}',
+  'walk.progress': '{p2} dan {p1} tasi oʻtildi · eslatmalar: {p3}',
+  'walk.zonaProydena': 'Hudud oʻtildi: {p1}',
+  'walk.obhodZavershen': 'Aylanish yakunlandi',
+  'walk.itogVsePro': 'Aylanish yakunlandi: {p1} hudud, eslatmalar {p2}',
+  'walk.itogSPropuskami': 'Aylanish yakunlandi: {p1} hudud, oʻtkazib yuborildi {p2}, eslatmalar {p3}',
+  'walk.zdesUzheEstZamechanie': 'Bu yerda allaqachon eslatma bor',
+  'walk.otAvtoraOtDaty': '{p1} dan, {p2}',
+  'walk.vseRavnoSozdat': 'Baribir yaratish',
+  'walk.chtoZafiksirovali': 'Nimani qayd etdingiz?',
+  'walk.zamechanieVZone': 'Eslatma: {p1}',
+  'walk.moiZamechaniya': 'Mening eslatmalarim',
+  'walk.otkrytye': 'Ochiq',
+  'walk.vRabote': 'Ishda',
+  'walk.ustraneny': 'Bartaraf etilgan',
+  'walk.zamechaniyNet': 'Eslatmalar yoʻq',
+  'walk.fotoShtuk': 'Foto: {p1}',
+  'walk.zayavkaSozdana': 'Avariya arizasi yaratildi',
 };
 
 /// Значения словарей сервера: ключ — то, что лежит в базе, и оно не меняется

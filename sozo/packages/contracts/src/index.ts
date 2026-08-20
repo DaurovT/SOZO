@@ -288,7 +288,11 @@ export interface ObservationCategory {
   defaultSeverity: ObservationSeverity;
   /** куда замечание уходит по умолчанию — решение всё равно за человеком */
   defaultRoute: ObservationRoute;
-  /** иконка плитки быстрой фиксации M-49 */
+  /**
+   * иконка плитки быстрой фиксации M-49.
+   * Имя обязано существовать в assets/icons приложения мастера — иначе плитка
+   * рисуется пустой; стережёт тест master-app/test/observation_icons_test.dart
+   */
   icon: string;
 }
 
@@ -303,17 +307,17 @@ export interface ObservationCategory {
  * бьёт по ним не глядя. Сверху то, что встречается на каждом обходе.
  */
 export const OBSERVATION_CATEGORIES: readonly ObservationCategory[] = [
-  { id: 'housekeeping',  label: 'Содержание и уборка',       defaultSeverity: 'housekeeping',   defaultRoute: 'task',       icon: 'broom' },
-  { id: 'lighting',      label: 'Освещение',                  defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'bulb' },
-  { id: 'small_forms',   label: 'Малые архитектурные формы',   defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'bench' },
-  { id: 'greenery',      label: 'Зелёные насаждения',          defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'tree' },
+  { id: 'housekeeping',  label: 'Содержание и уборка',       defaultSeverity: 'housekeeping',   defaultRoute: 'task',       icon: 'sparkles' },
+  { id: 'lighting',      label: 'Освещение',                  defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'bolt' },
+  { id: 'small_forms',   label: 'Малые архитектурные формы',   defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'toolbox' },
+  { id: 'greenery',      label: 'Зелёные насаждения',          defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'globe' },
   { id: 'parking',       label: 'Парковка и проезды',          defaultSeverity: 'housekeeping',   defaultRoute: 'journal',    icon: 'car' },
-  { id: 'waste',         label: 'Мусорные площадки',           defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'trash' },
-  { id: 'vandalism',     label: 'Вандализм и граффити',        defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'spray' },
-  { id: 'engineering',   label: 'Инженерные системы',          defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'valve' },
-  { id: 'structure',     label: 'Конструктив',                 defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'wall' },
+  { id: 'waste',         label: 'Мусорные площадки',           defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'archive' },
+  { id: 'vandalism',     label: 'Вандализм и граффити',        defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'pen' },
+  { id: 'engineering',   label: 'Инженерные системы',          defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'wrench' },
+  { id: 'structure',     label: 'Конструктив',                 defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'home' },
   { id: 'safety',        label: 'Безопасность и доступность',  defaultSeverity: 'emergency',      defaultRoute: 'order',      icon: 'shield' },
-  { id: 'residents',     label: 'Нарушения жителей',           defaultSeverity: 'info',           defaultRoute: 'journal',    icon: 'person' },
+  { id: 'residents',     label: 'Нарушения жителей',           defaultSeverity: 'info',           defaultRoute: 'journal',    icon: 'users' },
 ] as const;
 
 export const OBSERVATION_CATEGORY_IDS = OBSERVATION_CATEGORIES.map((c) => c.id);

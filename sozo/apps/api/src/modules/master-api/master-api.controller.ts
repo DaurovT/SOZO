@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { masterShare, uuidv7 } from '@sozo/kernel';
 import { MasterGuard, type MasterRequest } from './master.guard';
+import { MasterWalkthroughController } from './master-walkthrough.controller';
 import { MasterOffersService, DECLINE_REASONS, OFFER_TTL_SECONDS } from './offers.service';
 import { MasterPhotoService } from './photo.service';
 import { NotificationsService } from './notifications.service';
@@ -112,6 +113,7 @@ export class MasterApiController {
     private readonly ops: MasterOpsService,
     private readonly crm: CrmService,
     private readonly access: AccessService,
+    private readonly walkthrough: MasterWalkthroughController,
   ) {}
 
   // ---------- Профиль и смена (M-01, M-02, M-33) ----------
@@ -656,7 +658,12 @@ export class MasterApiController {
     const blocked = new Set<string>();
 
     for (const op of ops) {
-      if (blocked.has(op.orderId)) {
+      // Ключ цепочки — обычно заявка: порядок действий по одной заявке значим,
+      // и после неудачи следующие пропускаются, а не применяются к чужому
+      // состоянию. Замечания независимы друг от друга: одно испорченное не
+      // должно навсегда запирать очередь со снимками остальных.
+      const chainKey = op.kind === 'observation' ? op.clientOpUuid : op.orderId;
+      if (blocked.has(chainKey)) {
         results.push({ clientOpUuid: op.clientOpUuid, status: 'skipped', code: 'CHAIN_BLOCKED', message: 'Предыдущая операция по заявке не прошла' });
         continue;
       }
@@ -677,9 +684,19 @@ export class MasterApiController {
         } else if (op.kind === 'acceptance') {
           await this.acceptance(op.orderId, op.payload as never, req);
           results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
+        } else if (op.kind === 'observation') {
+          // orderId в этих операциях несёт объект: обход не привязан к заявке
+          this.walkthrough.addObservation(op.orderId, op.payload as never, req);
+          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
+        } else if (op.kind === 'walk_zone') {
+          this.walkthrough.passZone((op.payload as { walkId: string }).walkId, op.payload as never, req);
+          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
+        } else if (op.kind === 'walk_finish') {
+          this.walkthrough.finishWalk((op.payload as { walkId: string }).walkId, req);
+          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
         } else {
           results.push({ clientOpUuid: op.clientOpUuid, status: 'failed', code: 'KIND_UNKNOWN' });
-          blocked.add(op.orderId);
+          blocked.add(chainKey);
         }
       } catch (e) {
         const err = e as { response?: { code?: string; message?: string }; message?: string };
@@ -689,7 +706,7 @@ export class MasterApiController {
           code: err.response?.code ?? 'ERROR',
           message: err.response?.message ?? err.message,
         });
-        blocked.add(op.orderId);
+        blocked.add(chainKey);
       }
     }
     this.audit.write({

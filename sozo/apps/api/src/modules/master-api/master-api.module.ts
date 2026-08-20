@@ -7,6 +7,7 @@ import { AuthGuard, Roles } from '../identity/auth.guard';
 import type { JwtClaims } from '../../common/jwt';
 import { AdminMasterOpsController } from './admin-master-ops.controller';
 import { MasterApiController } from './master-api.controller';
+import { MasterWalkthroughController } from './master-walkthrough.controller';
 import { MasterOpsController } from './master-ops.controller';
 import { MasterOpsService } from './master-ops.service';
 import { MasterPhotoService } from './photo.service';
@@ -27,6 +28,7 @@ import { MastersModule, MastersService } from '../masters/masters.module';
 import { QualityModule } from '../quality/quality.module';
 import { FieldModule } from '../field/field.module';
 import { CrmModule } from '../crm/crm.module';
+import { BuildingsModule } from '../buildings/buildings.module';
 
 /** Район из адреса — dev-заглушка геокодера: до принятия мастер видит район, не точку */
 function districtOf(address: string): string {
@@ -131,9 +133,9 @@ class DispatchOffersController {
  * а не роль в JWT), свой узкий набор действий и своя офлайн-семантика.
  */
 @Module({
-  imports: [AccessModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule],
-  controllers: [AdminMasterOpsController, MasterApiController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController],
-  providers: [MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
+  imports: [AccessModule, BuildingsModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule],
+  controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController],
+  providers: [MasterWalkthroughController, MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
   exports: [MasterOffersService, MasterOpsService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService],
 })
 export class MasterApiModule {}

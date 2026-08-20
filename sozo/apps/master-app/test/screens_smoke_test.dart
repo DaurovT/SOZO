@@ -29,6 +29,7 @@ import 'package:sozo_master/screens/route_screen.dart';
 import 'package:sozo_master/screens/stages_helper_payment.dart';
 import 'package:sozo_master/screens/today_screen.dart';
 import 'package:sozo_master/screens/wallet_screen.dart';
+import 'package:sozo_master/screens/walkthrough_screen.dart';
 
 /// Дымовой прогон всех экранов приложения.
 ///
@@ -77,6 +78,10 @@ void main() {
     tearDownAll(() async => l10n.set('ru'));
 
     testWidgets('вход', (t) => check(t, 'Вход', const LoginScreen()));
+    testWidgets('обход: объекты', (t) => check(t, 'Обход', WalkBuildingsScreen(session: session)));
+    testWidgets('обход: маршрут и чек-лист',
+        (t) => check(t, 'Обход', WalkthroughScreen(session: session, buildingId: 'b1', buildingName: 'ЖК Восход')));
+    testWidgets('мои замечания', (t) => check(t, 'Мои замечания', MyObservationsScreen(session: session)));
     testWidgets('сегодня', (t) => check(t, 'Сегодня', const TodayScreen()));
     testWidgets('мои заявки', (t) => check(t, 'Мои заявки', const OrdersScreen()));
     testWidgets('профиль', (t) => check(t, 'Профиль', const ProfileScreen()));
@@ -258,7 +263,53 @@ final Map<String, dynamic> _offer = {
   'waitingSince': '2026-08-01T08:15:00.000Z',
 };
 
+/// Ответ по пути.
+///
+/// Раньше заглушка отдавала один и тот же объект на любой запрос, и экраны со
+/// списочным ответом строились только на ветке ошибки — то есть тест проверял
+/// пустое состояние, а не экран.
+Object _fixtureFor(String path) {
+  if (path.endsWith('/master/observation-categories')) return _observationCategories;
+  if (path.endsWith('/master/buildings')) return _walkBuildings;
+  if (path.endsWith('/master/observations')) return _myObservations;
+  return _fixture;
+}
+
+const _walkBuildings = [
+  {'id': 'b1', 'name': 'ЖК Восход', 'address': 'Ташкент, Чиланзар 12', 'operatorOrgId': 'uk-1'},
+];
+
+const _observationCategories = [
+  {'id': 'housekeeping', 'label': 'Содержание и уборка', 'defaultSeverity': 'housekeeping', 'defaultRoute': 'task', 'icon': 'sparkles'},
+  {'id': 'lighting', 'label': 'Освещение', 'defaultSeverity': 'work_required', 'defaultRoute': 'task', 'icon': 'bolt'},
+  {'id': 'safety', 'label': 'Безопасность и доступность', 'defaultSeverity': 'emergency', 'defaultRoute': 'order', 'icon': 'shield'},
+];
+
+const _myObservations = [
+  {
+    'id': 'o1', 'zoneKey': 'двор', 'buildingName': 'ЖК Восход', 'categoryId': 'housekeeping',
+    'severity': 'housekeeping', 'source': 'walkthrough', 'status': 'open',
+    'photoIds': ['p1', 'p2'], 'comment': null, 'routedEntityId': null,
+    'createdAt': '2026-08-01T08:15:00.000Z',
+  },
+  {
+    'id': 'o2', 'zoneKey': 'детская площадка', 'buildingName': 'ЖК Восход', 'categoryId': 'safety',
+    'severity': 'emergency', 'source': 'walkthrough', 'status': 'routed',
+    'photoIds': ['p3'], 'comment': 'Сорван поручень', 'routedEntityId': 'ord-1',
+    'createdAt': '2026-08-02T09:00:00.000Z',
+  },
+];
+
 Map<String, dynamic> get _fixture => {
+      // обход (M-48): путь параметрический, поэтому в общем объекте
+      'routes': [
+        {'id': 'r1', 'name': 'Двор и подъезды', 'intervalDays': 1,
+         'zoneKeys': ['двор', 'подъезд 1', 'мусорная площадка']},
+      ],
+      'openObservations': [
+        {'id': 'o1', 'zoneKey': 'двор', 'authorPhone': '+998901234567',
+         'createdAt': '2026-08-01T08:15:00.000Z'},
+      ],
       // общие
       'message': 'Готово',
       'note': 'Пояснение',
@@ -482,7 +533,7 @@ class _FixtureRequest implements HttpClientRequest {
   final HttpHeaders headers = _FixtureHeaders();
 
   @override
-  Future<HttpClientResponse> close() async => _FixtureResponse();
+  Future<HttpClientResponse> close() async => _FixtureResponse(uri.path);
 
   @override
   void add(List<int> data) {}
@@ -498,7 +549,9 @@ class _FixtureRequest implements HttpClientRequest {
 }
 
 class _FixtureResponse extends Stream<List<int>> implements HttpClientResponse {
-  final List<int> _body = utf8.encode(jsonEncode(_fixture));
+  _FixtureResponse(String path) : _body = utf8.encode(jsonEncode(_fixtureFor(path)));
+
+  final List<int> _body;
 
   @override
   int get statusCode => 200;

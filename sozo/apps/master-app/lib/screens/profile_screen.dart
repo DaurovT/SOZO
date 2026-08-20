@@ -13,6 +13,7 @@ import 'badge_screen.dart';
 import 'outbox_screen.dart';
 import 'profile_extras.dart';
 import 'resources_screens.dart';
+import 'walkthrough_screen.dart';
 
 /// «Профиль» (M-39): кто вы в системе и всё, что настраивается.
 ///
@@ -96,6 +97,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onTap: () => _open(const ToolCheckScreen()),
             ),
             NavRow(icon: 'shopping-bag', title: t('prof.sumkaRashodnikov'), onTap: () => _open(const StockScreen())),
+            NavRow(
+              icon: 'map-pin',
+              title: t('walk.obhod'),
+              subtitle: t('walk.obhodTolkoDlyaShtata'),
+              onTap: () => _open(WalkBuildingsScreen(session: session)),
+            ),
+            NavRow(
+              icon: 'clipboard',
+              title: t('walk.moiZamechaniya'),
+              onTap: () => _open(MyObservationsScreen(session: session)),
+            ),
             NavRow(
               icon: 'archive',
               title: t('common.moeOborudovanie'),
