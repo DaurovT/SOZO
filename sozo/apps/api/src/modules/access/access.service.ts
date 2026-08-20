@@ -491,6 +491,45 @@ export class AccessService {
     return { ...x, overranMin };
   }
 
+  /** Наряды заявки — карточка мастера кладёт их в устройство вместе с заявкой */
+  permitsOfOrder(tenantId: string, orderId: string) {
+    return this.repo.byOrder(tenantId, orderId);
+  }
+
+  /** Действующий пропуск мастера по заявке */
+  passOfOrder(tenantId: string, orderId: string, masterId: string) {
+    return this.repo.activePassFor(tenantId, orderId, masterId);
+  }
+
+  /** Отключение, связанное с заявкой */
+  shutdownOfOrder(tenantId: string, orderId: string) {
+    return this.repo
+      .listShutdowns(tenantId, '')
+      .find((x) => x.orderId === orderId) ?? this.findShutdownByOrder(tenantId, orderId);
+  }
+
+  private findShutdownByOrder(tenantId: string, orderId: string) {
+    for (const b of this.buildings.listBuildings(tenantId)) {
+      const hit = this.repo.listShutdowns(tenantId, b.id).find((x) => x.orderId === orderId);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+
+  /** Короткая справка об объекте — правила пропуска для экрана мастера */
+  buildingBrief(tenantId: string, buildingId: string) {
+    const b = this.buildings.get(tenantId, buildingId);
+    return {
+      name: b.name,
+      dispatchPhone: b.dispatchPhone,
+      emergencyPhone: b.emergencyPhone,
+      parkingRules: b.parkingRules,
+      hasServiceLift: b.hasServiceLift,
+      noiseFrom: b.noiseFrom,
+      noiseTo: b.noiseTo,
+    };
+  }
+
   /** Ссылки согласования, выданные по наряду — для кабинета и разбора у диспетчера */
   permitLinks(permitId: string) {
     return this.links.listForPermit(permitId);

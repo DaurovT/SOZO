@@ -13,7 +13,7 @@ export class BuildingsController {
   constructor(private readonly buildings: BuildingsService) {}
 
   @Post()
-  create(@Body() body: { name: string; address: string; buildingType?: 'residential' | 'business_center' | 'mixed'; emergencyPhone?: string; internalBufferMin?: number }) {
+  create(@Body() body: { name: string; address: string; buildingType?: 'residential' | 'business_center' | 'mixed'; emergencyPhone?: string; internalBufferMin?: number; hasServiceLift?: boolean; parkingRules?: string; wasteRules?: string }) {
     return this.buildings.createBuilding('t0', body);
   }
 

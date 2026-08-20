@@ -1,3 +1,4 @@
+import { AccessService } from '../access/access.service';
 import {
   BadRequestException,
   Body,
@@ -73,6 +74,27 @@ const ACTION_TITLES: Record<string, string> = {
  * фото есть в хранилище, чеки приложены, приёмка зафиксирована. Мастер сообщает только то,
  * что знает лично: получил наличные, номер этапа, причина паузы.
  */
+const ZONE_LABELS: Record<string, string> = {
+  electrical_panel: 'Электрощитовая', water_riser: 'Стояк ХВС', sewage_riser: 'Канализационный стояк',
+  basement: 'Подвал', roof: 'Кровля', technical_floor: 'Техэтаж', lift_machine_room: 'Лифтовая',
+  ventilation_chamber: 'Вентиляционная камера', heat_point: 'ИТП', gas_equipment: 'Газовое оборудование',
+  fire_system: 'Пожарные системы', yard: 'Двор',
+};
+
+const RESOURCE_LABELS: Record<string, string> = {
+  cold_water: 'холодная вода', hot_water: 'горячая вода', heating: 'отопление',
+  electricity: 'электричество', gas: 'газ', sewage: 'канализация', lift: 'лифт', ventilation: 'вентиляция',
+};
+
+function windowText(from: string | null, to: string | null): string {
+  if (!from || !to) return 'время не выбрано';
+  const f = new Date(from);
+  const tt = new Date(to);
+  const day = f.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  const hm = (d: Date) => d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${hm(f)} — ${hm(tt)}`;
+}
+
 @Controller('master')
 @UseGuards(MasterGuard)
 export class MasterApiController {
@@ -89,6 +111,7 @@ export class MasterApiController {
     private readonly field: FieldService,
     private readonly ops: MasterOpsService,
     private readonly crm: CrmService,
+    private readonly access: AccessService,
   ) {}
 
   // ---------- Профиль и смена (M-01, M-02, M-33) ----------
@@ -776,11 +799,54 @@ export class MasterApiController {
     };
   }
 
+  /**
+   * Наряд-допуск для карточки мастера (M-43). Кладётся В КАРТОЧКУ, а не отдаётся
+   * отдельным запросом: в подвале второго запроса не будет, и наряд должен
+   * приехать в устройство вместе с заявкой (DEV-15 §10.8.1).
+   */
+  private permitOf(o: OrderRecord) {
+    const permits = this.access.permitsOfOrder('t0', o.id);
+    if (permits.length === 0) return null;
+    // берём последний живой: аннулированные и отклонённые мастеру не нужны
+    const live =
+      permits.find((p) => p.status === 'opened') ??
+      permits.find((p) => p.status === 'scheduled' || p.status === 'approved') ??
+      permits.find((p) => p.status === 'requested' || p.status === 'rescheduled') ??
+      permits[permits.length - 1];
+    const pass = this.access.passOfOrder('t0', o.id, o.masterId ?? '');
+    const shutdown = live.requiresShutdown ? this.access.shutdownOfOrder('t0', o.id) : null;
+    const building = live.buildingId ? this.access.buildingBrief('t0', live.buildingId) : null;
+    return {
+      id: live.id,
+      status: live.status,
+      zoneLabels: live.zoneTypes.map((z) => ZONE_LABELS[z] ?? z),
+      hasCriticalZone: live.hasCriticalZone,
+      requiresShutdown: live.requiresShutdown,
+      affectedUnitIds: live.affectedUnitIds,
+      windowText: windowText(live.windowFrom, live.windowTo),
+      escortName: null,
+      dutyPhone: building?.dispatchPhone ?? building?.emergencyPhone ?? null,
+      shutdownId: shutdown?.id ?? null,
+      shutdownResource: shutdown ? RESOURCE_LABELS[shutdown.resourceType] ?? shutdown.resourceType : null,
+      shutdownStartedAt: shutdown?.actualFrom ?? null,
+      qrToken: pass?.qrToken ?? null,
+      fallbackCode: pass?.fallbackCode ?? null,
+      passRules: building
+        ? [
+            building.parkingRules,
+            building.hasServiceLift ? 'Грузовой лифт есть' : 'Грузового лифта нет',
+            `Шумные работы: ${building.noiseFrom}—${building.noiseTo}`,
+          ].filter((x): x is string => Boolean(x))
+        : [],
+    };
+  }
+
   private cardFull(o: OrderRecord, masterId: string) {
     const allowed = this.steps(o);
     return {
       ...this.cardBrief(o, masterId),
       version: o.version,
+      permit: this.permitOf(o),
       clientPhone: o.clientPhone, // открыт только после назначения — карточка доступна лишь своему мастеру
       /**
        * Детали доступа, которые клиент уточнил после назначения (C-50).

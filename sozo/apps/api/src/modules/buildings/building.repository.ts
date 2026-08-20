@@ -19,6 +19,10 @@ export interface BuildingRecord {
   noiseTo: string;
   /** проход охрана → лифт → помещение; добавляется к дорожному буферу планировщика */
   internalBufferMin: number;
+  /** правила пропуска — мастер читает их на экране M-44 перед приездом */
+  hasServiceLift: boolean;
+  parkingRules: string | null;
+  wasteRules: string | null;
   emergencyPhone: string | null;
   dispatchPhone: string | null;
   /** базисные пункты, 500 = 5%; потолок 1000 (DEV-15 §8.2) */

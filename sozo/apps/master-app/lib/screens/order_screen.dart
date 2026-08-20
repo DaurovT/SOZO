@@ -13,6 +13,7 @@ import '../widgets/signature_pad.dart';
 import 'addwork_screen.dart';
 import 'branch_screens.dart';
 import 'order_extras.dart';
+import 'permit_screen.dart';
 import 'quote_screen.dart';
 import 'resources_screens.dart';
 import 'route_screen.dart';
@@ -727,12 +728,33 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   /// Разделы, доступные весь период работы: этапы, техника, оплата, помощник
+  /// Подпись пункта наряда: мастер должен понять состояние, не открывая экран
+  String _permitSubtitle(PermitInfo p) {
+    if (p.isClosed) return t('permit.subZonaZakryta');
+    if (p.isOpen) return t('permit.subZonaVskrytaNeZabud');
+    if (p.canOpenOffline) return t('permit.subSoglasovan', {'p1': p.windowText});
+    return t('permit.subJdetSoglasovaniya');
+  }
+
   Widget _extras(OrderCard o) {
     return FigmaCard(
       children: [
         CardTitle(t('order.eschePoZayavke')),
         RowGroup(
           children: [
+            // Контур «Дом»: без открытого наряда заявку нельзя начать — пункт
+            // стоит первым, иначе мастер найдёт его последним
+            if (o.permit != null)
+              FigmaNavRow(
+                icon: 'shield',
+                title: t('permit.naryadDopusk'),
+                subtitle: _permitSubtitle(o.permit!),
+                onTap: () => _openBranch(PermitScreen(
+                  session: session,
+                  orderId: o.id,
+                  permit: o.permit!,
+                )),
+              ),
             FigmaNavRow(
               icon: 'trending-up',
               title: t('order.etapyRaboty'),

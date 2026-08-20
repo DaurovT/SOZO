@@ -1,6 +1,7 @@
 library;
 
 import '../i18n.dart';
+import '../screens/permit_screen.dart';
 
 /// Модели ответов API мастера (PRD-02, DEV-09).
 /// Разбор терпимый к отсутствующим полям: приложение не должно падать
@@ -315,6 +316,7 @@ class OrderCard {
     required this.clientAssets,
     required this.siteAccess,
     required this.toBuy,
+    this.permit,
   });
 
   final String id;
@@ -359,9 +361,16 @@ class OrderCard {
   /// только на объекте
   final List<PartToBuy> toBuy;
 
+  /// Наряд-допуск контура «Дом» (M-43). Null для объектов без подключённой
+  /// эксплуатирующей организации — там доступ по прежним правилам v2.25.
+  final PermitInfo? permit;
+
   static OrderCard fromJson(Map<String, dynamic> j) {
     final quotes = (j['quotes'] as List?) ?? const [];
     return OrderCard(
+      permit: j['permit'] == null
+          ? null
+          : PermitInfo.fromJson(Map<String, dynamic>.from(j['permit'] as Map)),
       id: _str(j['id']),
       number: _str(j['number']),
       status: _str(j['status']),

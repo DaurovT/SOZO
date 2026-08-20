@@ -1,3 +1,4 @@
+import { AccessModule } from '../access/access.module';
 import { BadRequestException, Body, Controller, Get, Module, Post, Req, UseGuards } from '@nestjs/common';
 import { AdminReferralsController } from './referrals.controller';
 import { ReferralsService } from './referrals.service';
@@ -130,7 +131,7 @@ class DispatchOffersController {
  * а не роль в JWT), свой узкий набор действий и своя офлайн-семантика.
  */
 @Module({
-  imports: [OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule],
+  imports: [AccessModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule],
   controllers: [AdminMasterOpsController, MasterApiController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController],
   providers: [MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
   exports: [MasterOffersService, MasterOpsService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService],
