@@ -399,7 +399,6 @@ model MasterProfile {
   user         User?               @relation(fields: [userId], references: [id])
   orders       Order[]
   affiliations MasterAffiliation[]
-  passes       VisitPass[]
 
   @@index([tenantId, status])
   @@map("master_profile")
@@ -1150,6 +1149,7 @@ model Building {
   observations  BuildingObservation[]
   permits       AccessPermit[]
   passes        VisitPass[]
+  unitAccess    UnitAccessRequest[]
   orders        Order[]
   locations     Location[]
 
@@ -1246,17 +1246,26 @@ model AccessPermit {
   tenantId        String              @map("tenant_id") @db.Uuid
   orderId         String              @map("order_id") @db.Uuid
   buildingId      String              @map("building_id") @db.Uuid
-  requestedBy     String              @map("requested_by") @db.Uuid
+  /** Наряд просит мастер: у штатного работника оператора учётной записи нет */
+  requestedByPhone String             @map("requested_by_phone")
   status          PermitStatus        @default(draft)
   version         Int                 @default(0) // оптимистичная блокировка переходов (DEV-10 §7)
   zoneTypes       String[]            @map("zone_types")
+  /**
+   * Снимок свойств зон на момент выписки. Не вычисляются по zoneTypes: ими
+   * решается, кого пускать (ТЗ 17.8), и решение должно пережить правку
+   * справочника зон.
+   */
+  hasCriticalZone Boolean             @default(false) @map("has_critical_zone")
+  hasLicensedZone Boolean             @default(false) @map("has_licensed_zone")
   commonZoneIds   String[]            @map("common_zone_ids") @db.Uuid
   requiresShutdown Boolean            @default(false) @map("requires_shutdown")
   shutdownId      String?             @map("shutdown_id") @db.Uuid
   affectedUnitIds String[]            @map("affected_unit_ids") @db.Uuid
   windowFrom      DateTime?           @map("window_from") @db.Timestamptz()
   windowTo        DateTime?           @map("window_to") @db.Timestamptz()
-  approverUserId  String?             @map("approver_user_id") @db.Uuid
+  /** Согласующий объекта — консьерж или инженер, тоже без учётной записи */
+  approverName    String?             @map("approver_name")
   approvedAt      DateTime?           @map("approved_at") @db.Timestamptz()
   approvalKind    PermitApprovalKind? @map("approval_kind")
   rejectReason    String?             @map("reject_reason")
@@ -1268,6 +1277,16 @@ model AccessPermit {
   photoAfterId    String?             @map("photo_after_id") @db.Uuid
   slaDeadline     DateTime?           @map("sla_deadline") @db.Timestamptz()
   isEmergency     Boolean             @default(false) @map("is_emergency")
+  /**
+   * Кто идёт по наряду. Колонка, а не связь: штатный мастер оператора
+   * карточки в masters не имеет — его допуск декларирует оператор
+   * (DEV-15 §7.1.2), и внешний ключ отсёк бы именно этот случай.
+   * CHECK в m21: два основания допуска исключают друг друга.
+   */
+  masterId             String?        @map("master_id")
+  masterIsPlatform     Boolean        @default(true) @map("master_is_platform")
+  operatorSelfDeclared Boolean        @default(false) @map("operator_self_declared")
+  qualificationOk      Boolean        @default(false) @map("qualification_ok")
   clientOpUuid    String?             @map("client_op_uuid") @db.Uuid // идемпотентность офлайн-синка мастера
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
@@ -1275,6 +1294,7 @@ model AccessPermit {
   order    Order             @relation(fields: [orderId], references: [id])
   building Building          @relation(fields: [buildingId], references: [id])
   shutdown ResourceShutdown? @relation(fields: [shutdownId], references: [id])
+  unitAccess UnitAccessRequest[]
 
   @@unique([tenantId, clientOpUuid])
   @@index([tenantId, buildingId, status])
@@ -1299,6 +1319,9 @@ model ResourceShutdown {
   orderId         String?        @map("order_id") @db.Uuid
   status          ShutdownStatus @default(draft)
   notifiedAt      DateTime?      @map("notified_at") @db.Timestamptz()
+  /** Метки ставятся при создании и не пересматриваются: срок публикации у объектов разный */
+  lateNotice      Boolean        @default(false) @map("late_notice")
+  isEmergency     Boolean        @default(false) @map("is_emergency")
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
 
@@ -1316,24 +1339,27 @@ model VisitPass {
   tenantId     String    @map("tenant_id") @db.Uuid
   buildingId   String    @map("building_id") @db.Uuid
   orderId      String?   @map("order_id") @db.Uuid
-  masterId     String?   @map("master_id") @db.Uuid
+  /** Не только мастер платформы: пропуск бывает и подрядчику жителя (см. m21) */
+  masterId     String?   @map("master_id")
   guestName    String?   @map("guest_name")
   passType     PassType  @default(master) @map("pass_type")
   issuedBy     String    @default("system") @map("issued_by") // system | operator | resident
   qrToken      String    @unique @map("qr_token")
   fallbackCode String    @map("fallback_code") // на случай отсутствия сети у охраны
-  vehiclePlate String?   @map("vehicle_plate")
+  carPlate     String?   @map("car_plate")
   validFrom    DateTime  @map("valid_from") @db.Timestamptz()
   validTo      DateTime  @map("valid_to") @db.Timestamptz()
   enteredAt    DateTime? @map("entered_at") @db.Timestamptz()
   exitedAt     DateTime? @map("exited_at") @db.Timestamptz()
   checkedBy    String?   @map("checked_by")
   status       String    @default("active") // active | used | revoked | expired
+  /** Гостевой пропуск (C-54): кто выписал и какая подпись помещения напечатана */
+  issuedByPhone String?  @map("issued_by_phone")
+  unitLabel    String?   @map("unit_label")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
   building Building       @relation(fields: [buildingId], references: [id])
   order    Order?         @relation(fields: [orderId], references: [id])
-  master   MasterProfile? @relation(fields: [masterId], references: [id])
 
   @@index([tenantId, buildingId, validFrom])
   @@index([tenantId, masterId, status])
@@ -1495,3 +1521,60 @@ model OperatorSubscription {
 // При её создании она ОБЯЗАНА содержать employer_org_id (uuid, nullable) — владельца смены,
 // и EXCLUDE-ограничение на пересечение (master_id, hours) среди смен с непустым employer_org_id
 // (DEV-02 §4.4 п.11, DEV-15 §7.8.4). Без этого мультиаффилиация мастера ломается.
+
+/**
+ * Запрос доступа в чужое помещение (C-56, DEV-15 §7.6).
+ *
+ * Стороны — телефоны, а не ссылки на `User`: житель отвечает по короткой
+ * ссылке из SMS, и учётной записи у него может не быть вовсе.
+ */
+model UnitAccessRequest {
+  id                String    @id @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  buildingId        String    @map("building_id") @db.Uuid
+  unitId            String    @map("unit_id") @db.Uuid
+  /** Подпись помещения строкой: запрос переживает перенумерацию */
+  unitLabel         String    @default("") @map("unit_label")
+  /** Наряда может не быть: сосед заливает, а работа частная */
+  permitId          String?   @map("permit_id") @db.Uuid
+  orderId           String?   @map("order_id") @db.Uuid
+  requestedByPhone  String    @map("requested_by_phone")
+  masterId          String?   @map("master_id")
+  masterName        String?   @map("master_name")
+  reason            String
+  windowFrom        DateTime  @map("window_from") @db.Timestamptz()
+  windowTo          DateTime  @map("window_to") @db.Timestamptz()
+  status            String    @default("requested")
+  decidedByPhone    String?   @map("decided_by_phone")
+  decidedAt         DateTime? @map("decided_at") @db.Timestamptz()
+  declineReason     String?   @map("decline_reason")
+  proposedFrom      DateTime? @map("proposed_from") @db.Timestamptz()
+  proposedTo        DateTime? @map("proposed_to") @db.Timestamptz()
+  /** Ожидание протухает, а не висит: мастер не может ждать сутки */
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz()
+  /** Код ссылки уникален глобально — по нему открывается страница ответа */
+  accessCode        String    @unique @map("access_code")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  building Building      @relation(fields: [buildingId], references: [id])
+  permit   AccessPermit? @relation(fields: [permitId], references: [id])
+
+  @@index([tenantId, unitId, createdAt(sort: Desc)])
+  @@index([tenantId, permitId])
+  @@map("unit_access_request")
+}
+
+/**
+ * Память офлайн-синка мастера: клиентский ключ операции → наряд.
+ *
+ * Таблица, а не расчёт: результат первой попытки надо ВЕРНУТЬ повторной,
+ * а не просто отклонить её. Без тенанта — ключ приходит с устройства и
+ * уникален сам по себе.
+ */
+model PermitSyncOp {
+  clientOpUuid String   @id @map("client_op_uuid")
+  permitId     String   @map("permit_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("permit_sync_op")
+}

@@ -61,7 +61,7 @@ if (!(await portFree(PORT))) {
 // беда, ради которой появился одноразовый state.json.
 
 const COMPOSE = ['compose', '-f', join(API_DIR, '../../infra/docker-compose.yml')];
-const MIGRATIONS = ['000_init', 'm7_buildings_rls', 'm7_shutdown_exclusion', 'm8_audit_actor_phone', 'm9_identity', 'm10_pricing', 'm11_crm', 'm12_orders', 'm13_order_children', 'm14_order_enums', 'm15_masters', 'm16_buildings', 'm17_org_code', 'm18_operator_code', 'm19_inn_partial', 'm20_order_emergency'];
+const MIGRATIONS = ['000_init', 'm7_buildings_rls', 'm7_shutdown_exclusion', 'm8_audit_actor_phone', 'm9_identity', 'm10_pricing', 'm11_crm', 'm12_orders', 'm13_order_children', 'm14_order_enums', 'm15_masters', 'm16_buildings', 'm17_org_code', 'm18_operator_code', 'm19_inn_partial', 'm20_order_emergency', 'm21_access_alignment', 'm22_unit_access'];
 
 function psql(db, sql) {
   return execFileSync(
@@ -177,6 +177,25 @@ try {
     cleanup();
     process.exit(1);
   }
+  /**
+   * Молчаливые падения записи.
+   *
+   * Репозитории на PostgreSQL пишут насквозь и ловят ошибку записи, чтобы не
+   * ронять запрос: снимок в памяти уже сделан, и потерять ответ клиенту хуже.
+   * Плата за это — прогон остаётся зелёным, даже если в базу не попало
+   * ничего: всё читается из памяти того же процесса. Так и случилось с
+   * нарядами-допусками — восемь строк не записались, а 244 проверки прошли.
+   * Поэтому лог сервера проверяется отдельно.
+   */
+  const writeFailures = [...apiLog.matchAll(/\[(\w+)\] запись в базу не удалась/g)].map((m) => m[1]);
+  if (writeFailures.length) {
+    const byModule = [...new Set(writeFailures)].map((m) => `${m}: ${writeFailures.filter((x) => x === m).length}`);
+    console.log(`Проверки прошли, но запись в базу падала — ${byModule.join(', ')}`);
+    console.log(apiLog.split('\n').filter((l) => l.includes('не удалась') || l.includes('Invalid `tx.')).slice(0, 12).join('\n'));
+    cleanup();
+    process.exit(1);
+  }
+
   console.log(`Все наборы прошли: ${suites.join(', ')}`);
   cleanup();
   process.exit(0);

@@ -53,6 +53,22 @@ async function login(phone) {
 }
 
 const uuid = () => crypto.randomUUID();
+
+/**
+ * Настоящая заявка под наряд-допуск.
+ *
+ * Раньше здесь стояли выдуманные «o-1», «o-lic»: графу наряда всё равно, чей
+ * идентификатор в ссылке. Базе — нет: наряд ссылается на заявку внешним
+ * ключом, и выдуманная ссылка не записывалась вовсе. Ошибка гасилась в
+ * репозитории, тесты оставались зелёными, а нарядов в базе не появлялось.
+ */
+async function newOrder(token, description) {
+  const r = await call('/orders', {
+    token,
+    body: { clientPhone: '+998901234599', address: 'Ташкент, наряд-допуск', description },
+  });
+  return r.body.id;
+}
 const iso = (hours) => new Date(Date.now() + hours * 3600_000).toISOString();
 const errText = (b) => (typeof b.message === 'object' ? b.message.code ?? b.message.message : b.message) ?? '';
 
@@ -128,13 +144,23 @@ async function main() {
 
   // ---------------------------------------------------------------
   group('3. Наряд-допуск: запреты');
-  const licensed = await call('/orders/o-lic/permits', {
+  // Заявки настоящие: наряд ссылается на заявку внешним ключом (см. newOrder)
+  const [ordLic, ordLic2, ordMain, ordAuto1, ordAuto2, ordSms, ordSms2] = await Promise.all([
+    newOrder(t, 'газ: мастер платформы'),
+    newOrder(t, 'газ: штатный мастер оператора'),
+    newOrder(t, 'стояк ХВС: граф наряда'),
+    newOrder(t, 'авто-согласование'),
+    newOrder(t, 'авто-согласование критичной зоны'),
+    newOrder(t, 'согласование по ссылке из SMS'),
+    newOrder(t, 'критичная зона по ссылке из SMS'),
+  ]);
+  const licensed = await call(`/orders/${ordLic}/permits`, {
     token: t,
     body: { buildingId: uk, zoneTypes: ['gas_equipment'], masterIsPlatform: true, qualificationOk: true },
   });
   check('лицензируемая зона мастеру платформы запрещена (ТЗ 17.8)', licensed.status === 403, errText(licensed.body));
 
-  const licensedOp = await call('/orders/o-lic2/permits', {
+  const licensedOp = await call(`/orders/${ordLic2}/permits`, {
     token: t,
     body: { buildingId: uk, zoneTypes: ['gas_equipment'], masterIsPlatform: false, operatorSelfDeclared: true },
   });
@@ -142,7 +168,7 @@ async function main() {
 
   // ---------------------------------------------------------------
   group('4. Наряд-допуск: граф и гейты');
-  const p = (await call('/orders/o-1/permits', {
+  const p = (await call(`/orders/${ordMain}/permits`, {
     token: t,
     body: {
       buildingId: uk, zoneTypes: ['water_riser'], requiresShutdown: true, riserIds: ['R1'],
@@ -161,7 +187,7 @@ async function main() {
   const noPass = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid(), photoId: uuid() } });
   check('вскрытие без действующего пропуска отклоняется', noPass.status >= 400, errText(noPass.body));
 
-  await call('/passes', { token: t, body: { buildingId: uk, orderId: 'o-1', masterId: 'm-1', validFrom: iso(-1), validTo: iso(12) } });
+  await call('/passes', { token: t, body: { buildingId: uk, orderId: ordMain, masterId: 'm-1', validFrom: iso(-1), validTo: iso(12) } });
   const noPhoto = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid() } });
   check('вскрытие без фото отклоняется', noPhoto.status >= 400, errText(noPhoto.body));
 
@@ -179,8 +205,8 @@ async function main() {
 
   // ---------------------------------------------------------------
   group('5. Авто-согласие молчанием');
-  const plain = (await call('/orders/o-auto1/permits', { token: t, body: { buildingId: uk, zoneTypes: ['water_riser'], windowFrom: iso(1), windowTo: iso(5), masterIsPlatform: true, qualificationOk: true } })).body;
-  const crit = (await call('/orders/o-auto2/permits', { token: t, body: { buildingId: uk, zoneTypes: ['electrical_panel'], windowFrom: iso(1), windowTo: iso(5), masterIsPlatform: false, operatorSelfDeclared: true } })).body;
+  const plain = (await call(`/orders/${ordAuto1}/permits`, { token: t, body: { buildingId: uk, zoneTypes: ['water_riser'], windowFrom: iso(1), windowTo: iso(5), masterIsPlatform: true, qualificationOk: true } })).body;
+  const crit = (await call(`/orders/${ordAuto2}/permits`, { token: t, body: { buildingId: uk, zoneTypes: ['electrical_panel'], windowFrom: iso(1), windowTo: iso(5), masterIsPlatform: false, operatorSelfDeclared: true } })).body;
   await call(`/permits/${plain.id}/transitions`, { token: t, body: { action: 'submit', clientOpUuid: uuid() } });
   await call(`/permits/${crit.id}/transitions`, { token: t, body: { action: 'submit', clientOpUuid: uuid() } });
   const run = (await call(`/operator/permits/auto-approve?now=${encodeURIComponent(iso(24))}`, { token: t, method: 'POST' })).body;
@@ -341,7 +367,7 @@ async function main() {
 
   // Отдельный объект: ссылки выпускаются согласующим при submit
   const smsB = await setupBuilding(t, { name: 'ЖК Ссылка', address: 'Ссылочная 1', org: 'sms', plan: 'free', kind: 'hoa' });
-  const smsPermit = (await call('/orders/o-sms/permits', {
+  const smsPermit = (await call(`/orders/${ordSms}/permits`, {
     token: t,
     body: {
       buildingId: smsB, zoneTypes: ['water_riser'], requiresShutdown: true, riserIds: ['R1'],
@@ -369,7 +395,7 @@ async function main() {
   check('обещан срок авто-согласия', pageHtml.includes('согласуется автоматически'));
 
   // Критичная зона: авто-согласия не будет — это должно быть сказано ДО решения
-  const critPermit = (await call('/orders/o-sms2/permits', {
+  const critPermit = (await call(`/orders/${ordSms2}/permits`, {
     token: t,
     body: {
       buildingId: smsB, zoneTypes: ['electrical_panel'], windowFrom: iso(2), windowTo: iso(6),
@@ -1000,6 +1026,15 @@ async function main() {
   const winFrom = new Date(Date.now() + 3600_000).toISOString();
   const winTo = new Date(Date.now() + 3 * 3600_000).toISOString();
 
+  // Наряд настоящий: запрос доступа ссылается на него внешним ключом
+  const c56Permit = (await call(`/orders/${await newOrder(t, 'доступ в чужое помещение')}/permits`, {
+    token: t,
+    body: {
+      buildingId: uk, zoneTypes: ['water_riser'], riserIds: ['R1'],
+      windowFrom: winFrom, windowTo: winTo, masterIsPlatform: true, qualificationOk: true,
+    },
+  })).body.id;
+
   const u_noReason = await call('/unit-access', {
     token: t, body: { buildingId: uk, unitId: myUnit.id, windowFrom: winFrom, windowTo: winTo, reason: '' },
   });
@@ -1008,7 +1043,7 @@ async function main() {
   const ua = (await call('/unit-access', {
     token: t,
     body: {
-      buildingId: uk, unitId: myUnit.id, permitId: 'p-c56',
+      buildingId: uk, unitId: myUnit.id, permitId: c56Permit,
       reason: 'Сосед снизу заливает — нужен доступ к стояку',
       windowFrom: winFrom, windowTo: winTo, masterName: 'Алишер',
     },
@@ -1020,12 +1055,12 @@ async function main() {
   // Повтор по тому же наряду не плодит второе сообщение жителю
   const u_again = (await call('/unit-access', {
     token: t,
-    body: { buildingId: uk, unitId: myUnit.id, permitId: 'p-c56', reason: 'То же самое', windowFrom: winFrom, windowTo: winTo },
+    body: { buildingId: uk, unitId: myUnit.id, permitId: c56Permit, reason: 'То же самое', windowFrom: winFrom, windowTo: winTo },
   })).body;
   check('повторный запрос по тому же наряду возвращает прежний', u_again.id === ua.id, `${ua.id} / ${u_again.id}`);
 
   // Гейт наряда: пока молчит — выезжать рано
-  const gate = (await call(`/permits/${'p-c56'}/unit-access`, { token: t })).body;
+  const gate = (await call(`/permits/${c56Permit}/unit-access`, { token: t })).body;
   check('наряд не готов, пока доступ не согласован', gate.ready === false && gate.pending.includes(myUnit.number),
     JSON.stringify(gate));
 
@@ -1069,10 +1104,18 @@ async function main() {
 
   group('26. C-56 по ссылке — житель без приложения');
 
+  const linkPermit = (await call(`/orders/${await newOrder(t, 'доступ по ссылке из SMS')}/permits`, {
+    token: t,
+    body: {
+      buildingId: uk, zoneTypes: ['water_riser'], riserIds: ['R1'],
+      windowFrom: winFrom, windowTo: winTo, masterIsPlatform: true, qualificationOk: true,
+    },
+  })).body.id;
+
   const linkReq = (await call('/unit-access', {
     token: t,
     body: {
-      buildingId: uk, unitId: myUnit.id, permitId: 'p-link',
+      buildingId: uk, unitId: myUnit.id, permitId: linkPermit,
       reason: 'Течь в стояке, нужен доступ', windowFrom: winFrom, windowTo: winTo, masterName: 'Бахтиёр',
     },
   })).body;
