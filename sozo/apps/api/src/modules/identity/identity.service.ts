@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit, UnauthorizedException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common';
 import { signJwt } from '../../common/jwt';
 import { SmsService } from '../../common/sms.service';
+import { seedingAllowed } from '../../common/seeding';
 import { OtpStore, OTP_TTL_MS } from './otp.store';
 import type { IdentityRepository, LoginEventRec, UserRecord } from './identity.repository';
 
@@ -49,8 +50,13 @@ export class IdentityService implements OnModuleInit {
   /**
    * Сид служебных учёток. Раньше стоял в конструкторе, но с базой запись в
    * конструкторе невозможна: подключение к тому моменту ещё не поднято.
+   *
+   * При переносе state.json посев пропускается: служебные учётки приедут из
+   * снимка со своими идентификаторами и ролями, а заведённые заново получили
+   * бы другие — и роли разошлись бы с тем, что видел администратор.
    */
   async onModuleInit(): Promise<void> {
+    if (!seedingAllowed()) return;
     const seed: Array<Omit<UserRecord, 'id'>> = [
       { phone: '+998900000000', fullName: 'Админ (владелец)', roles: ['admin'] },
       { phone: '+998900000001', fullName: 'Бухгалтер', roles: ['accountant'] },

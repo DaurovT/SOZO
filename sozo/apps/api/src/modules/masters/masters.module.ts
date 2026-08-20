@@ -5,6 +5,7 @@ import { IdentityService } from '../identity/identity.service';
 import { StateStore } from '../../common/state-store';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
+import { seedingAllowed } from '../../common/seeding';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
 export interface MasterRec {
@@ -142,7 +143,7 @@ export class MastersService implements OnModuleInit {
       return;
     }
     const rows = await this.prisma.withContext(async (tx) => tx.masterProfile.findMany());
-    if (rows.length === 0) {
+    if (rows.length === 0 && seedingAllowed()) {
       this.loaded = true;
       for (const m of this.masters) await this.saveMaster(m);
       // eslint-disable-next-line no-console
@@ -179,6 +180,14 @@ export class MastersService implements OnModuleInit {
     this.loaded = true;
     // eslint-disable-next-line no-console
     console.log(`[Masters] карточек из базы: ${this.masters.length}`);
+  }
+
+  /** Разовый перенос карточек мастеров из state.json (deploy/import-state) */
+  async importFromState(raw: unknown): Promise<number> {
+    this.masters.length = 0;
+    this.masters.push(...((raw ?? []) as MasterRec[]));
+    for (const m of this.masters) await this.saveMaster(m);
+    return this.masters.length;
   }
 
   private async saveMaster(m: MasterRec): Promise<void> {

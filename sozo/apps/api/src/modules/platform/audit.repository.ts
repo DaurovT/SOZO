@@ -112,6 +112,39 @@ export class PrismaAuditRepository implements AuditRepository {
     });
   }
 
+  /**
+   * Разовый перенос журнала из state.json (deploy/import-state).
+   *
+   * Пачками, а не по одной: записей десятки тысяч, и транзакция на каждую
+   * превратила бы перенос в получасовое ожидание. Идентификаторы и время
+   * сохраняются как есть — журнал аудита тем и ценен, что не переписывается.
+   */
+  async importFromState(raw: unknown, batch = 500): Promise<number> {
+    const list = (raw ?? []) as AuditEntry[];
+    const ctx = currentDbContext() ?? systemContext();
+    let n = 0;
+    for (let i = 0; i < list.length; i += batch) {
+      const chunk = list.slice(i, i + batch);
+      await this.prisma.withContext(async (tx) => {
+        await tx.auditLog.createMany({
+          data: chunk.map((e) => ({
+            id: isUuid(e.id) ? e.id : uuidv7(),
+            tenantId: ctx.tenantId,
+            actorPhone: e.actorPhone,
+            action: e.action,
+            entity: e.entity,
+            entityId: isUuid(e.entityId) ? e.entityId : null,
+            payload: (e.payload ?? {}) as object,
+            createdAt: e.createdAt ? new Date(e.createdAt) : new Date(),
+          })),
+          skipDuplicates: true,
+        });
+      });
+      n += chunk.length;
+    }
+    return n;
+  }
+
   async search(f: AuditFilter): Promise<AuditEntry[]> {
     return this.prisma.withContext(async (tx) => {
       const rows = await tx.auditLog.findMany({

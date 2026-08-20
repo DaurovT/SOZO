@@ -91,6 +91,24 @@ export class ParametersService implements OnModuleInit {
     }
   }
 
+  /**
+   * Разовый перенос значений из state.json (deploy/import-state).
+   *
+   * Из файла берутся только значения: метаданные параметра — номер, название,
+   * уровни — живут в PRD и в коде, и брать их из снимка значило бы законсервировать
+   * позавчерашнюю редакцию справочника.
+   */
+  async importFromState(raw: unknown): Promise<number> {
+    let n = 0;
+    for (const p of (raw ?? []) as Array<{ num: number; value: string }>) {
+      const cur = this.params.get(p.num);
+      if (!cur || cur.value === p.value) continue;
+      await this.update(p.num, p.value);
+      n += 1;
+    }
+    return n;
+  }
+
   async onModuleInit(): Promise<void> {
     if (!this.prisma.enabled) return;
     const rows = await this.prisma.withContext(async (tx) => tx.systemParameter.findMany());

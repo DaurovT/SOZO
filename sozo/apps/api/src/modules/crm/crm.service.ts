@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException,
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
+import { seedingAllowed } from '../../common/seeding';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
 export interface ContractTerms {
@@ -265,7 +266,7 @@ export class CrmService implements OnModuleInit {
       invites: await tx.crmInvite.findMany(),
     }));
 
-    if (orgs.length === 0) {
+    if (orgs.length === 0 && seedingAllowed()) {
       // База пустая — записываем демо-организации, собранные в конструкторе
       this.loaded = true;
       for (const o of this.orgs) await this.saveOrg(o);
@@ -464,6 +465,23 @@ export class CrmService implements OnModuleInit {
    * именно изменилось, значит держать вторую модель предметной области.
    * Набор мал (единицы организаций), запись редкая — переписываем целиком.
    */
+  /**
+   * Разовый перенос контрагентов и приглашений из state.json.
+   *
+   * `loaded` ставится до записи намеренно: без него persistAll молчит, а
+   * молчаливый перенос — это перенос, которого не было.
+   */
+  async importFromState(orgs: unknown, invites: unknown): Promise<{ orgs: number; invites: number }> {
+    this.orgs.length = 0;
+    this.orgs.push(...((orgs ?? []) as OrganizationRec[]).map((o) => ({ ...o, orgRoles: o.orgRoles ?? ['client'] })));
+    this.invites.length = 0;
+    this.invites.push(...((invites ?? []) as typeof this.invites));
+    this.loaded = true;
+    for (const o of this.orgs) await this.saveOrg(o);
+    await this.saveInvites();
+    return { orgs: this.orgs.length, invites: this.invites.length };
+  }
+
   private persistAll(): void {
     if (!this.prisma.enabled) {
       this.store.persist();

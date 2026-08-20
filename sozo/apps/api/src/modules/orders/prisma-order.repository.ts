@@ -53,6 +53,34 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
     console.log(`[Orders] заявок из базы: ${this.orders.size}`);
   }
 
+  /**
+   * Разовый перенос заявок из state.json (deploy/import-state).
+   *
+   * Пишется тем же writeOne, что и обычное создание: перенос обязан класть в
+   * базу ровно то, что туда кладёт приложение, иначе первое же расхождение
+   * обнаружится не здесь, а через месяц в отчёте.
+   *
+   * Заявки идут по одной и по порядку создания: на объект и на мастера стоят
+   * внешние ключи, а вложенные коллекции пишутся вместе с заявкой.
+   */
+  async importFromState(raw: unknown): Promise<number> {
+    const list = (raw ?? []) as OrderRecord[];
+    let n = 0;
+    for (const r of list) {
+      // Даты в JSON — строки; в базу они уходят как Date
+      const order: OrderRecord = {
+        ...r,
+        createdAt: new Date(r.createdAt),
+        statusLog: (r.statusLog ?? []).map((l) => ({ ...l, at: new Date(l.at) })),
+      };
+      this.orders.set(order.id, order);
+      await this.writeOne(order);
+      n += 1;
+    }
+    this.loaded = true;
+    return n;
+  }
+
   async create(order: OrderRecord): Promise<OrderRecord> {
     this.orders.set(order.id, order);
     await this.writeOne(order);

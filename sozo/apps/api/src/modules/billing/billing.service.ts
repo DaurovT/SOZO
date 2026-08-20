@@ -237,6 +237,22 @@ export class BillingService implements OnModuleInit {
       });
   }
 
+  /**
+   * Разовый перенос журнала в базу (deploy/import-state).
+   *
+   * Биллинг тоже читает state.json и с включённой базой, поэтому переносится
+   * то, что уже в памяти. План счетов к этому моменту засеян загрузкой —
+   * без него проводке некуда ссылаться.
+   */
+  async flushToDb(): Promise<{ txs: number; invoices: number; periods: number }> {
+    this.loaded = true;
+    this.appendTxs(this.txs);
+    for (const inv of this.invoices) this.saveInvoice(inv);
+    for (const m of this.closedPeriods) this.savePeriod(m, true);
+    await this.writing;
+    return { txs: this.txs.length, invoices: this.invoices.length, periods: this.closedPeriods.size };
+  }
+
   private appendTxs(created: TxRec[]): void {
     this.enqueue(async (tx, tenantId) => {
       for (const t of created) {

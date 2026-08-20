@@ -100,6 +100,10 @@ export class InMemoryIdentityRepository implements IdentityRepository {
   }
 }
 
+/** Идентификатор из снимка мог быть не uuid: колонка строгая, журнал — нет */
+const isUuid = (v: unknown): v is string =>
+  typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
 @Injectable()
 export class PrismaIdentityRepository implements IdentityRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -189,6 +193,63 @@ export class PrismaIdentityRepository implements IdentityRepository {
         await tx.userRole.create({ data: { id: uuidv7(), tenantId, userId: u.id, role: (TO_DB[r] ?? r) as never } });
       }
     });
+  }
+
+  /**
+   * Разовый перенос учётных записей и журнала входов (deploy/import-state).
+   *
+   * Идентификаторы сохраняются, а не выдаются заново: на пользователя
+   * ссылаются роли, и перевыдача id превратила бы перенос в тихую потерю
+   * доступов. Телефон уникален — повтор переноса ничего не задвоит.
+   */
+  async importFromState(raw: unknown): Promise<{ users: number; logins: number }> {
+    const data = Array.isArray(raw)
+      ? { users: raw as UserRecord[], logins: [] as LoginEventRec[] }
+      : ((raw ?? {}) as { users?: UserRecord[]; logins?: LoginEventRec[] });
+    const tenantId = this.tenant();
+    const users = data.users ?? [];
+    for (const u of users) {
+      await this.prisma.withContext(async (tx) => {
+        const existing = await tx.user.findFirst({ where: { tenantId, phone: u.phone } });
+        const id = existing?.id ?? (isUuid(u.id) ? u.id : uuidv7());
+        await tx.user.upsert({
+          where: { id },
+          create: {
+            id,
+            tenantId,
+            phone: u.phone,
+            fullName: u.fullName || null,
+            isBlocked: Boolean(u.blockedAt),
+            blockedAt: u.blockedAt ? new Date(u.blockedAt) : null,
+            blockedReason: u.blockedReason ?? null,
+            lastLoginAt: u.lastLoginAt ? new Date(u.lastLoginAt) : null,
+          },
+          update: { fullName: u.fullName || null },
+        });
+        await tx.userRole.deleteMany({ where: { tenantId, userId: id } });
+        for (const r of u.roles ?? []) {
+          await tx.userRole.create({ data: { id: uuidv7(), tenantId, userId: id, role: (TO_DB[r] ?? r) as never } });
+        }
+      });
+    }
+    const logins = data.logins ?? [];
+    for (let i = 0; i < logins.length; i += 500) {
+      const chunk = logins.slice(i, i + 500);
+      await this.prisma.withContext(async (tx) => {
+        await tx.loginEvent.createMany({
+          data: chunk.map((e) => ({
+            id: uuidv7(),
+            tenantId,
+            phone: e.phone,
+            ok: e.ok,
+            reason: e.reason ?? null,
+            roles: e.roles,
+            at: new Date(e.at),
+          })),
+        });
+      });
+    }
+    return { users: users.length, logins: logins.length };
   }
 
   async trackLogin(e: Omit<LoginEventRec, 'id'>) {

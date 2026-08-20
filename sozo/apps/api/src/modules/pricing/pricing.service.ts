@@ -3,6 +3,7 @@ import { uuidv7 } from '@sozo/kernel';
 import catalog from '../../seed/price-catalog.json';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
+import { seedingAllowed } from '../../common/seeding';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import { registerCatalogNames } from '../../common/locale';
 
@@ -116,7 +117,7 @@ export class PricingService implements OnModuleInit {
     const rows = await this.prisma.withContext(async (tx) =>
       tx.priceListRelease.findMany({ include: { items: true }, orderBy: { number: 'asc' } }),
     );
-    if (rows.length === 0) {
+    if (rows.length === 0 && seedingAllowed()) {
       // Базы ещё нет — записываем стартовый релиз, собранный в конструкторе
       this.loaded = true;
       for (const r of this.releases) await this.saveRelease(r);
@@ -157,6 +158,22 @@ export class PricingService implements OnModuleInit {
     this.syncCatalogNames();
     // eslint-disable-next-line no-console
     console.log(`[Pricing] релизов из базы: ${this.releases.length}`);
+  }
+
+  /**
+   * Разовый перенос релизов прайса из state.json (deploy/import-state).
+   *
+   * Пишется через тот же saveRelease, что и обычная правка: отдельный путь
+   * записи для переноса означал бы, что в базу единожды легло не то, что
+   * туда кладёт приложение.
+   */
+  async importFromState(raw: unknown): Promise<number> {
+    const list = (raw ?? []) as ReleaseRec[];
+    this.releases.length = 0;
+    this.releases.push(...list.map((r) => ({ ...r, items: r.items.map((i) => ({ ...i, nameUz: i.nameUz ?? null })) })));
+    this.syncCatalogNames();
+    for (const r of this.releases) await this.saveRelease(r);
+    return this.releases.length;
   }
 
   /**

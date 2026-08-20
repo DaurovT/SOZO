@@ -92,6 +92,19 @@ export class InMemoryPermitRepository implements OnModuleInit {
     }
   }
 
+  /** Разовый перенос нарядов и пропусков в базу (deploy/import-state) */
+  async flushToDb(): Promise<{ permits: number; passes: number; shutdowns: number; unitAccess: number }> {
+    this.loaded = true;
+    this.scheduleWrite();
+    await this.writing;
+    return {
+      permits: this.permits.size,
+      passes: this.passes.size,
+      shutdowns: this.shutdowns.size,
+      unitAccess: this.unitAccess.size,
+    };
+  }
+
   /** Последовательная цепочка, а не таймер — см. комментарий класса */
   private writing: Promise<void> = Promise.resolve();
 

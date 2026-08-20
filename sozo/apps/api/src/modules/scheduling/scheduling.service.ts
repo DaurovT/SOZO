@@ -167,6 +167,20 @@ export class SchedulingService implements OnModuleInit {
     }
   }
 
+  /**
+   * Разовый перенос расписания в базу (deploy/import-state).
+   *
+   * Планировщик, в отличие от прайса и CRM, читает state.json и с включённой
+   * базой, поэтому переносить нечего — достаточно записать то, что уже в
+   * памяти, и дождаться записи.
+   */
+  async flushToDb(): Promise<{ shifts: number; bookings: number; waitlist: number }> {
+    this.loaded = true;
+    this.scheduleWrite();
+    await this.writing;
+    return { shifts: this.shifts.length, bookings: this.bookings.length, waitlist: this.waitlist.length };
+  }
+
   private writing: Promise<void> = Promise.resolve();
 
   private scheduleWrite(): void {

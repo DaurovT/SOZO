@@ -214,6 +214,43 @@ export class InMemoryBuildingRepository implements OnModuleInit {
    * Поэтому пишем сразу, а последовательность гарантируется цепочкой
    * промисов: вторая запись ждёт первую, а не идёт параллельно.
    */
+  /**
+   * Разовый перенос объектов в базу (deploy/import-state).
+   *
+   * Объекты, в отличие от планировщика, с включённой базой файл не читают —
+   * снимок приходит параметром. Заполняется тот же набор в памяти, что и при
+   * загрузке из файла, и пишется тем же writeAll.
+   */
+  async importFromState(data: unknown): Promise<Record<string, number>> {
+    const d = data as Record<string, Array<{ id: string }>>;
+    const fill = <T extends { id: string }>(name: string): Map<string, T> =>
+      new Map(((d?.[name] ?? []) as T[]).map((x) => [x.id, x]));
+    this.buildings = fill('buildings');
+    this.units = fill('units');
+    this.zones = fill('zones');
+    this.staff = fill('staff');
+    this.observations = fill('observations');
+    this.equipment = fill('equipment');
+    this.defects = fill('defects');
+    this.opPrices = fill('opPrices');
+    this.claims = fill('claims');
+    this.demand = fill('demand');
+    this.residents = fill('residents');
+    this.routes = fill('routes');
+    this.walks = fill('walks');
+    this.maintenance = fill('maintenance');
+    this.loaded = true;
+    this.scheduleWrite();
+    await this.writing;
+    return {
+      объектов: this.buildings.size,
+      помещений: this.units.size,
+      зон: this.zones.size,
+      замечаний: this.observations.size,
+      обходов: this.walks.size,
+    };
+  }
+
   private writing: Promise<void> = Promise.resolve();
 
   private scheduleWrite(): void {

@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,7 +65,17 @@ if (!(await portFree(PORT))) {
 // беда, ради которой появился одноразовый state.json.
 
 const COMPOSE = ['compose', '-f', join(API_DIR, '../../infra/docker-compose.yml')];
-const MIGRATIONS = ['000_init', 'm7_buildings_rls', 'm7_shutdown_exclusion', 'm8_audit_actor_phone', 'm9_identity', 'm10_pricing', 'm11_crm', 'm12_orders', 'm13_order_children', 'm14_order_enums', 'm15_masters', 'm16_buildings', 'm17_org_code', 'm18_operator_code', 'm19_inn_partial', 'm20_order_emergency', 'm21_access_alignment', 'm22_unit_access', 'm23_billing', 'm24_scheduling'];
+// Миграции берутся из каталога, а не из списка в коде: список приходилось
+// править при каждой новой миграции, и забытая правка означала прогон на
+// вчерашней схеме — то есть зелёные тесты, ничего не проверяющие.
+// Порядок числовой: m9 идёт раньше m10, а не после, как при обычной сортировке.
+const MIGRATIONS = readdirSync(join(API_DIR, '../../prisma/migrations'), { withFileTypes: true })
+  .filter((e) => e.isDirectory())
+  .map((e) => e.name)
+  .sort((a, b) => {
+    const num = (x) => Number(x.match(/^m?(\d+)/)?.[1] ?? 0);
+    return num(a) - num(b) || a.localeCompare(b);
+  });
 
 function psql(db, sql) {
   return execFileSync(
