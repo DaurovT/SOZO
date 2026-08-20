@@ -243,7 +243,7 @@ export class ClientB2CController {
    * оператора целиком (DEV-15 §7.5).
    */
   @Post('my-building/observations')
-  createBuildingObservation(
+  async createBuildingObservation(
     @Body() b: { zoneKey?: string; categoryId?: string; photos?: string[]; comment?: string; joinObservationId?: string },
     @Req() req: AppRequest,
   ) {
@@ -259,7 +259,7 @@ export class ClientB2CController {
     }
     // Снимки жителя хранятся как есть: отдельного альбома у объекта нет,
     // а идентификатором служит сам dataURL — так же, как у обхода мастера
-    const r = this.buildings.addObservation('t0', building.id, {
+    const r = await this.buildings.addObservation('t0', building.id, {
       zoneKey: b.zoneKey?.trim() || 'дом',
       categoryId: b.categoryId,
       photoIds: b.photos,

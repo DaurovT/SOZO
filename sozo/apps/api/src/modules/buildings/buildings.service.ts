@@ -635,7 +635,7 @@ export class BuildingsService {
    * Дубликаты по зоне не отклоняются, а предлагаются к присоединению: обходящих
    * несколько, и «уже есть такое» без возможности подтвердить — худший вариант.
    */
-  addObservation(
+  async addObservation(
     tenantId: string,
     buildingId: string,
     dto: {
@@ -649,7 +649,7 @@ export class BuildingsService {
       authorPhone: string;
       joinObservationId?: string;
     },
-  ): { observation: ObservationRecord; duplicates: ObservationRecord[]; joined: boolean } {
+  ): Promise<{ observation: ObservationRecord; duplicates: ObservationRecord[]; joined: boolean }> {
     this.get(tenantId, buildingId);
     if (!dto.photoIds.length) {
       throw new BadRequestException('Замечание фиксируется только с фотографией');
@@ -701,7 +701,9 @@ export class BuildingsService {
       createdAt: new Date().toISOString(),
     };
     this.repo.saveObservation(rec);
-    this.bus.publish('observation.created', {
+    // Ждём подписчика: аварийное замечание должно вернуться клиенту уже
+    // связанным с заявкой (см. EventBus.publishAndWait)
+    await this.bus.publishAndWait('observation.created', {
       observationId: rec.id,
       buildingId,
       severity: rec.severity,

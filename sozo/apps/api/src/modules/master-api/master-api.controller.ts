@@ -676,7 +676,7 @@ export class MasterApiController {
           results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
         } else if (op.kind === 'observation') {
           // orderId в этих операциях несёт объект: обход не привязан к заявке
-          this.walkthrough.addObservation(op.orderId, op.payload as never, req);
+          await this.walkthrough.addObservation(op.orderId, op.payload as never, req);
           results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
         } else if (op.kind === 'walk_zone') {
           this.walkthrough.passZone((op.payload as { walkId: string }).walkId, op.payload as never, req);

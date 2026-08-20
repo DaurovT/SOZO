@@ -212,7 +212,7 @@ export class BuildingsController {
   // ---------- Замечания и обходы (U-16, M-49, C-52) ----------
 
   @Post(':id/observations')
-  addObservation(
+  async addObservation(
     @Param('id') id: string,
     @Body()
     body: {
@@ -227,7 +227,7 @@ export class BuildingsController {
     },
     @Req() req: { auth: JwtClaims },
   ) {
-    return this.buildings.addObservation('t0', id, { ...body, authorPhone: req.auth.phone });
+    return await this.buildings.addObservation('t0', id, { ...body, authorPhone: req.auth.phone });
   }
 
   @Get(':id/observations')

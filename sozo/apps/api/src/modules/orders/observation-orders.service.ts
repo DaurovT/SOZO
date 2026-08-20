@@ -28,9 +28,9 @@ export class ObservationOrdersService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.bus.subscribe<ObservationCreatedEvent>('observation.created', (e) => {
-      void this.handle(e);
-    });
+    // Возвращаем промис, а не глотаем его: publishAndWait ждёт именно его,
+    // иначе ответ на фиксацию замечания обгонял бы создание заявки
+    this.bus.subscribe<ObservationCreatedEvent>('observation.created', (e) => this.handle(e));
   }
 
   private async handle(e: ObservationCreatedEvent): Promise<void> {

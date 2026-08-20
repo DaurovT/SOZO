@@ -87,7 +87,7 @@ export class MasterWalkthroughController {
    * дозаполняются в кабинете (DEV-15 §7.7.3).
    */
   @Post('buildings/:id/observations')
-  addObservation(
+  async addObservation(
     @Param('id') id: string,
     @Body()
     b: {
@@ -104,7 +104,7 @@ export class MasterWalkthroughController {
     this.assertStaff(id, req);
     if (!b?.categoryId) throw new BadRequestException('Категория не выбрана');
 
-    const res = this.buildings.addObservation('t0', id, {
+    const res = await this.buildings.addObservation('t0', id, {
       zoneKey: b.zoneKey?.trim() || 'не указана',
       categoryId: b.categoryId,
       photoIds: b.photoIds ?? [],

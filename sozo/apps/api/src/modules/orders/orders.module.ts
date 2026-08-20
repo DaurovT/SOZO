@@ -29,20 +29,13 @@ import { SlaModule } from '../sla/sla.module';
   providers: [
     OrdersService,
     ObservationOrdersService,
-    /**
-     * Заявка ПОКА на файловом хранилище, хотя PrismaOrderRepository готов и
-     * блокер по внешним ключам снят: объекты и мастера уже в базе.
-     *
-     * При включении падают 75 проверок из 489, все в контуре «Дом», и
-     * причина найдена: operator_org_id в схеме — внешний ключ на organization
-     * типа uuid, а код передаёт короткий код «uk1». Менять тип колонки на
-     * текст нельзя: оператор по DEV-15 ЯВЛЯЕТСЯ организацией, и без этой
-     * связи ему не выставить счёт и не посчитать нетто-расчёт. Чинить надо
-     * контур «Дом» — заводить оператора настоящей организацией.
-     *
-     * Включить — заменить строку ниже на выбор по prisma.enabled.
-     */
-    { provide: ORDER_REPOSITORY, useClass: InMemoryOrderRepository },
+    PrismaOrderRepository,
+    {
+      provide: ORDER_REPOSITORY,
+      inject: [PrismaService, StateStore, PrismaOrderRepository],
+      useFactory: (prisma: PrismaService, store: StateStore, pg: PrismaOrderRepository): OrderRepository =>
+        prisma.enabled ? pg : new InMemoryOrderRepository(store),
+    },
   ],
   exports: [OrdersService],
 })

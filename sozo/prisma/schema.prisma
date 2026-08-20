@@ -23,6 +23,11 @@ datasource db {
 enum OrderType {
   b2c
   b2b
+  /**
+   * Аварийная. Была в графах DEV-10 с самого начала и минует оценку, но в
+   * перечне её не было — заявка, созданная по аварии, не записывалась вовсе.
+   */
+  emergency
   warranty
   from_defect
   inspection
@@ -147,15 +152,19 @@ model Organization {
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
+  // Связи с сущностями контура «Дом» сняты: оператор связан с ними своим
+  // бизнес-кодом, а не идентификатором строки, и Prisma такую связь не
+  // выражает. Целостность вернётся ссылкой на organization.code, когда будет
+  // гарантирован порядок записи между CRM и объектами.
   locations     Location[]
   contracts     Contract[]
   roles         UserRole[]
-  buildings     Building[]
-  affiliations  MasterAffiliation[]
-  slaPolicies   SlaPolicy[]
-  subscriptions OperatorSubscription[]
 
-  @@unique([tenantId, inn])
+  // Уникальность ИНН — частичным индексом (миграция m19): пустой ИНН это
+  // отсутствие значения, а не значение. Организация-оператор заводится
+  // заявкой на подключение, реквизиты заполняет админ позже, и до тех пор
+  // таких организаций может быть сколько угодно
+  @@index([tenantId, inn])
   @@index([tenantId, status])
   @@map("organization")
 }
@@ -181,7 +190,6 @@ model Location {
   blacklistMasters  String[] @map("blacklist_masters") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
-
   organization    Organization     @relation(fields: [organizationId], references: [id])
   building        Building?        @relation(fields: [buildingId], references: [id])
   orders          Order[]
@@ -261,7 +269,6 @@ model Contract {
   autoRenew          Boolean   @default(false) @map("auto_renew")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
-
   organization Organization     @relation(fields: [organizationId], references: [id])
   release      PriceListRelease @relation(fields: [priceListReleaseId], references: [id])
 
@@ -472,7 +479,7 @@ model PriceItem {
 model OperatorPriceItem {
   id             String   @id @db.Uuid
   tenantId       String   @map("tenant_id") @db.Uuid
-  operatorOrgId  String   @map("operator_org_id") @db.Uuid
+  operatorOrgId  String   @map("operator_org_id")
   /** null — прайс на все объекты оператора; иначе переопределение на объект */
   buildingId     String?  @map("building_id") @db.Uuid
   name           String
@@ -492,7 +499,7 @@ model BuildingClaim {
   id             String    @id @db.Uuid
   tenantId       String    @map("tenant_id") @db.Uuid
   buildingId     String    @map("building_id") @db.Uuid
-  operatorOrgId  String    @map("operator_org_id") @db.Uuid
+  operatorOrgId  String    @map("operator_org_id")
   operatorName   String    @map("operator_name")
   applicantPhone String    @map("applicant_phone")
   documentKind   String    @map("document_kind")
@@ -1113,7 +1120,7 @@ enum TenantKind {
 model Building {
   id                 String                   @id @db.Uuid
   tenantId           String                   @map("tenant_id") @db.Uuid
-  operatorOrgId      String?                  @map("operator_org_id") @db.Uuid
+  operatorOrgId      String?                  @map("operator_org_id")
   cityId             String?                   @map("city_id") @db.Uuid
   name               String
   address            String
@@ -1134,8 +1141,6 @@ model Building {
   connectedAt        DateTime?                @map("connected_at") @db.Timestamptz()
   createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt          DateTime                 @updatedAt @map("updated_at") @db.Timestamptz()
-
-  operator      Organization?           @relation(fields: [operatorOrgId], references: [id])
   units         Unit[]
   zones         CommonZone[]
   staff         BuildingStaff[]
@@ -1147,7 +1152,6 @@ model Building {
   passes        VisitPass[]
   orders        Order[]
   locations     Location[]
-  slaPolicies   SlaPolicy[]
 
   @@index([tenantId, operatorOrgId])
   @@index([tenantId, connectionStatus])
@@ -1173,6 +1177,8 @@ model Building {
   permitsOverdue30d   Int @default(0) @map("permits_overdue_30d")
   emergencyOverdue30d Int @default(0) @map("emergency_overdue_30d")
 
+  // Обратная связь: политики SLA этого объекта (точки B2B — выше, locations)
+  slaPolicies SlaPolicy[]
 }
 
 model Unit {
@@ -1338,7 +1344,7 @@ model MasterAffiliation {
   id              String    @id @db.Uuid
   tenantId        String    @map("tenant_id") @db.Uuid
   masterId        String    @map("master_id") @db.Uuid
-  orgId           String    @map("org_id") @db.Uuid
+  orgId           String    @map("org_id")
   status          String    @default("active") // active | suspended | terminated
   since           DateTime  @db.Date
   until           DateTime? @db.Date
@@ -1348,7 +1354,6 @@ model MasterAffiliation {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
   master MasterProfile @relation(fields: [masterId], references: [id])
-  org    Organization  @relation(fields: [orgId], references: [id])
 
   @@unique([tenantId, masterId, orgId])
   @@index([tenantId, orgId, status])
@@ -1448,7 +1453,7 @@ model BuildingAnnouncement {
 model SlaPolicy {
   id              String   @id @db.Uuid
   tenantId        String   @map("tenant_id") @db.Uuid
-  operatorOrgId   String   @map("operator_org_id") @db.Uuid
+  operatorOrgId   String   @map("operator_org_id")
   buildingId      String?  @map("building_id") @db.Uuid // null = политика по умолчанию для всех объектов
   categoryId      String?  @map("category_id")
   priority        String   @default("normal") // critical | high | normal | low
@@ -1460,8 +1465,6 @@ model SlaPolicy {
   penaltyTiyin    BigInt?  @map("penalty_tiyin")
   appliesToScope  String   @default("both") @map("applies_to_scope") // private | common_area | both
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
-
-  operator Organization @relation(fields: [operatorOrgId], references: [id])
   building Building?    @relation(fields: [buildingId], references: [id])
   orders   Order[]
 
@@ -1472,7 +1475,7 @@ model SlaPolicy {
 model OperatorSubscription {
   id                String           @id @db.Uuid
   tenantId          String           @map("tenant_id") @db.Uuid
-  operatorOrgId     String           @map("operator_org_id") @db.Uuid
+  operatorOrgId     String           @map("operator_org_id")
   plan              SubscriptionPlan @default(free)
   tenantKind        TenantKind       @map("tenant_kind")
   billingUnit       BillingUnit      @default(per_object) @map("billing_unit") // параметр 139
@@ -1483,8 +1486,6 @@ model OperatorSubscription {
   status            String           @default("active") // active | past_due | cancelled
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
-
-  operator Organization @relation(fields: [operatorOrgId], references: [id])
 
   @@index([tenantId, operatorOrgId, periodFrom])
   @@map("operator_subscription")

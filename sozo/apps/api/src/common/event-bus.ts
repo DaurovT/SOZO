@@ -8,11 +8,11 @@ import { Injectable } from '@nestjs/common';
  */
 @Injectable()
 export class EventBus {
-  private readonly handlers = new Map<string, Array<(payload: unknown) => void>>();
+  private readonly handlers = new Map<string, Array<(payload: unknown) => unknown>>();
 
-  subscribe<T>(name: string, fn: (payload: T) => void): void {
+  subscribe<T>(name: string, fn: (payload: T) => unknown): void {
     const list = this.handlers.get(name) ?? [];
-    list.push(fn as (payload: unknown) => void);
+    list.push(fn as (payload: unknown) => unknown);
     this.handlers.set(name, list);
   }
 
@@ -22,6 +22,29 @@ export class EventBus {
         fn(payload);
       } catch (e) {
         // обработчик не должен ронять бизнес-операцию (at-least-once + DLQ в проде)
+        // eslint-disable-next-line no-console
+        console.error(`[EventBus] handler failed for ${name}:`, e);
+      }
+    }
+  }
+
+  /**
+   * То же, но с ожиданием асинхронных обработчиков.
+   *
+   * Нужно там, где ответ клиенту описывает результат работы подписчика:
+   * аварийное замечание становится заявкой, и HTTP-ответ обязан вернуть уже
+   * связанное замечание, а не то, что свяжется через миг. На файловом
+   * хранилище разница была невидимой — подписчик успевал в том же тике; с
+   * PostgreSQL каждый его шаг ходит в базу, и ответ обгонял маршрутизацию.
+   *
+   * Публикуется ПОСЛЕ сохранения самой сущности, поэтому сбой подписчика
+   * по-прежнему не может её потерять — ошибки так же гасятся.
+   */
+  async publishAndWait<T>(name: string, payload: T): Promise<void> {
+    for (const fn of this.handlers.get(name) ?? []) {
+      try {
+        await fn(payload);
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[EventBus] handler failed for ${name}:`, e);
       }

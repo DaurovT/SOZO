@@ -61,7 +61,7 @@ if (!(await portFree(PORT))) {
 // беда, ради которой появился одноразовый state.json.
 
 const COMPOSE = ['compose', '-f', join(API_DIR, '../../infra/docker-compose.yml')];
-const MIGRATIONS = ['000_init', 'm7_buildings_rls', 'm7_shutdown_exclusion', 'm8_audit_actor_phone', 'm9_identity', 'm10_pricing', 'm11_crm', 'm12_orders', 'm13_order_children', 'm14_order_enums', 'm15_masters', 'm16_buildings', 'm17_org_code'];
+const MIGRATIONS = ['000_init', 'm7_buildings_rls', 'm7_shutdown_exclusion', 'm8_audit_actor_phone', 'm9_identity', 'm10_pricing', 'm11_crm', 'm12_orders', 'm13_order_children', 'm14_order_enums', 'm15_masters', 'm16_buildings', 'm17_org_code', 'm18_operator_code', 'm19_inn_partial', 'm20_order_emergency'];
 
 function psql(db, sql) {
   return execFileSync(
