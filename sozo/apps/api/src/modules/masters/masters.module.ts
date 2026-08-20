@@ -1,8 +1,11 @@
-import { Body, Controller, Get, Module, Param, Post, Put, UseGuards, Injectable, NotFoundException } from '@nestjs/common';
+import { Body, Controller, Get, Module, OnModuleInit, Param, Post, Put, UseGuards, Injectable, NotFoundException } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { IdentityService } from '../identity/identity.service';
 import { StateStore } from '../../common/state-store';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 
 export interface MasterRec {
   id: string;
@@ -46,7 +49,7 @@ export interface MasterRec {
 
 /** masters (DEV-07 §2 п.7): онбординг-воронка A-11/A-12, скиллы — только через экзамен */
 @Injectable()
-export class MastersService {
+export class MastersService implements OnModuleInit {
   private readonly masters: MasterRec[] = [
     {
       id: uuidv7(),
@@ -107,20 +110,124 @@ export class MastersService {
     return this.masters;
   }
 
+  /**
+   * Набор в памяти и при работе на базе — как у CRM и прайса, и по той же
+   * причине: карточку мастера читают синхронно из лент, распределения и
+   * расчёта доли, а писатель один.
+   */
   constructor(
     private readonly store: StateStore,
     private readonly identity: IdentityService,
+    private readonly prisma: PrismaService,
   ) {
-    this.store.register(
-      'masters',
-      () => this.masters,
-      (d) => {
-        this.masters.length = 0;
-        this.masters.push(...(d as MasterRec[]));
-      },
-    );
+    if (!this.prisma.enabled) {
+      this.store.register(
+        'masters',
+        () => this.masters,
+        (d) => {
+          this.masters.length = 0;
+          this.masters.push(...((d ?? []) as MasterRec[]));
+        },
+      );
+    }
     // Телефон из карточки мастера даёт роль master при входе (PRD-02 §2)
     this.identity.registerRoleProvider((phone) => (this.masters.some((m) => m.phone === phone) ? ['master'] : []));
+  }
+
+  private loaded = false;
+
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
+    const rows = await this.prisma.withContext(async (tx) => tx.masterProfile.findMany());
+    if (rows.length === 0) {
+      this.loaded = true;
+      for (const m of this.masters) await this.saveMaster(m);
+      // eslint-disable-next-line no-console
+      console.log(`[Masters] демо-карточки записаны в базу: ${this.masters.length}`);
+      return;
+    }
+    this.masters.length = 0;
+    for (const r of rows) {
+      this.masters.push({
+        id: r.id,
+        fullName: r.fullName,
+        phone: r.phone,
+        status: r.status as MasterRec['status'],
+        skillTags: r.skillTags,
+        skillExams: (r.skillExamsJson ?? []) as MasterRec['skillExams'],
+        zones: r.zoneIds,
+        transport: (r.transport ?? undefined) as MasterRec['transport'],
+        rating: r.rating,
+        grade: r.grade as MasterRec['grade'],
+        taxMode: r.taxMode as MasterRec['taxMode'],
+        gphContractUntil: r.contractUntil ? r.contractUntil.toISOString().slice(0, 10) : null,
+        documents: (r.documentsJson ?? []) as MasterRec['documents'],
+        hasVehicle: r.hasVehicle,
+        cashDebtTiyin: Number(r.cashDebtTiyin),
+        qrBadgeCode: r.qrBadgeCode ?? undefined,
+        referrerName: r.referrerName ?? undefined,
+        referrerCode: r.referrerCode ?? undefined,
+        referralBonusPaidAt: r.referralBonusPaidAt?.toISOString(),
+        lastGeo: (r.lastGeoJson ?? undefined) as MasterRec['lastGeo'],
+        offlineQueue: (r.offlineQueueJson ?? undefined) as MasterRec['offlineQueue'],
+        offboardingNote: r.offboardingNote ?? undefined,
+      } as MasterRec);
+    }
+    this.loaded = true;
+    // eslint-disable-next-line no-console
+    console.log(`[Masters] карточек из базы: ${this.masters.length}`);
+  }
+
+  private async saveMaster(m: MasterRec): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    const data = {
+      phone: m.phone,
+      fullName: m.fullName,
+      status: m.status,
+      skillTags: m.skillTags ?? [],
+      zoneIds: (m.zones ?? []) as string[],
+      transport: m.transport ?? null,
+      rating: m.rating ?? 60,
+      grade: m.grade ?? 'bronze',
+      taxMode: m.taxMode ?? 'self_employed',
+      contractUntil: m.gphContractUntil ? new Date(m.gphContractUntil) : null,
+      hasVehicle: Boolean(m.hasVehicle),
+      cashDebtTiyin: BigInt(Math.max(0, m.cashDebtTiyin ?? 0)),
+      qrBadgeCode: m.qrBadgeCode ?? null,
+      referrerName: m.referrerName ?? null,
+      referrerCode: m.referrerCode ?? null,
+      referralBonusPaidAt: m.referralBonusPaidAt ? new Date(m.referralBonusPaidAt) : null,
+      offboardingNote: m.offboardingNote ?? null,
+      skillExamsJson: (m.skillExams ?? []) as object,
+      documentsJson: (m.documents ?? []) as object,
+      lastGeoJson: (m.lastGeo ?? Prisma.DbNull) as Prisma.InputJsonValue,
+      offlineQueueJson: (m.offlineQueue ?? Prisma.DbNull) as Prisma.InputJsonValue,
+    };
+    await this.prisma.withContext(async (tx) => {
+      await tx.masterProfile.upsert({
+        where: { id: m.id },
+        create: { id: m.id, tenantId, ...data },
+        update: data,
+      });
+    });
+  }
+
+  /** Запись изменения: до загрузки в памяти демо-карточки, а не данные */
+  private persistMasters(): void {
+    if (!this.prisma.enabled) {
+      this.store.persist();
+      return;
+    }
+    if (!this.loaded) return;
+    void (async () => {
+      for (const m of this.masters) await this.saveMaster(m);
+    })().catch((e: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[Masters] изменение не сохранено в базу:', (e as Error).message);
+    });
   }
 
   get(id: string): MasterRec {
@@ -150,7 +257,7 @@ export class MastersService {
       createdAt: new Date().toISOString(),
     };
     this.masters.push(m);
-    this.store.persist();
+    this.persistMasters();
     return m;
   }
 
@@ -162,7 +269,7 @@ export class MastersService {
   adjustCashDebt(id: string, deltaTiyin: number): MasterRec {
     const m = this.get(id);
     m.cashDebtTiyin = Math.max(0, m.cashDebtTiyin + deltaTiyin);
-    this.store.persist();
+    this.persistMasters();
     return m;
   }
 
@@ -189,7 +296,7 @@ export class MastersService {
     const m = this.masters.find((x) => x.id === id);
     if (!m) throw new NotFoundException({ code: 'MASTER_NOT_FOUND' });
     Object.assign(m, patch);
-    this.store.persist();
+    this.persistMasters();
     return m;
   }
 }

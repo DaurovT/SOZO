@@ -5,7 +5,7 @@
 # без клиента и без shadow-базы.
 set -euo pipefail
 CID="docker compose -f infra/docker-compose.yml exec -T postgres"
-for m in 000_init m7_buildings_rls m7_shutdown_exclusion m8_audit_actor_phone m9_identity m10_pricing m11_crm m12_orders m13_order_children m14_order_enums; do
+for m in 000_init m7_buildings_rls m7_shutdown_exclusion m8_audit_actor_phone m9_identity m10_pricing m11_crm m12_orders m13_order_children m14_order_enums m15_masters; do
   printf '  %-24s ' "$m"
   $CID psql -U sozo -d sozo -q -v ON_ERROR_STOP=1 < "prisma/migrations/$m/migration.sql"
   echo 'применена'

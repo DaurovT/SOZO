@@ -333,10 +333,39 @@ model UserRole {
 model MasterProfile {
   id             String    @id @db.Uuid
   tenantId       String    @map("tenant_id") @db.Uuid
-  userId         String    @unique @map("user_id") @db.Uuid
+  /**
+   * Пользователь. НЕОБЯЗАТЕЛЕН, и это решение, а не послабление: карточка
+   * мастера заводится в воронке онбординга задолго до первого входа, и
+   * требовать пользователя значило бы создавать людей, которые никогда не
+   * входили — они засоряли бы журнал входов и матрицу ролей. Связка в работе
+   * идёт по телефону, он же и колонка ниже.
+   */
+  userId         String?   @unique @map("user_id") @db.Uuid
+  /** Телефон — рабочий ключ: по нему выдаётся роль master при входе */
+  phone          String
+  fullName       String    @map("full_name")
+  /** Транспорт: пешком, свой автомобиль, мотоцикл — влияет на распределение */
+  transport      String?
+  referrerName   String?   @map("referrer_name")
+  referrerCode   String?   @map("referrer_code")
+  referralBonusPaidAt DateTime? @map("referral_bonus_paid_at") @db.Timestamptz()
+  /** Причина ухода: карточка не удаляется, её след остаётся в аудите */
+  offboardingNote String?  @map("offboarding_note")
+  // Структуры: экзамены, документы, последняя геопозиция и офлайн-очередь —
+  // по ним не ищут и на них не накладывают ограничений
+  skillExamsJson   Json?   @map("skill_exams_json")
+  documentsJson    Json?   @map("documents_json")
+  lastGeoJson      Json?   @map("last_geo_json")
+  offlineQueueJson Json?   @map("offline_queue_json")
   status         String    @default("candidate") // candidate | checking | training | active | blocked (ТЗ 17.1)
   skillTags      String[]  @map("skill_tags") // только через экзамен (ТЗ 17.1)
-  zoneIds        String[]  @map("zone_ids") @db.Uuid
+  /**
+   * Зоны мастера — НАЗВАНИЯ районов, а не ссылки. В схеме стоял массив uuid,
+   * но справочника зон как сущности не существует: и распределение, и
+   * карточка оперируют строками «Чиланзар», «Яккасарай». Тип приведён к
+   * реальности; появится справочник — будет отдельная миграция со связью.
+   */
+  zoneIds        String[]  @map("zone_ids")
   rating         Int       @default(60) // 0–100, старт 60 (ТЗ 7.4); MVP — вручную диспетчером
   grade          String    @default("bronze") // bronze | silver | gold; доля — из грейда копией на момент закрытия
   taxMode        String    @map("tax_mode") // self_employed | gph
@@ -353,7 +382,7 @@ model MasterProfile {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
 
-  user         User                @relation(fields: [userId], references: [id])
+  user         User?               @relation(fields: [userId], references: [id])
   orders       Order[]
   affiliations MasterAffiliation[]
   passes       VisitPass[]
