@@ -135,6 +135,13 @@ model Organization {
   priceReleaseIdFrozen String?  @map("price_release_id_frozen") @db.Uuid
   terminationNote      String?  @map("termination_note")
   orgRoles      String[] @map("org_roles") // client | operator | contractor — множество (DEV-15 §1); поле `roles` занято связью UserRole
+  /**
+   * Бизнес-код: `uk1`, `bc1`. Не идентификатор строки, а то, чем организацию
+   * называют снаружи — он стоит в адресах кабинета оператора и в карточке
+   * объекта. До него контур «Дом» хранил код, а CRM о такой организации не
+   * знала: одна и та же компания существовала в системе дважды.
+   */
+  code          String?
   status        String   @default("active") // active | suspended | terminated (ТЗ 3.1)
   settingsJson  Json     @default("{}") @map("settings_json")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()

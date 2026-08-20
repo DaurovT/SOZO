@@ -271,6 +271,11 @@ export class BuildingsService {
     },
   ): { claim: ClaimRequest; frozen: boolean; building: BuildingRecord } {
     const b = this.get(tenantId, buildingId);
+    // Оператор — это организация (DEV-15 §1), а не строка в карточке объекта.
+    // До этого контур хранил только код, и выставить оператору счёт средствами
+    // CRM было нечему: контрагента не существовало. Первая же заявка на
+    // подключение заводит организацию с ролью `operator`.
+    this.crm.ensureOperator(dto.operatorOrgId, dto.operatorName);
 
     const existing = this.repo
       .claimsForBuilding(tenantId, buildingId)

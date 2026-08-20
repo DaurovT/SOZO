@@ -17,6 +17,20 @@ export interface ContractTerms {
 
 export interface OrganizationRec {
   id: string;
+  /**
+   * Бизнес-код организации: `uk1`, `bc1`. Не идентификатор строки, а то, чем
+   * её называют снаружи — он стоит в адресах кабинета (`/operator/uk1/...`)
+   * и в карточке объекта. Появился потому, что контур «Дом» опознавал
+   * оператора кодом, а CRM ничего о нём не знала: одна и та же организация
+   * существовала в системе дважды и в разных видах.
+   */
+  code?: string;
+  /**
+   * Чем организация является: клиент, оператор, подрядчик — и это множество
+   * (DEV-15 §1). Управляющая компания заказывает работы у платформы и сама
+   * обслуживает жителей, то есть одновременно клиент и оператор.
+   */
+  orgRoles: string[];
   name: string;
   inn: string;
   vatPayer: boolean;
@@ -211,7 +225,11 @@ export class CrmService implements OnModuleInit {
         () => this.orgs,
         (d) => {
           this.orgs.length = 0;
-          this.orgs.push(...((d ?? []) as OrganizationRec[]));
+          // Записи, заведённые до появления ролей, приходят без них: без
+          // подстановки первое же обращение к orgRoles упало бы на undefined
+          this.orgs.push(
+            ...((d ?? []) as OrganizationRec[]).map((o) => ({ ...o, orgRoles: o.orgRoles ?? ['client'] })),
+          );
         },
       );
       this.store.register(
@@ -268,6 +286,8 @@ export class CrmService implements OnModuleInit {
         subscriptionTiyin: o.subscriptionTiyin === null ? null : Number(o.subscriptionTiyin),
         status: o.status as OrganizationRec['status'],
         terms: (o.settingsJson ?? DEFAULT_TERMS) as unknown as ContractTerms,
+        code: o.code ?? undefined,
+        orgRoles: o.orgRoles?.length ? o.orgRoles : ['client'],
         priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? undefined,
         terminationNote: o.terminationNote ?? undefined,
         createdAt: o.createdAt.toISOString(),
@@ -338,6 +358,8 @@ export class CrmService implements OnModuleInit {
           priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? null,
           terminationNote: o.terminationNote ?? null,
           status: o.status,
+          code: o.code ?? null,
+          orgRoles: o.orgRoles ?? ['client'],
           settingsJson: o.terms as unknown as object,
           createdAt: new Date(o.createdAt),
         },
@@ -351,6 +373,8 @@ export class CrmService implements OnModuleInit {
           priceReleaseIdFrozen: o.priceReleaseIdFrozen ?? null,
           terminationNote: o.terminationNote ?? null,
           status: o.status,
+          code: o.code ?? null,
+          orgRoles: o.orgRoles ?? ['client'],
           settingsJson: o.terms as unknown as object,
         },
       });
@@ -562,9 +586,13 @@ export class CrmService implements OnModuleInit {
     return o;
   }
 
-  create(data: Pick<OrganizationRec, 'name' | 'inn' | 'vatPayer' | 'contractType' | 'contractKind' | 'subscriptionTiyin'>): OrganizationRec {
+  create(
+    data: Pick<OrganizationRec, 'name' | 'inn' | 'vatPayer' | 'contractType' | 'contractKind' | 'subscriptionTiyin'> &
+      Partial<Pick<OrganizationRec, 'code' | 'orgRoles'>>,
+  ): OrganizationRec {
     const org: OrganizationRec = {
       id: uuidv7(),
+      orgRoles: ['client'],
       ...data,
       status: 'active',
       terms: structuredClone(DEFAULT_TERMS),
@@ -573,6 +601,45 @@ export class CrmService implements OnModuleInit {
     };
     this.orgs.push(org);
     this.persistAll();
+    return org;
+  }
+
+  /** Организация по бизнес-коду: им оператор адресуется снаружи */
+  byCode(code: string): OrganizationRec | undefined {
+    return this.orgs.find((o) => o.code === code);
+  }
+
+  /**
+   * Организация-оператор по коду: находит или заводит.
+   *
+   * Контур «Дом» получает код оператора извне и до сих пор хранил только его,
+   * не создавая организацию. Из-за этого оператору нельзя было выставить счёт
+   * и посчитать нетто-расчёт средствами CRM: сущности не существовало. Теперь
+   * первая же операция с кодом заводит организацию с ролью `operator`, и
+   * дальше это обычный контрагент.
+   *
+   * Реквизиты пустые намеренно: их заполняет админ при подключении, а
+   * выдумывать ИНН за оператора нельзя — по нему выставляют счета.
+   */
+  ensureOperator(code: string, name?: string): OrganizationRec {
+    const found = this.byCode(code);
+    if (found) {
+      if (!found.orgRoles.includes('operator')) {
+        found.orgRoles.push('operator');
+        this.persistAll();
+      }
+      return found;
+    }
+    const org = this.create({
+      name: name?.trim() || `Оператор ${code}`,
+      inn: '',
+      vatPayer: false,
+      contractType: 'subscription',
+      contractKind: 'monthly',
+      subscriptionTiyin: null,
+      code,
+      orgRoles: ['operator'],
+    });
     return org;
   }
 
