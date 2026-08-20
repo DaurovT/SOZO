@@ -455,6 +455,123 @@ model PriceItem {
   @@map("price_item")
 }
 
+// ---------- Контур «Дом»: сущности, которых не было в схеме ----------
+
+/**
+ * Прайс эксплуатирующей организации. Свой, а не платформенный: оператор
+ * обслуживает жителей по своим ценам, и подменять их прайсом платформы —
+ * значит выставить чужие деньги за свою работу.
+ */
+model OperatorPriceItem {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  operatorOrgId  String   @map("operator_org_id") @db.Uuid
+  /** null — прайс на все объекты оператора; иначе переопределение на объект */
+  buildingId     String?  @map("building_id") @db.Uuid
+  name           String
+  unit           String
+  priceFromTiyin BigInt   @map("price_from_tiyin")
+  priceToTiyin   BigInt   @map("price_to_tiyin")
+  scope          String
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, operatorOrgId])
+  @@map("operator_price_item")
+}
+
+/** Заявка оператора на подключение объекта: проверяется модератором (A-39) */
+model BuildingClaim {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  buildingId     String    @map("building_id") @db.Uuid
+  operatorOrgId  String    @map("operator_org_id") @db.Uuid
+  operatorName   String    @map("operator_name")
+  applicantPhone String    @map("applicant_phone")
+  documentKind   String    @map("document_kind")
+  documentId     String?   @map("document_id")
+  contactPhone   String?   @map("contact_phone")
+  status         String    @default("pending")
+  callbackResult String?   @map("callback_result")
+  decisionBy     String?   @map("decision_by")
+  decisionAt     DateTime? @map("decision_at") @db.Timestamptz()
+  decisionReason String?   @map("decision_reason")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, status])
+  @@map("building_claim")
+}
+
+/**
+ * Спрос по адресу: житель просит подключить свой дом. Повторные обращения
+ * усиливают один адрес, а не плодят строки — по этому счётчику решают,
+ * куда идти продавать.
+ */
+model DemandSignal {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  address   String
+  phone     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, address])
+  @@map("demand_signal")
+}
+
+/** Маршрут обхода: периодичность и зоны (M-48) */
+model WalkthroughRoute {
+  id           String    @id @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  buildingId   String    @map("building_id") @db.Uuid
+  name         String
+  intervalDays Int       @map("interval_days")
+  zoneKeys     String[]  @map("zone_keys")
+  lastWalkAt   DateTime? @map("last_walk_at") @db.Timestamptz()
+  isActive     Boolean   @default(true) @map("is_active")
+
+  @@index([tenantId, buildingId])
+  @@map("walkthrough_route")
+}
+
+/** Пройденный обход: кто, когда, какие зоны и что зафиксировал */
+model Walkthrough {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  buildingId     String    @map("building_id") @db.Uuid
+  routeId        String    @map("route_id") @db.Uuid
+  routeName      String    @map("route_name")
+  walkerPhone    String    @map("walker_phone")
+  startedAt      DateTime  @map("started_at") @db.Timestamptz()
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz()
+  passedZones    String[]  @map("passed_zones")
+  observationIds String[]  @map("observation_ids") @db.Uuid
+
+  @@index([tenantId, buildingId])
+  @@map("walkthrough")
+}
+
+/**
+ * Сессия планового ТО (M-47). Отдельная сущность, а не поле у оборудования:
+ * `last_service_at` отвечает «когда», а надзору нужен ответ «что именно
+ * проверили и кто» — с отметками по пунктам и фото.
+ */
+model MaintenanceSession {
+  id             String    @id @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  buildingId     String    @map("building_id") @db.Uuid
+  equipmentId    String    @map("equipment_id") @db.Uuid
+  /** копия типа на момент работы: регламент может смениться, запись — нет */
+  equipmentType  String    @map("equipment_type")
+  masterPhone    String    @map("master_phone")
+  startedAt      DateTime  @map("started_at") @db.Timestamptz()
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz()
+  itemsJson      Json      @default("[]") @map("items_json")
+  observationIds String[]  @map("observation_ids") @db.Uuid
+
+  @@index([tenantId, equipmentId])
+  @@map("maintenance_session")
+}
+
 // ---------- Заявка (центральная сущность, ТЗ 3.4) ----------
 
 model Order {
@@ -990,7 +1107,7 @@ model Building {
   id                 String                   @id @db.Uuid
   tenantId           String                   @map("tenant_id") @db.Uuid
   operatorOrgId      String?                  @map("operator_org_id") @db.Uuid
-  cityId             String                   @map("city_id") @db.Uuid
+  cityId             String?                   @map("city_id") @db.Uuid
   name               String
   address            String
   geoPolygon         Json                     @default("{}") @map("geo_polygon")
@@ -1029,6 +1146,26 @@ model Building {
   @@index([tenantId, connectionStatus])
   @@index([tenantId, cityId])
   @@map("building")
+  /**
+   * Часы работы службы и часы, когда разрешены шумные работы. Разные вещи:
+   * консьерж на месте с 8 до 20, а сверлить можно с 10 до 18 — наряд вне
+   * этого окна не согласуется, и без обоих интервалов правило не проверить.
+   */
+  workFrom  String? @map("work_from")
+  workTo    String? @map("work_to")
+  noiseFrom String? @map("noise_from")
+  noiseTo   String? @map("noise_to")
+
+  /**
+   * Счётчики деградации за 30 дней (DEV-15 §9.3). Держатся колонками, а не
+   * считаются запросом: по ним принимается решение о переводе объекта в
+   * деградированный режим, и оно должно быть воспроизводимым, а не зависеть
+   * от того, когда посмотрели.
+   */
+  permitsTotal30d     Int @default(0) @map("permits_total_30d")
+  permitsOverdue30d   Int @default(0) @map("permits_overdue_30d")
+  emergencyOverdue30d Int @default(0) @map("emergency_overdue_30d")
+
 }
 
 model Unit {

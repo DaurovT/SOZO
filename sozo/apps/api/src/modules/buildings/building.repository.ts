@@ -1,4 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 import type { BuildingConnectionStatus, ObservationSeverity, ObservationSource } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
 
@@ -76,7 +79,7 @@ export interface BuildingStaffRecord {
  * в той же стори, что и остальные (DEV-15 §14, M7-E0-S3).
  */
 @Injectable()
-export class InMemoryBuildingRepository {
+export class InMemoryBuildingRepository implements OnModuleInit {
   private buildings = new Map<string, BuildingRecord>();
   private units = new Map<string, UnitRecord>();
   private zones = new Map<string, CommonZoneRecord>();
@@ -92,8 +95,13 @@ export class InMemoryBuildingRepository {
   private walks = new Map<string, WalkthroughRecord>();
   private maintenance = new Map<string, MaintenanceRecord>();
 
-  constructor(store: StateStore) {
-    store.register(
+  private readonly store: StateStore;
+  private loaded = false;
+  private timer: NodeJS.Timeout | null = null;
+
+  constructor(store: StateStore, private readonly prisma: PrismaService) {
+    this.store = store;
+    if (!this.prisma.enabled) store.register(
       'buildings',
       () => ({
         buildings: [...this.buildings.values()],
@@ -146,7 +154,162 @@ export class InMemoryBuildingRepository {
     );
   }
 
+
+  /**
+   * Загрузка и запись при работе на базе.
+   *
+   * Репозиторий держит четырнадцать коллекций, и точечная запись потребовала бы
+   * знать, что именно изменилось, — то есть второй модели предметной области.
+   * Поэтому запись отложенная и полная, ровно как делает файловое хранилище,
+   * которое переписывает весь снимок. Объектов в системе единицы, коллекции
+   * мелкие: цена этого решения — доли секунды раз в полсекунды.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) {
+      this.loaded = true;
+      return;
+    }
+    const d = await this.prisma.withContext(async (tx) => ({
+      buildings: await tx.building.findMany(),
+      opPrices: await tx.operatorPriceItem.findMany(),
+      claims: await tx.buildingClaim.findMany(),
+      demand: await tx.demandSignal.findMany(),
+      routes: await tx.walkthroughRoute.findMany(),
+      walks: await tx.walkthrough.findMany(),
+      maintenance: await tx.maintenanceSession.findMany(),
+    }));
+    const rows = d.buildings.length + d.opPrices.length + d.claims.length + d.demand.length;
+    if (rows === 0 && this.buildings.size === 0) {
+      this.loaded = true;
+      return;
+    }
+    if (d.buildings.length) {
+      // База — источник истины: то, что собрано в конструкторе, замещается
+      this.buildings.clear();
+      for (const b of d.buildings) this.buildings.set(b.id, fromDbBuilding(b));
+    }
+    this.opPrices.clear();
+    for (const x of d.opPrices) this.opPrices.set(x.id, fromDbOpPrice(x));
+    this.claims.clear();
+    for (const x of d.claims) this.claims.set(x.id, fromDbClaim(x));
+    this.demand.clear();
+    for (const x of d.demand) this.demand.set(x.id, { id: x.id, tenantId: APP_TENANT, address: x.address, phone: x.phone, createdAt: x.createdAt.toISOString() } as DemandSignal);
+    this.routes.clear();
+    for (const x of d.routes) this.routes.set(x.id, fromDbRoute(x));
+    this.walks.clear();
+    for (const x of d.walks) this.walks.set(x.id, fromDbWalk(x));
+    this.maintenance.clear();
+    for (const x of d.maintenance) this.maintenance.set(x.id, fromDbMaintenance(x));
+    this.loaded = true;
+    // eslint-disable-next-line no-console
+    console.log(`[Buildings] из базы: объектов ${this.buildings.size}, обходов ${this.walks.size}, сессий ТО ${this.maintenance.size}`);
+  }
+
+  /**
+   * Запись без задержки, в отличие от файлового хранилища.
+   *
+   * Отложенная запись здесь создаёт гонку: на объект ссылается заявка через
+   * внешний ключ, и созданная сразу после объекта заявка упиралась в строку,
+   * которой в базе ещё нет. Полсекунды дебаунса — это десятки запросов.
+   * Поэтому пишем сразу, а последовательность гарантируется цепочкой
+   * промисов: вторая запись ждёт первую, а не идёт параллельно.
+   */
+  private writing: Promise<void> = Promise.resolve();
+
+  private scheduleWrite(): void {
+    if (!this.prisma.enabled || !this.loaded) return;
+    this.writing = this.writing
+      .then(() => this.writeAll())
+      .catch((e: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error('[Buildings] запись в базу не удалась:', (e as Error).message);
+      });
+  }
+
+  private async writeAll(): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    await this.prisma.withContext(async (tx) => {
+      for (const b of this.buildings.values()) {
+        const data = {
+          name: b.name,
+          address: b.address,
+          connectionStatus: b.connectionStatus,
+          operatorOrgId: b.operatorOrgId ?? null,
+          emergencyPhone: b.emergencyPhone ?? null,
+          dispatchPhone: b.dispatchPhone ?? null,
+          serviceFeeBps: b.serviceFeeBps ?? 0,
+          workFrom: b.workFrom ?? null,
+          workTo: b.workTo ?? null,
+          noiseFrom: b.noiseFrom ?? null,
+          noiseTo: b.noiseTo ?? null,
+          permitsTotal30d: b.permitsTotal30d ?? 0,
+          permitsOverdue30d: b.permitsOverdue30d ?? 0,
+          emergencyOverdue30d: b.emergencyOverdue30d ?? 0,
+        };
+        await tx.building.upsert({ where: { id: b.id }, create: { id: b.id, tenantId, ...data }, update: data });
+      }
+      await tx.operatorPriceItem.deleteMany({});
+      for (const x of this.opPrices.values()) {
+        await tx.operatorPriceItem.create({
+          data: {
+            id: x.id, tenantId, operatorOrgId: x.operatorOrgId, buildingId: x.buildingId,
+            name: x.name, unit: x.unit, priceFromTiyin: BigInt(x.priceFromTiyin),
+            priceToTiyin: BigInt(x.priceToTiyin), scope: x.scope, isActive: x.isActive,
+          },
+        });
+      }
+      await tx.buildingClaim.deleteMany({});
+      for (const x of this.claims.values()) {
+        await tx.buildingClaim.create({
+          data: {
+            id: x.id, tenantId, buildingId: x.buildingId, operatorOrgId: x.operatorOrgId,
+            operatorName: x.operatorName, applicantPhone: x.applicantPhone, documentKind: x.documentKind,
+            documentId: x.documentId, contactPhone: x.contactPhone, status: x.status,
+            callbackResult: x.callbackResult, decisionBy: x.decisionBy,
+            decisionAt: x.decisionAt ? new Date(x.decisionAt) : null, decisionReason: x.decisionReason,
+          },
+        });
+      }
+      await tx.demandSignal.deleteMany({});
+      for (const x of this.demand.values()) {
+        await tx.demandSignal.create({ data: { id: x.id, tenantId, address: x.address, phone: x.phone, createdAt: new Date(x.createdAt) } });
+      }
+      await tx.walkthroughRoute.deleteMany({});
+      for (const x of this.routes.values()) {
+        await tx.walkthroughRoute.create({
+          data: {
+            id: x.id, tenantId, buildingId: x.buildingId, name: x.name, intervalDays: x.intervalDays,
+            zoneKeys: x.zoneKeys, lastWalkAt: x.lastWalkAt ? new Date(x.lastWalkAt) : null, isActive: x.isActive,
+          },
+        });
+      }
+      await tx.walkthrough.deleteMany({});
+      for (const x of this.walks.values()) {
+        await tx.walkthrough.create({
+          data: {
+            id: x.id, tenantId, buildingId: x.buildingId, routeId: x.routeId, routeName: x.routeName,
+            walkerPhone: x.walkerPhone, startedAt: new Date(x.startedAt),
+            finishedAt: x.finishedAt ? new Date(x.finishedAt) : null,
+            passedZones: x.passedZones, observationIds: [],
+          },
+        });
+      }
+      await tx.maintenanceSession.deleteMany({});
+      for (const x of this.maintenance.values()) {
+        await tx.maintenanceSession.create({
+          data: {
+            id: x.id, tenantId, buildingId: x.buildingId, equipmentId: x.equipmentId,
+            equipmentType: x.equipmentType, masterPhone: x.masterPhone, startedAt: new Date(x.startedAt),
+            finishedAt: x.finishedAt ? new Date(x.finishedAt) : null,
+            itemsJson: x.items as unknown as Prisma.InputJsonValue, observationIds: [],
+          },
+        });
+      }
+    });
+  }
+
   saveBuilding(b: BuildingRecord): void {
+    this.scheduleWrite();
     this.buildings.set(b.id, b);
   }
   getBuilding(tenantId: string, id: string): BuildingRecord | undefined {
@@ -169,6 +332,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveUnit(u: UnitRecord): void {
+    this.scheduleWrite();
     this.units.set(u.id, u);
   }
   getUnit(tenantId: string, id: string): UnitRecord | undefined {
@@ -187,6 +351,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveZone(z: CommonZoneRecord): void {
+    this.scheduleWrite();
     this.zones.set(z.id, z);
   }
   listZones(tenantId: string, buildingId: string): CommonZoneRecord[] {
@@ -197,6 +362,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveStaff(s: BuildingStaffRecord): void {
+    this.scheduleWrite();
     this.staff.set(s.id, s);
   }
   listStaff(tenantId: string, buildingId: string, role?: BuildingStaffRecord['staffRole']): BuildingStaffRecord[] {
@@ -206,6 +372,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveObservation(o: ObservationRecord): void {
+    this.scheduleWrite();
     this.observations.set(o.id, o);
   }
   getObservation(tenantId: string, id: string): ObservationRecord | undefined {
@@ -226,6 +393,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveEquipment(e: EquipmentRecord): void {
+    this.scheduleWrite();
     this.equipment.set(e.id, e);
   }
   getEquipment(tenantId: string, id: string): EquipmentRecord | undefined {
@@ -237,6 +405,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveDefect(d: DefectRecord): void {
+    this.scheduleWrite();
     this.defects.set(d.id, d);
   }
   getDefect(tenantId: string, id: string): DefectRecord | undefined {
@@ -250,6 +419,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveOperatorPrice(x: OperatorPriceItem): void {
+    this.scheduleWrite();
     this.opPrices.set(x.id, x);
   }
   getOperatorPrice(tenantId: string, id: string): OperatorPriceItem | undefined {
@@ -268,6 +438,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveRoute(x: WalkthroughRoute): void {
+    this.scheduleWrite();
     this.routes.set(x.id, x);
   }
   getRoute(tenantId: string, id: string): WalkthroughRoute | undefined {
@@ -279,6 +450,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveMaintenance(x: MaintenanceRecord): void {
+    this.scheduleWrite();
     this.maintenance.set(x.id, x);
   }
   getMaintenance(tenantId: string, id: string): MaintenanceRecord | undefined {
@@ -293,6 +465,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveWalk(x: WalkthroughRecord): void {
+    this.scheduleWrite();
     this.walks.set(x.id, x);
   }
   getWalk(tenantId: string, id: string): WalkthroughRecord | undefined {
@@ -306,6 +479,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveClaim(c: ClaimRequest): void {
+    this.scheduleWrite();
     this.claims.set(c.id, c);
   }
   getClaim(tenantId: string, id: string): ClaimRequest | undefined {
@@ -322,6 +496,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveDemand(d: DemandSignal): void {
+    this.scheduleWrite();
     this.demand.set(d.id, d);
   }
   listDemand(tenantId: string): DemandSignal[] {
@@ -329,6 +504,7 @@ export class InMemoryBuildingRepository {
   }
 
   saveResident(r: ResidentRecord): void {
+    this.scheduleWrite();
     this.residents.set(r.id, r);
   }
   listResidents(tenantId: string, unitId: string): ResidentRecord[] {
@@ -540,4 +716,112 @@ export interface ResidentRecord {
   residentRole: 'owner' | 'tenant' | 'family';
   verifiedBy: 'operator' | 'document' | 'self' | 'crowd';
   createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Строка базы → запись приложения
+// ---------------------------------------------------------------------------
+//
+// Арендатор в приложении обозначается литералом 't0', в базе это uuid, на
+// котором стоят политики RLS. Перевод держится здесь, как и в репозитории
+// заявок: наружу отдаём то, что ожидает остальной код.
+
+const APP_TENANT = 't0';
+
+function fromDbBuilding(b: Record<string, unknown>): BuildingRecord {
+  return {
+    id: b.id as string,
+    tenantId: APP_TENANT,
+    name: b.name as string,
+    address: b.address as string,
+    connectionStatus: b.connectionStatus as BuildingRecord['connectionStatus'],
+    operatorOrgId: (b.operatorOrgId ?? null) as string | null,
+    emergencyPhone: (b.emergencyPhone ?? null) as string | null,
+    dispatchPhone: (b.dispatchPhone ?? null) as string | null,
+    serviceFeeBps: Number(b.serviceFeeBps ?? 0),
+    workFrom: (b.workFrom ?? null) as string | null,
+    workTo: (b.workTo ?? null) as string | null,
+    noiseFrom: (b.noiseFrom ?? null) as string | null,
+    noiseTo: (b.noiseTo ?? null) as string | null,
+    permitsTotal30d: Number(b.permitsTotal30d ?? 0),
+    permitsOverdue30d: Number(b.permitsOverdue30d ?? 0),
+    emergencyOverdue30d: Number(b.emergencyOverdue30d ?? 0),
+  } as unknown as BuildingRecord;
+}
+
+function fromDbOpPrice(x: Record<string, unknown>): OperatorPriceItem {
+  return {
+    id: x.id as string,
+    tenantId: APP_TENANT,
+    operatorOrgId: x.operatorOrgId as string,
+    buildingId: (x.buildingId ?? null) as string | null,
+    name: x.name as string,
+    unit: x.unit as string,
+    priceFromTiyin: Number(x.priceFromTiyin),
+    priceToTiyin: Number(x.priceToTiyin),
+    scope: x.scope as OperatorPriceItem['scope'],
+    isActive: Boolean(x.isActive),
+  };
+}
+
+function fromDbClaim(x: Record<string, unknown>): ClaimRequest {
+  return {
+    id: x.id as string,
+    tenantId: APP_TENANT,
+    buildingId: x.buildingId as string,
+    operatorOrgId: x.operatorOrgId as string,
+    operatorName: x.operatorName as string,
+    applicantPhone: x.applicantPhone as string,
+    documentKind: x.documentKind as string,
+    documentId: (x.documentId ?? null) as string | null,
+    contactPhone: (x.contactPhone ?? null) as string | null,
+    status: x.status as ClaimRequest['status'],
+    callbackResult: (x.callbackResult ?? null) as ClaimRequest['callbackResult'],
+    decisionBy: (x.decisionBy ?? null) as string | null,
+    decisionAt: (x.decisionAt as Date | null)?.toISOString() ?? null,
+    decisionReason: (x.decisionReason ?? null) as string | null,
+  } as unknown as ClaimRequest;
+}
+
+function fromDbRoute(x: Record<string, unknown>): WalkthroughRoute {
+  return {
+    id: x.id as string,
+    tenantId: APP_TENANT,
+    buildingId: x.buildingId as string,
+    name: x.name as string,
+    intervalDays: Number(x.intervalDays),
+    zoneKeys: x.zoneKeys as string[],
+    lastWalkAt: (x.lastWalkAt as Date | null)?.toISOString() ?? null,
+    isActive: Boolean(x.isActive),
+  };
+}
+
+function fromDbWalk(x: Record<string, unknown>): WalkthroughRecord {
+  return {
+    id: x.id as string,
+    tenantId: APP_TENANT,
+    buildingId: x.buildingId as string,
+    routeId: x.routeId as string,
+    routeName: x.routeName as string,
+    walkerPhone: x.walkerPhone as string,
+    startedAt: (x.startedAt as Date).toISOString(),
+    finishedAt: (x.finishedAt as Date | null)?.toISOString() ?? null,
+    passedZones: x.passedZones as string[],
+    observationIds: (x.observationIds ?? []) as string[],
+  } as unknown as WalkthroughRecord;
+}
+
+function fromDbMaintenance(x: Record<string, unknown>): MaintenanceRecord {
+  return {
+    id: x.id as string,
+    tenantId: APP_TENANT,
+    buildingId: x.buildingId as string,
+    equipmentId: x.equipmentId as string,
+    equipmentType: x.equipmentType as string,
+    masterPhone: x.masterPhone as string,
+    startedAt: (x.startedAt as Date).toISOString(),
+    finishedAt: (x.finishedAt as Date | null)?.toISOString() ?? null,
+    items: (x.itemsJson ?? []) as MaintenanceRecord['items'],
+    observationIds: (x.observationIds ?? []) as string[],
+  } as unknown as MaintenanceRecord;
 }
