@@ -28,6 +28,7 @@ import 'package:sozo_master/screens/resources_screens.dart';
 import 'package:sozo_master/screens/route_screen.dart';
 import 'package:sozo_master/screens/stages_helper_payment.dart';
 import 'package:sozo_master/screens/today_screen.dart';
+import 'package:sozo_master/screens/maintenance_screen.dart';
 import 'package:sozo_master/screens/output_screen.dart';
 import 'package:sozo_master/screens/wallet_screen.dart';
 import 'package:sozo_master/screens/walkthrough_screen.dart';
@@ -80,6 +81,11 @@ void main() {
 
     testWidgets('вход', (t) => check(t, 'Вход', const LoginScreen()));
     testWidgets('обход: объекты', (t) => check(t, 'Обход', WalkBuildingsScreen(session: session)));
+    // M-47: и выбор объекта, и сам план ТО — второй строится на пустом
+    // регламенте тоже, а это ветка, на которой экраны обычно и падают
+    testWidgets('ТО: объекты', (t) => check(t, 'ТО объекты', MaintenanceBuildingsScreen(session: session)));
+    testWidgets('ТО: план по объекту',
+        (t) => check(t, 'План ТО', MaintenanceScreen(session: session, buildingId: 'b1', buildingName: 'ЖК Тест')));
     testWidgets('обход: маршрут и чек-лист',
         (t) => check(t, 'Обход', WalkthroughScreen(session: session, buildingId: 'b1', buildingName: 'ЖК Восход')));
     testWidgets('мои замечания', (t) => check(t, 'Мои замечания', MyObservationsScreen(session: session)));

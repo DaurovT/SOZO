@@ -4,11 +4,17 @@ import '../i18n.dart';
 
 /// Ошибка API в терминах, понятных мастеру. Сервер всегда отдаёт {code, message}.
 class ApiError implements Exception {
-  ApiError(this.code, this.message, {this.statusCode});
+  ApiError(this.code, this.message, {this.statusCode, this.payload});
 
   final String code;
   final String message;
   final int? statusCode;
+
+  /// Тело ответа целиком. Сервер отдаёт не только code и message: у отказа
+  /// завершить ТО в теле лежит перечень незакрытых пунктов, и экран обязан
+  /// показать именно его, а не общую фразу. Раньше всё сверх двух полей
+  /// терялось на разборе.
+  final Map<String, dynamic>? payload;
 
   /// Сеть недоступна — операция уходит в офлайн-очередь, а не теряется
   bool get isOffline => code == 'OFFLINE';
@@ -75,6 +81,7 @@ class ApiClient {
         (inner['code'] ?? body['error'] ?? 'ERROR').toString(),
         (inner['message'] ?? _defaultMessage(r.statusCode)).toString(),
         statusCode: r.statusCode,
+        payload: Map<String, dynamic>.from(inner),
       );
     }
     throw ApiError('ERROR', _defaultMessage(r.statusCode), statusCode: r.statusCode);
@@ -307,6 +314,35 @@ class ApiClient {
 
   Future<Map<String, dynamic>> wallet({String period = 'week'}) async =>
       (await get('/master/wallet', query: {'period': period})) as Map<String, dynamic>;
+
+  // ---------- M-47 «Плановое ТО» ----------
+
+  /// План ТО по объекту: оборудование, регламенты, сроки, последние работы.
+  /// Кешируется целиком — ИТП и щитовая стоят там, где связи нет.
+  Future<Map<String, dynamic>> maintenancePlan(String buildingId) async =>
+      (await get('/master/buildings/$buildingId/maintenance')) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> startMaintenance(String equipmentId) async =>
+      (await post('/master/equipment/$equipmentId/maintenance', {})) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> markMaintenanceItem(
+    String maintenanceId, {
+    required String itemId,
+    bool done = true,
+    String? note,
+    List<String> photoIds = const [],
+  }) async =>
+      (await post('/master/maintenance/$maintenanceId/items', {
+        'itemId': itemId,
+        'done': done,
+        if (note != null && note.isNotEmpty) 'note': note,
+        'photoIds': photoIds,
+      })) as Map<String, dynamic>;
+
+  /// Завершение. При незакрытых обязательных пунктах сервер отвечает 400,
+  /// и в теле лежит их перечень — экран показывает именно его.
+  Future<Map<String, dynamic>> finishMaintenance(String maintenanceId) async =>
+      (await post('/master/maintenance/$maintenanceId/finish', {})) as Map<String, dynamic>;
 
   /// M-46 «Моя выработка» — экран сотрудника оператора вместо кошелька.
   /// Денег в ответе нет по устройству эндпоинта, не по фильтрации на клиенте.

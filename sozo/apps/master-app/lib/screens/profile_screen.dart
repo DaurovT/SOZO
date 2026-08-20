@@ -13,6 +13,7 @@ import 'badge_screen.dart';
 import 'outbox_screen.dart';
 import 'profile_extras.dart';
 import 'resources_screens.dart';
+import 'maintenance_screen.dart';
 import 'walkthrough_screen.dart';
 
 /// «Профиль» (M-39): кто вы в системе и всё, что настраивается.
@@ -102,6 +103,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               title: t('walk.obhod'),
               subtitle: t('walk.obhodTolkoDlyaShtata'),
               onTap: () => _open(WalkBuildingsScreen(session: session)),
+            ),
+            NavRow(
+              icon: 'toolbox',
+              title: t('to.title'),
+              subtitle: t('walk.obhodTolkoDlyaShtata'),
+              onTap: () => _open(MaintenanceBuildingsScreen(session: session)),
             ),
             NavRow(
               icon: 'clipboard',

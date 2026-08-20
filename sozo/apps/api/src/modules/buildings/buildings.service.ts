@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
+import { maintenanceRegulation } from '@sozo/contracts';
 import { SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus } from '../../common/event-bus';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
@@ -10,6 +11,7 @@ import {
   InMemoryBuildingRepository,
   type ObservationRecord,
   type EquipmentRecord,
+  type MaintenanceRecord,
   type DefectRecord,
   type DefectSeverity,
   type OperatorPriceItem,
@@ -831,6 +833,150 @@ export class BuildingsService {
         };
       })
       .filter((x) => x.overdue || x.dueSoon);
+  }
+
+
+  // ============================================================
+  // M-47. Плановое ТО на объекте (DEV-09)
+  // ============================================================
+
+  /** Оборудование с регламентом и историей — то, что приложение кеширует целиком */
+  maintenancePlan(tenantId: string, buildingId: string, now = new Date()) {
+    const due = this.maintenanceDue(tenantId, buildingId, 7, now);
+    return this.listEquipment(tenantId, buildingId).map((e) => {
+      const d = due.find((x) => x.equipment.id === e.id);
+      return {
+        equipment: e,
+        regulation: maintenanceRegulation(e.equipmentType) ?? null,
+        dueAt: d?.dueAt ?? null,
+        overdue: d?.overdue ?? false,
+        dueSoon: d?.dueSoon ?? false,
+        history: this.repo.listMaintenance(tenantId, e.id).slice(0, 5),
+      };
+    });
+  }
+
+  startMaintenance(tenantId: string, equipmentId: string, masterPhone: string): MaintenanceRecord {
+    const e = this.repo.getEquipment(tenantId, equipmentId);
+    if (!e) throw new NotFoundException({ code: 'EQUIPMENT_NOT_FOUND', message: 'Оборудование не найдено' });
+    if (!maintenanceRegulation(e.equipmentType)) {
+      throw new BadRequestException({
+        code: 'NO_REGULATION',
+        message: `Для типа «${e.equipmentType}» регламент не задан — обслуживание по факту, чек-листа нет`,
+      });
+    }
+    // Незавершённая сессия переиспользуется: мастер закрыл приложение в подвале
+    // и вернулся — вторая сессия по тому же оборудованию разорвала бы отметки
+    const open = this.repo
+      .listMaintenance(tenantId, equipmentId)
+      .find((m) => m.finishedAt === null && m.masterPhone === masterPhone);
+    if (open) return open;
+
+    const rec: MaintenanceRecord = {
+      id: uuidv7(),
+      tenantId,
+      buildingId: e.buildingId,
+      equipmentId,
+      equipmentType: e.equipmentType,
+      masterPhone,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      items: [],
+      observationIds: [],
+    };
+    this.repo.saveMaintenance(rec);
+    return rec;
+  }
+
+  markMaintenanceItem(
+    tenantId: string,
+    maintenanceId: string,
+    dto: { itemId: string; done: boolean; note?: string; photoIds?: string[] },
+  ): MaintenanceRecord {
+    const m = this.repo.getMaintenance(tenantId, maintenanceId);
+    if (!m) throw new NotFoundException({ code: 'MAINTENANCE_NOT_FOUND', message: 'Сессия ТО не найдена' });
+    if (m.finishedAt) {
+      throw new BadRequestException({ code: 'MAINTENANCE_FINISHED', message: 'ТО уже завершено — отметки не меняются' });
+    }
+    const reg = maintenanceRegulation(m.equipmentType);
+    if (!reg?.items.some((i) => i.id === dto.itemId)) {
+      throw new BadRequestException({ code: 'ITEM_UNKNOWN', message: 'Пункта нет в регламенте этого оборудования' });
+    }
+    // Отметка перезаписывается, а не копится: очередь офлайна может доставить
+    // один и тот же пункт дважды, и два «выполнено» в истории читаются как
+    // две проверки, которых не было
+    const mark = {
+      itemId: dto.itemId,
+      done: dto.done,
+      note: dto.note?.trim() || null,
+      photoIds: dto.photoIds ?? [],
+      at: new Date().toISOString(),
+    };
+    const idx = m.items.findIndex((i) => i.itemId === dto.itemId);
+    if (idx >= 0) m.items[idx] = mark;
+    else m.items.push(mark);
+    this.repo.saveMaintenance(m);
+    return m;
+  }
+
+  /**
+   * Завершение ТО.
+   *
+   * Отказ обязан быть перечнем, а не «заполните всё»: мастер стоит у щитовой
+   * с телефоном в одной руке и не должен сверять двенадцать пунктов глазами,
+   * гадая, какой из них не закрыт.
+   */
+  finishMaintenance(tenantId: string, maintenanceId: string): MaintenanceRecord {
+    const m = this.repo.getMaintenance(tenantId, maintenanceId);
+    if (!m) throw new NotFoundException({ code: 'MAINTENANCE_NOT_FOUND', message: 'Сессия ТО не найдена' });
+    if (m.finishedAt) return m; // идемпотентность: повтор из офлайн-очереди
+
+    const reg = maintenanceRegulation(m.equipmentType);
+    const missing: Array<{ itemId: string; label: string; reason: 'not_done' | 'photo_required' }> = [];
+    for (const item of reg?.items ?? []) {
+      if (!item.required) continue;
+      const mark = m.items.find((x) => x.itemId === item.id);
+      if (!mark?.done) {
+        missing.push({ itemId: item.id, label: item.label, reason: 'not_done' });
+      } else if (item.photo && mark.photoIds.length === 0) {
+        missing.push({ itemId: item.id, label: item.label, reason: 'photo_required' });
+      }
+    }
+    if (missing.length) {
+      throw new BadRequestException({
+        code: 'MAINTENANCE_INCOMPLETE',
+        message: `Не закрыто обязательных пунктов: ${missing.length}`,
+        missing,
+      });
+    }
+
+    m.finishedAt = new Date().toISOString();
+    this.repo.saveMaintenance(m);
+    // Дата обслуживания двигается только по факту завершения: иначе следующий
+    // срок отсчитывался бы от начатой и брошенной сессии
+    this.markServiced(tenantId, m.equipmentId, new Date(m.finishedAt));
+    return m;
+  }
+
+  /** Единица оборудования по id — нужна, чтобы проверить права до начала работы */
+  equipmentById(tenantId: string, id: string) {
+    return this.repo.getEquipment(tenantId, id);
+  }
+
+  /** Сессия ТО по id, только чтение */
+  maintenanceById(tenantId: string, id: string) {
+    return this.repo.getMaintenance(tenantId, id);
+  }
+
+  maintenanceHistory(tenantId: string, equipmentId: string): MaintenanceRecord[] {
+    return this.repo.listMaintenance(tenantId, equipmentId);
+  }
+
+  attachObservationToMaintenance(tenantId: string, maintenanceId: string, observationId: string): void {
+    const m = this.repo.getMaintenance(tenantId, maintenanceId);
+    if (!m || m.observationIds.includes(observationId)) return;
+    m.observationIds.push(observationId);
+    this.repo.saveMaintenance(m);
   }
 
   // ============================================================

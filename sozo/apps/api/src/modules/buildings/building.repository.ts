@@ -90,6 +90,7 @@ export class InMemoryBuildingRepository {
   private residents = new Map<string, ResidentRecord>();
   private routes = new Map<string, WalkthroughRoute>();
   private walks = new Map<string, WalkthroughRecord>();
+  private maintenance = new Map<string, MaintenanceRecord>();
 
   constructor(store: StateStore) {
     store.register(
@@ -108,6 +109,7 @@ export class InMemoryBuildingRepository {
         residents: [...this.residents.values()],
         routes: [...this.routes.values()],
         walks: [...this.walks.values()],
+        maintenance: [...this.maintenance.values()],
       }),
       (data) => {
         const d = data as {
@@ -124,6 +126,7 @@ export class InMemoryBuildingRepository {
           residents?: ResidentRecord[];
           routes?: WalkthroughRoute[];
           walks?: WalkthroughRecord[];
+          maintenance?: MaintenanceRecord[];
         };
         this.buildings = new Map((d.buildings ?? []).map((b) => [b.id, b]));
         this.units = new Map((d.units ?? []).map((u) => [u.id, u]));
@@ -138,6 +141,7 @@ export class InMemoryBuildingRepository {
         this.residents = new Map((d.residents ?? []).map((x) => [x.id, x]));
         this.routes = new Map((d.routes ?? []).map((x) => [x.id, x]));
         this.walks = new Map((d.walks ?? []).map((x) => [x.id, x]));
+        this.maintenance = new Map((d.maintenance ?? []).map((x) => [x.id, x]));
       },
     );
   }
@@ -274,6 +278,20 @@ export class InMemoryBuildingRepository {
     return [...this.routes.values()].filter((x) => x.tenantId === tenantId && x.buildingId === buildingId);
   }
 
+  saveMaintenance(x: MaintenanceRecord): void {
+    this.maintenance.set(x.id, x);
+  }
+  getMaintenance(tenantId: string, id: string): MaintenanceRecord | undefined {
+    const x = this.maintenance.get(id);
+    return x && x.tenantId === tenantId ? x : undefined;
+  }
+  /** История по оборудованию — свежие сверху: её читают, чтобы понять, что было в прошлый раз */
+  listMaintenance(tenantId: string, equipmentId: string): MaintenanceRecord[] {
+    return [...this.maintenance.values()]
+      .filter((x) => x.tenantId === tenantId && x.equipmentId === equipmentId)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+  }
+
   saveWalk(x: WalkthroughRecord): void {
     this.walks.set(x.id, x);
   }
@@ -365,6 +383,34 @@ export interface EquipmentRecord {
   lastServiceAt: string | null;
   /** газ, лифты, пожарные системы — мастерам платформы не назначается (ТЗ 17.8) */
   isLicensed: boolean;
+}
+
+/**
+ * Сессия планового ТО (M-47). Отдельная сущность, а не поле у оборудования:
+ * `lastServiceAt` отвечает на вопрос «когда», а надзору и правлению нужен
+ * ответ на «что именно проверили и кто» — с отметками по пунктам и фото.
+ */
+export interface MaintenanceRecord {
+  id: string;
+  tenantId: string;
+  buildingId: string;
+  equipmentId: string;
+  /** копия типа на момент работы: регламент может смениться, запись — нет */
+  equipmentType: string;
+  masterPhone: string;
+  startedAt: string;
+  finishedAt: string | null;
+  items: MaintenanceItemMark[];
+  /** замечания, зафиксированные в ходе ТО */
+  observationIds: string[];
+}
+
+export interface MaintenanceItemMark {
+  itemId: string;
+  done: boolean;
+  note: string | null;
+  photoIds: string[];
+  at: string;
 }
 
 export interface DefectRecord {

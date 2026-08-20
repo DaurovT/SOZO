@@ -9,6 +9,7 @@ import { AdminMasterOpsController } from './admin-master-ops.controller';
 import { MasterApiController } from './master-api.controller';
 import { MasterWalkthroughController } from './master-walkthrough.controller';
 import { MasterOutputController } from './master-output.controller';
+import { MasterMaintenanceController } from './master-maintenance.controller';
 import { MasterOpsController } from './master-ops.controller';
 import { MasterOpsService } from './master-ops.service';
 import { MasterPhotoService } from './photo.service';
@@ -137,7 +138,7 @@ class DispatchOffersController {
 @Module({
   imports: [AccessModule, BuildingsModule, OrdersModule, PricingModule, BillingModule, SchedulingModule, MastersModule, QualityModule, FieldModule, CrmModule, SlaModule,
   ],
-  controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController, MasterOutputController,
+  controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController, MasterOutputController, MasterMaintenanceController,
   ],
   providers: [MasterWalkthroughController, MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
   exports: [MasterOffersService, MasterOpsService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService],

@@ -378,3 +378,101 @@ export const permitTransitionSchema = z.object({
   photoId: z.string().uuid().optional(),
 });
 export type PermitTransitionRequest = z.infer<typeof permitTransitionSchema>;
+
+// ============================================================
+// M-47 — регламенты планового ТО (DEV-09, DEV-15 §7.1)
+// ============================================================
+
+export interface MaintenanceItem {
+  id: string;
+  label: string;
+  /**
+   * Обязательный пункт закрывает работу: без него ТО не завершается.
+   * Необязательные — это наблюдения, которые полезны, но не блокируют.
+   */
+  required: boolean;
+  /** Фото обязательно: пункт, который проверяют глазами, иначе не доказать */
+  photo: boolean;
+}
+
+export interface MaintenanceRegulation {
+  /** Тип оборудования из карточки объекта */
+  equipmentType: string;
+  label: string;
+  items: readonly MaintenanceItem[];
+}
+
+/**
+ * Регламенты обслуживания по типам оборудования.
+ *
+ * Живут здесь, а не в базе, по той же причине, что справочник зон: подписи
+ * читает и мастер в приложении, и инженер в кабинете, и разъехавшиеся копии
+ * означают спор о том, что именно было проверено. Ведение регламентов
+ * оператором — отдельная работа (A-45), и до неё это разумное умолчание,
+ * а не заглушка: пункты взяты из нормативной практики, а не выдуманы.
+ */
+export const MAINTENANCE_REGULATIONS: readonly MaintenanceRegulation[] = [
+  {
+    equipmentType: 'lift',
+    label: 'Лифт',
+    items: [
+      { id: 'lift_doors',    label: 'Двери кабины и шахты: зазоры, реверс',  required: true,  photo: true },
+      { id: 'lift_stop',     label: 'Точность остановки на этажах',           required: true,  photo: false },
+      { id: 'lift_alarm',    label: 'Связь с диспетчером из кабины',          required: true,  photo: false },
+      { id: 'lift_machine',  label: 'Машинное помещение: чистота, доступ',    required: true,  photo: true },
+      { id: 'lift_ropes',    label: 'Тяговые канаты: износ',                  required: false, photo: true },
+    ],
+  },
+  {
+    equipmentType: 'heat_point',
+    label: 'ИТП',
+    items: [
+      { id: 'itp_pressure',  label: 'Давление в контурах',                    required: true,  photo: true },
+      { id: 'itp_temp',      label: 'Температурный график',                   required: true,  photo: true },
+      { id: 'itp_pumps',     label: 'Насосы: шум, вибрация, подтёки',         required: true,  photo: false },
+      { id: 'itp_valves',    label: 'Запорная арматура: ход, герметичность',  required: false, photo: false },
+    ],
+  },
+  {
+    equipmentType: 'fire_system',
+    label: 'Пожарная система',
+    items: [
+      { id: 'fire_panel',    label: 'Приёмно-контрольный прибор: исправность', required: true,  photo: true },
+      { id: 'fire_sensors',  label: 'Извещатели: контрольный запуск',          required: true,  photo: false },
+      { id: 'fire_hydrant',  label: 'Пожарные краны: укомплектованность',      required: true,  photo: true },
+      { id: 'fire_exits',    label: 'Пути эвакуации свободны',                 required: true,  photo: true },
+    ],
+  },
+  {
+    equipmentType: 'electrical_panel',
+    label: 'Электрощитовая',
+    items: [
+      { id: 'panel_heat',    label: 'Нагрев контактов и автоматов',           required: true,  photo: true },
+      { id: 'panel_seal',    label: 'Замок и пломбы целы',                    required: true,  photo: true },
+      { id: 'panel_marks',   label: 'Маркировка линий читается',              required: false, photo: false },
+    ],
+  },
+  {
+    equipmentType: 'water_pump',
+    label: 'Насосная',
+    items: [
+      { id: 'pump_run',      label: 'Пробный пуск каждого насоса',            required: true,  photo: false },
+      { id: 'pump_leak',     label: 'Подтёки и состояние сальников',          required: true,  photo: true },
+      { id: 'pump_auto',     label: 'Автоматика включения резерва',           required: false, photo: false },
+    ],
+  },
+  {
+    equipmentType: 'ventilation',
+    label: 'Вентиляция и дымоудаление',
+    items: [
+      { id: 'vent_start',    label: 'Запуск вентилятора дымоудаления',        required: true,  photo: false },
+      { id: 'vent_dampers',  label: 'Клапаны: ход и фиксация',                required: true,  photo: true },
+      { id: 'vent_filters',  label: 'Фильтры и решётки: загрязнение',         required: false, photo: true },
+    ],
+  },
+];
+
+/** Регламент по типу оборудования; неизвестный тип — без чек-листа, а не с пустым */
+export function maintenanceRegulation(equipmentType: string): MaintenanceRegulation | undefined {
+  return MAINTENANCE_REGULATIONS.find((r) => r.equipmentType === equipmentType);
+}

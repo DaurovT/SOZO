@@ -763,6 +763,93 @@ async function main() {
   const row2 = (await call('/buildings/demand', { token: t })).body.find((x) => x.address === demandAddr);
   check('повторное обращение усиливает тот же адрес, а не плодит строку', row2?.count === 2, JSON.stringify(row2));
 
+  group('22. M-47 — плановое ТО на объекте');
+
+  // Оборудование заводит оператор в паспорте объекта (U-08); мастер его обслуживает
+  const lift = (await call(`/buildings/${uk}/equipment`, {
+    token: t,
+    body: { equipmentType: 'lift', model: 'OTIS Gen2', serial: 'L-2201', commissionedAt: '2020-03-01', intervalDays: 30 },
+  })).body;
+  check('оборудование заведено в паспорте объекта', Boolean(lift.id), JSON.stringify(lift).slice(0, 80));
+
+  const plan = (await call(`/master/buildings/${uk}/maintenance`, { token: mt })).body;
+  const liftPlan = (plan.equipment ?? []).find((x) => x.equipment?.id === lift.id);
+  check('план ТО едет мастеру', Boolean(liftPlan), String(plan.equipment?.length));
+  // Регламент кешируется целиком: ИТП и щитовая стоят там, где связи нет
+  check('регламент приезжает вместе с оборудованием', (liftPlan?.regulation?.items ?? []).length > 0,
+    String(liftPlan?.regulation?.items?.length));
+  check('карточка несёт модель и серийник', liftPlan?.equipment?.model === 'OTIS Gen2' && liftPlan?.equipment?.serial === 'L-2201');
+
+  const ses = (await call(`/master/equipment/${lift.id}/maintenance`, { token: mt, method: 'POST' })).body;
+  check('сессия ТО начата', Boolean(ses.id) && ses.finishedAt === null, JSON.stringify(ses).slice(0, 80));
+
+  // Повторный вызов не должен рвать уже проставленные отметки: мастер закрыл
+  // приложение в подвале и вернулся
+  const ses2 = (await call(`/master/equipment/${lift.id}/maintenance`, { token: mt, method: 'POST' })).body;
+  check('повторный старт возвращает ту же сессию, а не новую', ses2.id === ses.id, `${ses.id} / ${ses2.id}`);
+
+  // Главное требование экрана: отказ перечнем, а не «заполните всё»
+  const notClosed = await call(`/master/maintenance/${ses.id}/finish`, { token: mt, method: 'POST' });
+  const missing = notClosed.body?.message?.missing ?? notClosed.body?.missing ?? [];
+  check('незакрытое ТО не завершается', notClosed.status >= 400, String(notClosed.status));
+  check('отказ приходит перечнем пунктов, а не общей фразой', Array.isArray(missing) && missing.length > 0, JSON.stringify(notClosed.body).slice(0, 140));
+  check('в перечне есть подписи пунктов, а не только коды', missing.every((x) => typeof x.label === 'string' && x.label.length > 0), JSON.stringify(missing).slice(0, 140));
+
+  const reqItems = liftPlan.regulation.items.filter((i) => i.required);
+
+  // Пункт с обязательным фото, отмеченный без фото, обязан остаться в перечне
+  const photoItem = reqItems.find((i) => i.photo);
+  await call(`/master/maintenance/${ses.id}/items`, { token: mt, body: { itemId: photoItem.id, done: true } });
+  const stillMissing = (await call(`/master/maintenance/${ses.id}/finish`, { token: mt, method: 'POST' })).body;
+  const sm = stillMissing?.message?.missing ?? stillMissing?.missing ?? [];
+  check('отметка без обязательного фото не закрывает пункт',
+    sm.some((x) => x.itemId === photoItem.id && x.reason === 'photo_required'), JSON.stringify(sm).slice(0, 140));
+
+  for (const i of reqItems) {
+    await call(`/master/maintenance/${ses.id}/items`, {
+      token: mt, body: { itemId: i.id, done: true, photoIds: i.photo ? [uuid()] : [] },
+    });
+  }
+
+  // Повторная доставка из офлайн-очереди не должна выглядеть второй проверкой
+  await call(`/master/maintenance/${ses.id}/items`, {
+    token: mt, body: { itemId: reqItems[0].id, done: true, photoIds: [uuid()] },
+  });
+  const afterDup = (await call(`/master/equipment/${lift.id}/maintenance`, { token: mt })).body.history[0];
+  check('повторная отметка перезаписывает пункт, а не копится',
+    afterDup.items.filter((x) => x.itemId === reqItems[0].id).length === 1,
+    String(afterDup.items.length));
+
+  const done = (await call(`/master/maintenance/${ses.id}/finish`, { token: mt, method: 'POST' })).body;
+  check('ТО завершается, когда обязательные пункты закрыты', Boolean(done.finishedAt), JSON.stringify(done).slice(0, 100));
+
+  const eqAfter = (await call(`/buildings/${uk}/equipment`, { token: t })).body.find((e) => e.id === lift.id);
+  check('дата обслуживания сдвинулась по факту завершения', Boolean(eqAfter?.lastServiceAt), String(eqAfter?.lastServiceAt));
+
+  const again = await call(`/master/maintenance/${ses.id}/finish`, { token: mt, method: 'POST' });
+  check('повторное завершение идемпотентно, а не ошибка', again.status < 400, String(again.status));
+
+  const late = await call(`/master/maintenance/${ses.id}/items`, { token: mt, body: { itemId: reqItems[0].id, done: false } });
+  check('после завершения отметки не меняются', late.status >= 400, errText(late.body));
+
+  const bogus = await call(`/master/equipment/${lift.id}/maintenance`, { token: mt, method: 'POST' });
+  const bogusItem = await call(`/master/maintenance/${bogus.body.id}/items`, { token: mt, body: { itemId: 'нет-такого', done: true } });
+  check('пункт вне регламента не принимается', bogusItem.status >= 400, errText(bogusItem.body));
+
+  // Тип без регламента: обслуживание по факту, чек-листа нет — и об этом надо
+  // сказать прямо, а не отдать пустой список
+  const noReg = (await call(`/buildings/${uk}/equipment`, { token: t, body: { equipmentType: 'domofon', intervalDays: 90 } })).body;
+  const noRegStart = await call(`/master/equipment/${noReg.id}/maintenance`, { token: mt, method: 'POST' });
+  check('для типа без регламента ТО не начинается с пустым чек-листом',
+    noRegStart.status >= 400 && errText(noRegStart.body).includes('регламент'), errText(noRegStart.body));
+
+  // Чужой объект: мастер платформы не обслуживает оборудование чужой УК
+  const strangerEq = (await call(`/buildings/${strangerB.id}/equipment`, { token: t, body: { equipmentType: 'lift', intervalDays: 30 } })).body;
+  const strangerStart = await call(`/master/equipment/${strangerEq.id}/maintenance`, { token: mt, method: 'POST' });
+  check('на объекте вне штата ТО не начинается', strangerStart.status === 403, String(strangerStart.status));
+  const strangerSessions = (await call(`/master/equipment/${strangerEq.id}/maintenance`, { token: mt })).body;
+  check('и сессия при отказе не создалась', (strangerSessions.history ?? []).length === 0, String(strangerSessions.history?.length));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {
