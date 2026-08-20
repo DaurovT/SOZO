@@ -205,6 +205,28 @@ class ApiClient {
   Future<Map<String, dynamic>> myBuildingObservations() async =>
       (await get('/app/my-building/observations')) as Map<String, dynamic>;
 
+  /// C-54. Пропуск гостю: житель выписывает сам, без заявки и мастера
+  Future<Map<String, dynamic>> issueGuestPass({
+    required String guestName,
+    required String validFrom,
+    required String validTo,
+    String? carPlate,
+    String passType = 'guest',
+  }) async =>
+      (await post('/app/my-building/passes', {
+        'guestName': guestName,
+        'validFrom': validFrom,
+        'validTo': validTo,
+        if (carPlate != null && carPlate.isNotEmpty) 'carPlate': carPlate,
+        'passType': passType,
+      })) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> myGuestPasses() async =>
+      (await get('/app/my-building/passes')) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> revokeGuestPass(String id) async =>
+      (await post('/app/my-building/passes/$id/revoke', {})) as Map<String, dynamic>;
+
   /// C-53. `scope`: upcoming (по умолчанию) или history
   Future<Map<String, dynamic>> buildingShutdowns({String scope = 'upcoming'}) async =>
       (await get('/app/my-building/shutdowns', query: {'scope': scope})) as Map<String, dynamic>;

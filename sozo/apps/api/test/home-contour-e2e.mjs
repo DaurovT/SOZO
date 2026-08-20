@@ -925,6 +925,68 @@ async function main() {
   const noShut = (await call('/app/my-building/shutdowns', { token: outsider })).body;
   check('и отключения чужого дома не отдаются', (noShut.shutdowns ?? []).length === 0, String(noShut.shutdowns?.length));
 
+  group('24. C-54 — пропуск гостю, который житель выписывает сам');
+
+  const passIn = new Date(Date.now() + 3600_000).toISOString();
+  const passOut = new Date(Date.now() + 4 * 3600_000).toISOString();
+
+  const noName = await call('/app/my-building/passes', { token: rt, body: { validFrom: passIn, validTo: passOut } });
+  check('без имени гостя пропуск не выписывается', noName.status >= 400, errText(noName.body));
+
+  const badWindow = await call('/app/my-building/passes', {
+    token: rt, body: { guestName: 'Брат', validFrom: passOut, validTo: passIn },
+  });
+  check('перевёрнутое окно отклоняется', badWindow.status >= 400, errText(badWindow.body));
+
+  const tooLong = await call('/app/my-building/passes', {
+    token: rt,
+    body: { guestName: 'Брат', validFrom: passIn, validTo: new Date(Date.now() + 30 * 86400_000).toISOString() },
+  });
+  check('бессрочный пропуск не выписывается', tooLong.status >= 400, errText(tooLong.body));
+
+  const pass = (await call('/app/my-building/passes', {
+    token: rt, body: { guestName: 'Брат Азиз', validFrom: passIn, validTo: passOut, carPlate: '01A123BC' },
+  })).body;
+  check('гостевой пропуск выписан жителем', Boolean(pass.id), JSON.stringify(pass).slice(0, 100));
+  check('заявки и мастера у гостевого пропуска нет', pass.orderId === null && pass.masterId === null,
+    `${pass.orderId} / ${pass.masterId}`);
+  check('есть QR-токен и числовой код для диктовки', Boolean(pass.qrToken) && /^\d{6}$/.test(String(pass.fallbackCode)),
+    String(pass.fallbackCode));
+  check('номер квартиры подставлен из адреса жителя', pass.unitLabel === '12', String(pass.unitLabel));
+
+  // Охрана проверяет без авторизации: у поста нет учётной записи
+  const g_early = await call(`/public/passes/${pass.qrToken}`);
+  check('до начала окна пропуск не действует', g_early.body.valid === false && g_early.body.reason === 'too_early',
+    JSON.stringify(g_early.body));
+
+  const nowPass = (await call('/app/my-building/passes', {
+    token: rt,
+    body: { guestName: 'Курьер', validFrom: new Date(Date.now() - 60_000).toISOString(), validTo: passOut },
+  })).body;
+  const okCheck = (await call(`/public/passes/${nowPass.qrToken}`)).body;
+  check('действующий пропуск охрана видит', okCheck.valid === true, JSON.stringify(okCheck));
+  check('охране показано, кого ждут', okCheck.guestName === 'Курьер', String(okCheck.guestName));
+  // Правило маскировки (ТЗ 17.5) действует и здесь
+  check('телефон жителя охране не отдаётся', !('issuedByPhone' in okCheck) && !JSON.stringify(okCheck).includes('+9989'),
+    JSON.stringify(okCheck).slice(0, 140));
+
+  const byCode = (await call(`/public/passes/${nowPass.fallbackCode}`)).body;
+  check('числовой код работает наравне с QR', byCode.valid === true, JSON.stringify(byCode));
+
+  const g_unknown = (await call('/public/passes/000000')).body;
+  check('несуществующий пропуск не пускает', g_unknown.valid === false, JSON.stringify(g_unknown));
+
+  const myPasses = (await call('/app/my-building/passes', { token: rt })).body.passes ?? [];
+  check('свои пропуска видны списком', myPasses.some((p) => p.id === pass.id), String(myPasses.length));
+
+  const alien = await call(`/app/my-building/passes/${pass.id}/revoke`, { token: nt, method: 'POST' });
+  check('чужой пропуск отозвать нельзя', alien.status === 403, String(alien.status));
+
+  await call(`/app/my-building/passes/${nowPass.id}/revoke`, { token: rt, method: 'POST' });
+  const afterRevoke = (await call(`/public/passes/${nowPass.qrToken}`)).body;
+  check('отозванный пропуск перестаёт пускать', afterRevoke.valid === false && afterRevoke.reason === 'revoked',
+    JSON.stringify(afterRevoke));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

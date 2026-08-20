@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/client.dart';
 import '../design_tokens.dart';
@@ -340,5 +343,278 @@ class _BuildingShutdownsScreenState extends State<BuildingShutdownsScreen> {
         ],
       ),
     );
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// C-54. Пропуск гостю
+// ---------------------------------------------------------------------------
+
+/// Житель выписывает пропуск сам — гостю или своему подрядчику
+/// (DEV-15 §6 п.4). Это то, ради чего приложение ставят: заявку вызывают раз
+/// в полгода, а гость приезжает в субботу.
+class BuildingPassScreen extends StatefulWidget {
+  const BuildingPassScreen({super.key});
+
+  @override
+  State<BuildingPassScreen> createState() => _BuildingPassScreenState();
+}
+
+class _BuildingPassScreenState extends State<BuildingPassScreen> {
+  final _name = TextEditingController();
+  final _plate = TextEditingController();
+  DateTime _from = DateTime.now();
+  int _hours = 4;
+  String _type = 'guest';
+  bool _sending = false;
+  Map<String, dynamic>? _issued;
+  List<Map<String, dynamic>> _mine = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMine();
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _plate.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMine() async {
+    try {
+      final r = await session.api.myGuestPasses();
+      if (!mounted) return;
+      setState(() => _mine = ((r['passes'] as List?) ?? const []).cast<Map<String, dynamic>>());
+    } on ApiError {
+      // Список — не главное на этом экране: форма должна работать и без него
+    }
+  }
+
+  Future<void> _issue() async {
+    setState(() => _sending = true);
+    try {
+      final r = await session.api.issueGuestPass(
+        guestName: _name.text.trim(),
+        validFrom: _from.toUtc().toIso8601String(),
+        validTo: _from.add(Duration(hours: _hours)).toUtc().toIso8601String(),
+        carPlate: _plate.text.trim(),
+        passType: _type,
+      );
+      if (!mounted) return;
+      setState(() => _issued = r);
+      await _loadMine();
+    } on ApiError catch (e) {
+      if (mounted) showSozoToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _pickFrom() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _from,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 7)),
+    );
+    if (d == null || !mounted) return;
+    final tm = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(_from));
+    if (tm == null || !mounted) return;
+    setState(() => _from = DateTime(d.year, d.month, d.day, tm.hour, tm.minute));
+  }
+
+  /// Код диктуют голосом и вводят руками — разбивка по три знака обязательна
+  String _grouped(String code) {
+    final b = StringBuffer();
+    for (var i = 0; i < code.length; i++) {
+      if (i > 0 && i % 3 == 0) b.write(' ');
+      b.write(code[i]);
+    }
+    return b.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SozoColors.bg,
+      appBar: SozoAppBar(title: t('c54.title')),
+      body: _issued != null ? _result(_issued!) : _form(),
+    );
+  }
+
+  Widget _form() {
+    final ready = _name.text.trim().isNotEmpty && !_sending;
+    return ListView(
+      padding: const EdgeInsets.all(SozoSpace.s16),
+      children: [
+        SozoCard(
+          children: [
+            SozoField(
+              label: t('c54.kogoZhdete'),
+              controller: _name,
+              hint: t('c54.imyaHint'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: SozoSpace.s8),
+            SozoField(label: t('c54.avto'), controller: _plate, hint: t('c54.neobyazatelno')),
+          ],
+        ),
+        const SizedBox(height: SozoSpace.s12),
+        SozoCard(
+          children: [
+            CardTitle(t('c54.kogda')),
+            NavRow(
+              icon: 'calendar',
+              title: t('c54.nachalo'),
+              value: '${_from.day.toString().padLeft(2, '0')}.${_from.month.toString().padLeft(2, '0')}'
+                  ' ${_from.hour.toString().padLeft(2, '0')}:${_from.minute.toString().padLeft(2, '0')}',
+              onTap: _pickFrom,
+            ),
+            const SizedBox(height: SozoSpace.s8),
+            Text(t('c54.naskolko'), style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary)),
+            const SizedBox(height: SozoSpace.s8),
+            Wrap(
+              spacing: SozoSpace.s8,
+              children: [
+                for (final h in const [2, 4, 8, 24])
+                  SozoChip('$h ${t('c54.ch')}', selected: _hours == h, onTap: () => setState(() => _hours = h)),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: SozoSpace.s12),
+        SozoCard(
+          children: [
+            CardTitle(t('c54.kto')),
+            Wrap(
+              spacing: SozoSpace.s8,
+              children: [
+                SozoChip(t('c54.gost'), selected: _type == 'guest', onTap: () => setState(() => _type = 'guest')),
+                SozoChip(t('c54.podryadchik'),
+                    selected: _type == 'resident_contractor',
+                    onTap: () => setState(() => _type = 'resident_contractor')),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: SozoSpace.s16),
+        PrimaryButton(t('c54.vypisat'), onTap: ready ? _issue : null),
+        if (_mine.isNotEmpty) ...[
+          const SizedBox(height: SozoSpace.s24),
+          SectionHeading(t('c54.vypisannye')),
+          for (final p in _mine) _passRow(p),
+        ],
+      ],
+    );
+  }
+
+  Widget _passRow(Map<String, dynamic> p) {
+    final revoked = p['status'] == 'revoked';
+    return SozoCard(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${p['guestName'] ?? ''}',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        decoration: revoked ? TextDecoration.lineThrough : null,
+                      )),
+                  Text('${'${p['validTo'] ?? ''}'.split('T').first} · ${_grouped('${p['fallbackCode'] ?? ''}')}',
+                      style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
+                ],
+              ),
+            ),
+            if (!revoked)
+              TextAction(
+                t('c54.otozvat'),
+                onTap: () async {
+                  await session.api.revokeGuestPass('${p['id']}');
+                  await _loadMine();
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _result(Map<String, dynamic> p) {
+    final code = '${p['fallbackCode'] ?? ''}';
+    final token = '${p['qrToken'] ?? ''}';
+    return ListView(
+      padding: const EdgeInsets.all(SozoSpace.s16),
+      children: [
+        SozoCard(
+          children: [
+            Center(
+              child: Text('${p['guestName'] ?? ''}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(height: SozoSpace.s16),
+            // QR не меньше 240: охрана сканирует с чужого телефона, часто
+            // на солнце и через плёнку
+            Center(
+              child: SizedBox(
+                width: 240,
+                height: 240,
+                child: QrImageView(
+                  data: token,
+                  version: QrVersions.auto,
+                  backgroundColor: SozoColors.surface,
+                ),
+              ),
+            ),
+            const SizedBox(height: SozoSpace.s16),
+            Center(
+              child: Text(
+                _grouped(code),
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+            Center(
+              child: Text(t('c54.kodDlyaOhrany'),
+                  style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
+            ),
+          ],
+        ),
+        const SizedBox(height: SozoSpace.s16),
+        PrimaryButton(t('c54.podelitsya'), onTap: () => _share(p, code)),
+        const SizedBox(height: SozoSpace.s8),
+        SecondaryButton(t('c54.skopirovat'), onTap: () async {
+          await Clipboard.setData(ClipboardData(text: code));
+          if (mounted) showSozoToast(context, t('c54.skopirovano'));
+        }),
+        const SizedBox(height: SozoSpace.s8),
+        TextAction(t('c54.vypisatEshyo'), onTap: () => setState(() => _issued = null)),
+      ],
+    );
+  }
+
+  Future<void> _share(Map<String, dynamic> p, String code) async {
+    // SMS, а не системный лист: гостю всё равно нужен текст с кодом, а лишний
+    // пакет ради одного действия того не стоит
+    final until = '${p['validTo'] ?? ''}'.split('T').first;
+    final text = t('c54.smsText', {'p1': code, 'p2': until});
+    final uri = Uri.parse('sms:?body=${Uri.encodeComponent(text)}');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else if (mounted) {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) showSozoToast(context, t('c54.skopirovano'));
+    }
   }
 }

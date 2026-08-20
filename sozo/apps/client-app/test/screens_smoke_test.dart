@@ -264,6 +264,7 @@ void main() {
     // отдаёт непустой список, но экран обязан пережить и пустой справочник
     testWidgets('дом: проблема в доме', (t) => check(t, 'Проблема в доме', const BuildingReportScreen()));
     testWidgets('дом: отключения', (t) => check(t, 'Отключения', const BuildingShutdownsScreen()));
+    testWidgets('дом: пропуск гостю', (t) => check(t, 'Пропуск гостю', const BuildingPassScreen()));
     testWidgets('витрина экранов', (t) => check(t, 'Витрина', const ShowcaseScreen()));
   });
 }

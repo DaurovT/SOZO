@@ -155,8 +155,7 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
 
   /// Быстрые действия. Карточка была снята, когда её кнопки вели на
   /// несуществующие именованные маршруты и роняли приложение; возвращена
-  /// вместе с экранами C-52 и C-53. Пропуск гостю (C-54) ещё не сделан и
-  /// поэтому здесь не показывается: кнопка-заглушка хуже её отсутствия.
+  /// вместе с экранами C-52, C-53 и C-54.
   Widget _actionsBlock(Map<String, dynamic>? d) {
     return SozoCard(
       children: [
@@ -177,6 +176,13 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
               await _load();
             }
           },
+        ),
+        NavRow(
+          icon: 'id-card',
+          title: t('c54.title'),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const BuildingPassScreen()),
+          ),
         ),
         NavRow(
           icon: 'zap',

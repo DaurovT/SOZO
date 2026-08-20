@@ -68,6 +68,28 @@ final l10n = L10n();
 String t(String key, [Map<String, Object?>? args]) => l10n.t(key, args);
 
 const _uz = <String, String>{
+  'c54.title': 'Mehmon uchun ruxsatnoma',
+  'c54.kogoZhdete': 'Kimni kutyapsiz',
+  'c54.imyaHint': 'Mehmon yoki pudratchi ismi',
+  'c54.avto': 'Avtomobil raqami',
+  'c54.neobyazatelno': 'majburiy emas',
+  'c54.kogda': 'Qachon',
+  'c54.nachalo': 'Boshlanishi',
+  'c54.naskolko': 'Qancha vaqtga',
+  'c54.ch': 'soat',
+  'c54.kto': 'Bu kim',
+  'c54.gost': 'Mehmon',
+  'c54.podryadchik': 'Mening pudratchim',
+  'c54.vypisat': 'Ruxsatnoma berish',
+  'c54.vypisannye': 'Berilgan ruxsatnomalar',
+  'c54.otozvat': 'Bekor qilish',
+  'c54.kodDlyaOhrany': 'QR o‘qilmasa, qo‘riqchi uchun kod',
+  'c54.podelitsya': 'Ulashish',
+  'c54.skopirovat': 'Kodni nusxalash',
+  'c54.skopirovano': 'Nusxalandi',
+  'c54.vypisatEshyo': 'Yana berish',
+  'c54.smsText': 'Ruxsatnomangiz: {p1}. {p2} gacha amal qiladi. Qo‘riqchiga QR ko‘rsating yoki kodni ayting.',
+
   'building.soobshitUk': 'Foto va turkum — uch qadam',
 
   'c52.title': 'Uydagi muammo',
@@ -933,6 +955,28 @@ const _uz = <String, String>{
 /// Ключи те же, что в русском словаре: пропуск отдаёт русскую строку, а не
 /// пустоту (см. `L10n.t`).
 const _en = <String, String>{
+  'c54.title': 'Guest pass',
+  'c54.kogoZhdete': 'Who are you expecting',
+  'c54.imyaHint': 'Guest or contractor name',
+  'c54.avto': 'Car plate',
+  'c54.neobyazatelno': 'optional',
+  'c54.kogda': 'When',
+  'c54.nachalo': 'Start',
+  'c54.naskolko': 'For how long',
+  'c54.ch': 'h',
+  'c54.kto': 'Who is it',
+  'c54.gost': 'Guest',
+  'c54.podryadchik': 'My contractor',
+  'c54.vypisat': 'Issue pass',
+  'c54.vypisannye': 'Issued passes',
+  'c54.otozvat': 'Revoke',
+  'c54.kodDlyaOhrany': 'Code for security if the QR does not scan',
+  'c54.podelitsya': 'Share',
+  'c54.skopirovat': 'Copy code',
+  'c54.skopirovano': 'Copied',
+  'c54.vypisatEshyo': 'Issue another',
+  'c54.smsText': 'Your pass: {p1}. Valid until {p2}. Show the QR to security or give the code.',
+
   'building.soobshitUk': 'Photo and category — three steps',
 
   'c52.title': 'Problem in the building',
@@ -1738,6 +1782,28 @@ const _en = <String, String>{
 };
 
 const _ru = <String, String>{
+  'c54.title': 'Пропуск гостю',
+  'c54.kogoZhdete': 'Кого ждёте',
+  'c54.imyaHint': 'Имя гостя или подрядчика',
+  'c54.avto': 'Номер авто',
+  'c54.neobyazatelno': 'необязательно',
+  'c54.kogda': 'Когда',
+  'c54.nachalo': 'Начало',
+  'c54.naskolko': 'На сколько',
+  'c54.ch': 'ч',
+  'c54.kto': 'Кто это',
+  'c54.gost': 'Гость',
+  'c54.podryadchik': 'Мой подрядчик',
+  'c54.vypisat': 'Выписать пропуск',
+  'c54.vypisannye': 'Выписанные пропуска',
+  'c54.otozvat': 'Отозвать',
+  'c54.kodDlyaOhrany': 'Код для охраны, если QR не читается',
+  'c54.podelitsya': 'Поделиться',
+  'c54.skopirovat': 'Скопировать код',
+  'c54.skopirovano': 'Скопировано',
+  'c54.vypisatEshyo': 'Выписать ещё',
+  'c54.smsText': 'Ваш пропуск: {p1}. Действует до {p2}. Покажите охране QR или назовите код.',
+
   'building.soobshitUk': 'Фото и категория — три шага',
 
   'c52.title': 'Проблема в доме',

@@ -311,6 +311,60 @@ export class ClientB2CController {
     };
   }
 
+  // ---------- C-54. Пропуск гостю ----------
+
+  /**
+   * Житель выписывает пропуск сам — гостю или своему подрядчику
+   * (DEV-15 §6 п.4). Это и вовлечение (приложение ставят ради пропуска, а не
+   * ради заявки раз в полгода), и снятие антимонопольного риска: собственник
+   * вправе звать кого угодно в своё помещение.
+   */
+  @Post('my-building/passes')
+  issueGuestPass(
+    @Body() b: { guestName?: string; validFrom?: string; validTo?: string; carPlate?: string; passType?: string },
+    @Req() req: AppRequest,
+  ) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) throw new NotFoundException('Ваш дом не подключён');
+    const home = (profile.addresses ?? []).find((a) => (a as { street?: string }).street);
+    const pass = this.access.issueGuestPass('t0', {
+      buildingId: building.id,
+      issuedByPhone: phone,
+      guestName: b.guestName ?? '',
+      validFrom: b.validFrom ?? new Date().toISOString(),
+      validTo: b.validTo ?? new Date(Date.now() + 4 * 3_600_000).toISOString(),
+      carPlate: b.carPlate,
+      // Охране нужен номер квартиры, а не адрес дома, в котором она и стоит
+      unitLabel: (home as { apartment?: string } | undefined)?.apartment,
+      passType: b.passType === 'resident_contractor' ? 'resident_contractor' : 'guest',
+    });
+    this.audit.write({
+      actorPhone: phone,
+      action: 'building.guest_pass_issued',
+      entity: 'Building',
+      entityId: building.id,
+      payload: { passType: pass.passType, validTo: pass.validTo },
+    });
+    return pass;
+  }
+
+  @Get('my-building/passes')
+  myGuestPasses(@Req() req: AppRequest) {
+    const phone = this.phone(req);
+    const profile = this.profiles.get(phone);
+    const building = this.residentBuilding(profile.addresses);
+    if (!building) return { passes: [] };
+    return { passes: this.access.passesIssuedBy('t0', building.id, phone) };
+  }
+
+  /** Отозвать свой пропуск: гость не приехал или приехал не тот */
+  @Post('my-building/passes/:id/revoke')
+  revokeGuestPass(@Param('id') id: string, @Req() req: AppRequest) {
+    return this.access.revokePass('t0', id, this.phone(req));
+  }
+
   // ---------- C-53. Отключения и работы в доме ----------
 
   /**

@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createPermitStateMachine, uuidv7, type PermitContext } from '@sozo/kernel';
-import type { PermitAction } from '@sozo/contracts';
+import type { PermitAction, PassType } from '@sozo/contracts';
 import { EventBus } from '../../common/event-bus';
 import { BuildingsService } from '../buildings/buildings.service';
 import { PermitLinksService } from './permit-links.service';
@@ -344,6 +344,109 @@ export class AccessService {
     this.repo.savePass(rec);
     this.bus.publish('pass.issued', { passId: rec.id, orderId: rec.orderId, masterId: rec.masterId });
     return rec;
+  }
+
+  /**
+   * Гостевой пропуск, который житель выписывает сам (C-54, DEV-15 §6 п.4).
+   *
+   * Ни заявки, ни мастера здесь нет: человек зовёт гостя или своего подрядчика.
+   * Это не только удобство — это снятие антимонопольного риска: запрет звать
+   * чужого исполнителя создал бы эксклюзив, а правильная конструкция в том,
+   * что у наших мастеров допуск мгновенный, у чужих — обычная процедура.
+   */
+  issueGuestPass(
+    tenantId: string,
+    dto: {
+      buildingId: string;
+      issuedByPhone: string;
+      guestName: string;
+      validFrom: string;
+      validTo: string;
+      passType?: PassType;
+      carPlate?: string;
+      unitLabel?: string;
+    },
+  ): PassRecord {
+    const from = Date.parse(dto.validFrom);
+    const to = Date.parse(dto.validTo);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+      throw new BadRequestException({ code: 'WINDOW_INVALID', message: 'Окно пропуска: конец должен быть позже начала' });
+    }
+    // Неделя — предел осмысленного гостевого пропуска. Бессрочный пропуск,
+    // выписанный однажды, охрана перестаёт проверять вообще
+    if (to - from > 7 * 86_400_000) {
+      throw new BadRequestException({ code: 'WINDOW_TOO_LONG', message: 'Пропуск выписывается не больше чем на неделю' });
+    }
+    if (!dto.guestName?.trim()) {
+      throw new BadRequestException({ code: 'GUEST_NAME_REQUIRED', message: 'Укажите, кого ждёте — охране надо кого-то встретить' });
+    }
+    const rec: PassRecord = {
+      id: uuidv7(),
+      tenantId,
+      buildingId: dto.buildingId,
+      orderId: null,
+      masterId: null,
+      passType: dto.passType ?? 'guest',
+      qrToken: uuidv7().replace(/-/g, ''),
+      fallbackCode: String(Math.floor(100_000 + Math.random() * 899_999)),
+      validFrom: dto.validFrom,
+      validTo: dto.validTo,
+      status: 'active',
+      guestName: dto.guestName.trim(),
+      carPlate: dto.carPlate?.trim() || null,
+      issuedByPhone: dto.issuedByPhone,
+      unitLabel: dto.unitLabel ?? null,
+    };
+    this.repo.savePass(rec);
+    this.bus.publish('pass.issued', { passId: rec.id, orderId: null, masterId: null });
+    return rec;
+  }
+
+  /** Пропуска, выписанные жителем — свой список в приложении */
+  passesIssuedBy(tenantId: string, buildingId: string, phone: string): PassRecord[] {
+    return this.repo
+      .passesByBuilding(tenantId, buildingId)
+      .filter((x) => x.issuedByPhone === phone)
+      .sort((a, b) => Date.parse(b.validFrom) - Date.parse(a.validFrom));
+  }
+
+  revokePass(tenantId: string, id: string, byPhone: string): PassRecord {
+    const p = this.repo.allPasses(tenantId).find((x) => x.id === id);
+    if (!p) throw new NotFoundException({ code: 'PASS_NOT_FOUND', message: 'Пропуск не найден' });
+    if (p.issuedByPhone !== byPhone) {
+      throw new ForbiddenException({ code: 'NOT_YOURS', message: 'Отозвать можно только свой пропуск' });
+    }
+    p.status = 'revoked';
+    this.repo.savePass(p);
+    return p;
+  }
+
+  /**
+   * Проверка пропуска охраной по токену или числовому коду.
+   *
+   * Ответ намеренно узкий: кого ждут, куда и до какого времени. Телефон
+   * жителя и его заявки охране не нужны — правило маскировки (ТЗ 17.5)
+   * действует и здесь, а лишнее поле в таком ответе живёт годами.
+   */
+  checkPass(tenantId: string, tokenOrCode: string, now = new Date()) {
+    const key = (tokenOrCode ?? '').trim();
+    const p = this.repo.allPasses(tenantId).find((x) => x.qrToken === key || x.fallbackCode === key);
+    // Несуществующий, отозванный и просроченный отвечают по-разному только в
+    // причине: сам факт «такого пропуска нет» перебором не выяснить
+    if (!p) return { valid: false, reason: 'not_found' as const };
+    if (p.status === 'revoked') return { valid: false, reason: 'revoked' as const };
+    const t = now.getTime();
+    if (t < Date.parse(p.validFrom)) return { valid: false, reason: 'too_early' as const, validFrom: p.validFrom };
+    if (t > Date.parse(p.validTo)) return { valid: false, reason: 'expired' as const, validTo: p.validTo };
+    return {
+      valid: true as const,
+      passType: p.passType,
+      guestName: p.guestName ?? null,
+      carPlate: p.carPlate ?? null,
+      unitLabel: p.unitLabel ?? null,
+      validFrom: p.validFrom,
+      validTo: p.validTo,
+    };
   }
 
   /** Блокировка мастера аннулирует все его активные пропуска немедленно */

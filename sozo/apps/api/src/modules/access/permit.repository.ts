@@ -131,6 +131,11 @@ export class InMemoryPermitRepository {
     );
   }
 
+  /** Все пропуска тенанта — проверка по токену и по числовому коду */
+  allPasses(tenantId: string): PassRecord[] {
+    return [...this.passes.values()].filter((x) => x.tenantId === tenantId);
+  }
+
   /** Все пропуска объекта — журнал доступа U-10 */
   passesByBuilding(tenantId: string, buildingId: string): PassRecord[] {
     return [...this.passes.values()].filter((x) => x.tenantId === tenantId && x.buildingId === buildingId);
@@ -185,14 +190,25 @@ export interface PassRecord {
   id: string;
   tenantId: string;
   buildingId: string;
-  orderId: string;
-  masterId: string;
+  /**
+   * Заявка и мастер — только у пропуска исполнителя. У гостевого (C-54) их нет
+   * и быть не может: житель зовёт гостя, а не оформляет работу. Раньше поля
+   * были обязательными, и гостевой пропуск пришлось бы выписывать с
+   * выдуманными идентификаторами — то есть врать журналу проходов.
+   */
+  orderId: string | null;
+  masterId: string | null;
   passType: PassType;
   qrToken: string;
   fallbackCode: string;
   validFrom: string;
   validTo: string;
   status: 'active' | 'used' | 'revoked' | 'expired';
+  /** Гостевой пропуск: кого ждут, на чём приедет и кто выписал */
+  guestName?: string | null;
+  carPlate?: string | null;
+  issuedByPhone?: string | null;
+  unitLabel?: string | null;
 }
 
 export interface ShutdownRecord {
