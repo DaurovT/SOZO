@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import catalog from '../../seed/price-catalog.json';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
 import { registerCatalogNames } from '../../common/locale';
 
 export interface PriceItemRec {
@@ -45,10 +47,25 @@ export interface ReleaseRec {
  * неизменяемым; заявки хранят копии цен, активация ничего не пересчитывает.
  */
 @Injectable()
-export class PricingService {
+export class PricingService implements OnModuleInit {
   private readonly releases: ReleaseRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  /**
+   * Рабочий набор держится в памяти и при работе на базе.
+   *
+   * Это следует из инварианта самой схемы: активный релиз и его позиции
+   * неизменяемы, правки возможны только в черновике. То есть снимок,
+   * который читает расчёт заявки, не может устареть по определению —
+   * а `active()` зовут синхронно из шести мест в глубине обработки запроса,
+   * и переводить их на async ради данных, которые не меняются, значит
+   * тронуть заявки, планировщик и клиентские контроллеры без выигрыша.
+   *
+   * Запись идёт насквозь: каждая мутация сохраняет релиз целиком.
+   */
+  constructor(
+    private readonly store: StateStore,
+    private readonly prisma: PrismaService,
+  ) {
     // Релиз №1 — импорт из «Каталог_услуг_и_прайсы_v33.xlsx» (M0-E3-S4)
     this.releases.push({
       id: uuidv7(),
@@ -69,18 +86,155 @@ export class PricingService {
       activatedAt: new Date().toISOString(),
     });
     this.syncCatalogNames();
-    this.store.register(
-      'pricing',
-      () => this.releases,
-      (d) => {
-        this.releases.length = 0;
-        // Позиции, заведённые до появления колонки, приходят без неё
-        this.releases.push(
-          ...(d as ReleaseRec[]).map((r) => ({ ...r, items: r.items.map((i) => ({ ...i, nameUz: i.nameUz ?? null })) })),
-        );
-        this.syncCatalogNames();
-      },
+    if (!this.prisma.enabled) {
+      this.store.register(
+        'pricing',
+        () => this.releases,
+        (d) => {
+          this.releases.length = 0;
+          // Позиции, заведённые до появления колонки, приходят без неё
+          this.releases.push(
+            ...((d ?? []) as ReleaseRec[]).map((r) => ({
+              ...r,
+              items: r.items.map((i) => ({ ...i, nameUz: i.nameUz ?? null })),
+            })),
+          );
+          this.syncCatalogNames();
+        },
+      );
+    }
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (!this.prisma.enabled) return;
+    const rows = await this.prisma.withContext(async (tx) =>
+      tx.priceListRelease.findMany({ include: { items: true }, orderBy: { number: 'asc' } }),
     );
+    if (rows.length === 0) {
+      // Базы ещё нет — записываем стартовый релиз, собранный в конструкторе
+      for (const r of this.releases) await this.saveRelease(r);
+      // eslint-disable-next-line no-console
+      console.log(`[Pricing] стартовый релиз записан в базу: позиций ${this.releases[0]?.items.length ?? 0}`);
+      return;
+    }
+    this.releases.length = 0;
+    for (const r of rows) {
+      this.releases.push({
+        id: r.id,
+        number: r.number,
+        status: r.status as ReleaseRec['status'],
+        coeffs: (r.coeffsJson ?? {}) as Record<string, unknown>,
+        createdAt: r.createdAt.toISOString(),
+        activatedAt: r.activatedAt?.toISOString(),
+        items: r.items
+          .map((i): PriceItemRec => ({
+            id: i.id,
+            num: i.num,
+            category: i.category,
+            name: i.name,
+            nameUz: i.nameUz,
+            unit: i.unit,
+            priceFromTiyin: Number(i.priceFromTiyin),
+            priceToTiyin: Number(i.priceToTiyin),
+            normHours: i.normHours === null ? null : Number(i.normHours),
+            requiredSkills: i.requiredSkills,
+            requiresEquipment: i.requiresEquip,
+            isPaired: i.isPaired,
+            isStaged: i.isStaged,
+            note: i.note,
+          }))
+          .sort((a, b) => a.num - b.num),
+      });
+    }
+    this.syncCatalogNames();
+    // eslint-disable-next-line no-console
+    console.log(`[Pricing] релизов из базы: ${this.releases.length}`);
+  }
+
+  /**
+   * Сохранение релиза целиком. Позиции переписываются, а не сравниваются:
+   * правки бывают только в черновике, черновик редактирует один человек, и
+   * вычисление разницы здесь — лишний код там, где ошибка означает
+   * потерянную или задвоенную строку прайса.
+   */
+  private async saveRelease(r: ReleaseRec): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    await this.prisma.withContext(async (tx) => {
+      await tx.priceListRelease.upsert({
+        where: { id: r.id },
+        create: {
+          id: r.id,
+          tenantId,
+          number: r.number,
+          status: r.status as never,
+          coeffsJson: r.coeffs as object,
+          activatedAt: r.activatedAt ? new Date(r.activatedAt) : null,
+        },
+        update: {
+          status: r.status as never,
+          coeffsJson: r.coeffs as object,
+          activatedAt: r.activatedAt ? new Date(r.activatedAt) : null,
+        },
+      });
+      await tx.priceItem.deleteMany({ where: { releaseId: r.id } });
+      for (const i of r.items) {
+        await tx.priceItem.create({
+          data: {
+            id: i.id,
+            tenantId,
+            releaseId: r.id,
+            num: i.num,
+            category: i.category,
+            name: i.name,
+            nameUz: i.nameUz,
+            unit: i.unit,
+            priceFromTiyin: BigInt(i.priceFromTiyin),
+            priceToTiyin: BigInt(i.priceToTiyin),
+            normHours: i.normHours,
+            requiredSkills: i.requiredSkills,
+            requiresEquip: i.requiresEquipment,
+            isPaired: i.isPaired,
+            isStaged: i.isStaged,
+            note: i.note,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * Запись изменения. На файле — прежний дебаунс, на базе — запись релиза
+   * насквозь; ошибку не проглатываем, но и не роняем ею вызывающего:
+   * прайс уже изменён в памяти, и молчаливое расхождение с базой хуже
+   * строки в журнале.
+   */
+  /** Удаление черновика: в файле достаточно снимка, в базе нужна явная строка */
+  private dropRelease(r: ReleaseRec): void {
+    if (!this.prisma.enabled) {
+      this.store.persist();
+      return;
+    }
+    void this.prisma
+      .withContext(async (tx) => {
+        await tx.priceItem.deleteMany({ where: { releaseId: r.id } });
+        await tx.priceListRelease.delete({ where: { id: r.id } });
+      })
+      .catch((e: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error('[Pricing] черновик не удалён из базы:', (e as Error).message, r.id);
+      });
+  }
+
+  private persistRelease(r: ReleaseRec | undefined): void {
+    if (!this.prisma.enabled) {
+      this.store.persist();
+      return;
+    }
+    if (!r) return;
+    void this.saveRelease(r).catch((e: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[Pricing] релиз не сохранён в базу:', (e as Error).message, r.id);
+    });
   }
 
   list() {
@@ -114,7 +268,7 @@ export class PricingService {
       createdAt: new Date().toISOString(),
     };
     this.releases.push(draft);
-    this.store.persist();
+    this.persistRelease(draft);
     return draft;
   }
 
@@ -173,7 +327,7 @@ export class PricingService {
       }
       imported += 1;
     });
-    this.store.persist();
+    this.persistRelease(draft);
     return { release: draft, imported, errors };
   }
 
@@ -183,7 +337,7 @@ export class PricingService {
     const item = r.items.find((i) => i.id === itemId);
     if (!item) throw new NotFoundException({ code: 'ITEM_NOT_FOUND' });
     Object.assign(item, patch);
-    this.store.persist();
+    this.persistRelease(r);
     return item;
   }
 
@@ -202,7 +356,7 @@ export class PricingService {
     const item = r.items.find((i) => i.id === itemId);
     if (!item) throw new NotFoundException({ code: 'ITEM_NOT_FOUND' });
     item.nameUz = nameUz?.trim() ? nameUz.trim() : null;
-    this.store.persist();
+    this.persistRelease(r);
     this.syncCatalogNames();
     return item;
   }
@@ -256,7 +410,7 @@ export class PricingService {
       throw new BadRequestException({ code: 'ONLY_DRAFT_DELETABLE', message: 'Удалить можно только черновик; откат боевого — новым релизом (ТЗ 3.7)' });
     }
     this.releases.splice(this.releases.indexOf(r), 1);
-    this.store.persist();
+    this.dropRelease(r);
   }
 
   /**
@@ -340,7 +494,11 @@ export class PricingService {
     prev.status = 'archived';
     draft.status = 'active';
     draft.activatedAt = new Date().toISOString();
-    this.store.persist();
+    // Оба релиза меняются одной операцией: прежний уходит в архив, новый
+    // становится боевым — записывать надо оба, иначе после рестарта окажется
+    // два активных или ни одного
+    this.persistRelease(prev);
+    this.persistRelease(draft);
     this.syncCatalogNames(); // активным стал другой релиз — переводы едут с ним
     // side-effects M2+: событие pricelist.release_activated → инвалидация кешей, уведомления за 7/10 дней.
     // Проводок и пересчётов НЕ порождает (железное правило владельца, PRD-05 §4.4 п.20)

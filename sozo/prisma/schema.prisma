@@ -295,6 +295,12 @@ model PriceListRelease {
   number      Int // релиз №1 — стартовый прайс (A-32)
   status      ReleaseStatus @default(draft)
   activatesAt DateTime?     @map("activates_at") @db.Timestamptz() // не раньше +7 дней от подтверждения (таймер #50)
+  /**
+   * Когда релиз стал действующим. Не то же, что `activatesAt`: там плановый
+   * срок, здесь факт. Схема знала только план, а прайс заявки фиксируется
+   * по факту — и без этой даты нельзя ответить, по какому релизу считали.
+   */
+  activatedAt DateTime?     @map("activated_at") @db.Timestamptz()
   coeffsJson  Json          @default("{}") @map("coeffs_json") // снапшот глобальных коэффициентов (A-05)
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
@@ -313,15 +319,28 @@ model PriceItem {
   id               String   @id @db.Uuid
   tenantId         String   @map("tenant_id") @db.Uuid
   releaseId        String   @map("release_id") @db.Uuid
+  /** Номер позиции в каталоге: по нему владелец находит строку в прайсе */
+  num              Int      @default(0)
   category         String
   name             String
+  /**
+   * Название для узбекского интерфейса. Ведёт владелец в админке: перевести
+   * каталог услуг разработчик не может — это содержимое бизнеса, и меняется
+   * оно вместе с прайсом.
+   */
+  nameUz           String?  @map("name_uz")
   unit             String // шт | точка | п.м | м² | час | выезд | объект | стык | створка | заявка | день | комплект
   priceFromTiyin   BigInt   @map("price_from_tiyin")
   priceToTiyin     BigInt   @map("price_to_tiyin")
-  normHours        Decimal  @map("norm_hours") @db.Decimal(5, 2) // основа слотов (ТЗ 17.3)
+  // Нормо-часы заполняет владелец (DEV-05 п.17); пока не заполнены — null,
+  // и планировщик такую позицию не берёт. NOT NULL здесь означал бы ноль
+  // часов, то есть работу, которая якобы не занимает времени
+  normHours        Decimal? @map("norm_hours") @db.Decimal(5, 2)
   requiredSkills   String[] @map("required_skills")
   requiresEquip    Boolean  @default(false) @map("requires_equipment")
   isPaired         Boolean  @default(false) @map("is_paired") // цена включает второго исполнителя
+  isStaged         Boolean  @default(false) @map("is_staged") // этапная: план этапов с паузами (ТЗ 4.1)
+  note             String?
   stagePlanJson    Json?    @map("stage_plan_json") // [{этап, нормо-часы, пауза [мин; макс]}]
   isLicensedClosed Boolean  @default(false) @map("is_licensed_closed") // газ/лифты до договора с лицензиатом (ТЗ 17.8)
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
