@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { resourceLabel } from '@sozo/contracts';
 import { BuildingsService } from '../buildings/buildings.service';
 import { AccessService } from './access.service';
 
@@ -12,16 +13,6 @@ const BLANK = {
   shutdowns: [] as Array<{ resourceLabel: string; windowText: string; reason: string }>,
 };
 
-const RESOURCE_WORDS: Record<string, string> = {
-  cold_water: 'Холодная вода',
-  hot_water: 'Горячая вода',
-  heating: 'Отопление',
-  electricity: 'Электричество',
-  gas: 'Газ',
-  sewage: 'Канализация',
-  lift: 'Лифт',
-  ventilation: 'Вентиляция',
-};
 
 /**
  * Публичная карточка объекта (L-10) и сбор спроса по неподключённым домам.
@@ -89,7 +80,7 @@ export class PublicBuildingController {
       )
       .sort((a, b) => Date.parse(a.plannedFrom) - Date.parse(b.plannedFrom))
       .map((s) => ({
-        resourceLabel: RESOURCE_WORDS[s.resourceType] ?? s.resourceType,
+        resourceLabel: resourceLabel(s.resourceType),
         windowText: `${fmtDateTime(s.plannedFrom)} — ${fmtTime(s.plannedTo)}`,
         reason: s.reason,
       }));

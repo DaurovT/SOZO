@@ -10,6 +10,7 @@ import {
   HELPER_FEE_TIYIN,
   PURCHASE_LIMIT_TIYIN,
   SPARE_TIER_THRESHOLD_TIYIN,
+  PERMIT_DENIED_ESCALATION_MINUTES,
 } from './master-ops.service';
 import { MasterOffersService } from './offers.service';
 import { OrdersService } from '../orders/orders.service';
@@ -20,6 +21,7 @@ import { SchedulingService } from '../scheduling/scheduling.service';
 import { MastersService } from '../masters/masters.module';
 import { AuditService } from '../platform/audit.service';
 import { MasterPhotoService } from './photo.service';
+import { AccessService } from '../access/access.service';
 import { tr } from '../../common/locale';
 
 /**
@@ -43,6 +45,7 @@ export class MasterOpsController {
     private readonly audit: AuditService,
     private readonly photos: MasterPhotoService,
     private readonly referralsSvc: ReferralsService,
+    private readonly access: AccessService,
   ) {}
 
   private async mine(id: string, masterId: string): Promise<OrderRecord> {
@@ -104,14 +107,50 @@ export class MasterOpsController {
       throw new BadRequestException({ code: 'PHOTO_REQUIRED', message: 'Снимите закрытую дверь — без фото пауза не оформляется' });
     }
     await this.photos.save(await this.orders.record('t0', id), { stage: 'during', dataUrl: b.photoDataUrl, note: 'нет доступа: третья сторона', geo: null, masterName: m.fullName });
+    const o = await this.orders.record('t0', id);
+    const denied = b.reasonCode === 'permit_denied';
+    const deadline = denied
+      ? new Date(Date.now() + PERMIT_DENIED_ESCALATION_MINUTES * 60_000).toISOString()
+      : undefined;
     const rec = this.ops.openBranch({
       orderId: id,
       masterId: m.id,
       kind: 'no_access',
       reasonCode: b.reasonCode,
-      payload: { nextAttemptAt: b.nextAttemptAt },
+      payload: denied
+        ? { escalatedAt: new Date().toISOString(), deadline }
+        : { nextAttemptAt: b.nextAttemptAt },
     });
-    const o = await this.orders.record('t0', id);
+
+    /**
+     * Наряд согласован, а на месте не пускают — единственная причина, которая
+     * НЕ ставит паузу.
+     *
+     * Пауза здесь означала бы «ждём, пока договорятся», но договариваться уже
+     * поздно: согласование получено, окно допуска идёт и скоро истечёт, а
+     * второй раз его согласовывать — ещё сутки. Поэтому вместо паузы
+     * эскалация дежурному объекта с таймером (DEV-15 §10, M-14).
+     */
+    if (denied) {
+      this.audit.write({
+        actorPhone: m.phone,
+        action: 'master.permit_denied',
+        entity: 'Order',
+        entityId: id,
+        payload: { buildingId: o.buildingId, deadline },
+      });
+      const duty = o.buildingId ? this.access.buildingBrief('t0', o.buildingId) : null;
+      return {
+        ok: true,
+        branchId: rec.id,
+        escalated: true,
+        deadline,
+        dutyPhone: duty?.dispatchPhone ?? duty?.emergencyPhone ?? null,
+        message: `Дежурный объекта оповещён. Ждём ${PERMIT_DENIED_ESCALATION_MINUTES} минут`,
+        note: 'Заявка остаётся за вами: наряд согласован, и повторное согласование — ещё сутки',
+      };
+    }
+
     // Причина паузы хранится как есть, без языка и без приставки «Заблокировано»:
     // запись читают и диспетчер, и мастер, а перевод при записи привязал бы
     // содержимое базы к языку того, кто нажал кнопку. Мастеру её переведут на

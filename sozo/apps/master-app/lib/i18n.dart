@@ -861,6 +861,7 @@ const _ru = <String, String>{
       'Заявка будет закрыта с пометкой «выполнена частично». Фото проблемы и отказ клиента войдут в акт.',
 
   // Режим «Обход» (M-48…M-50)
+  'branch.dejurnyyBudetOpoveschen': 'Дежурный объекта будет оповещён. Заявка остаётся за вами: наряд согласован, повторное согласование — ещё сутки',
   'walk.obhod': 'Обход',
   'walk.obyektovNet': 'Объектов для обхода нет',
   'walk.obhodTolkoDlyaShtata': 'Обход доступен сотрудникам службы объекта',
@@ -1701,6 +1702,7 @@ const _uz = <String, String>{
       'Buyurtma «qisman bajarildi» belgisi bilan yopiladi. Muammo surati va mijozning rad javobi dalolatnomaga kiradi.',
 
   // Режим «Обход» (M-48…M-50)
+  'branch.dejurnyyBudetOpoveschen': 'Obyekt navbatchisi xabardor qilinadi. Ariza sizda qoladi: naryad kelishilgan, qayta kelishish — yana bir kun',
   'walk.obhod': 'Aylanib chiqish',
   'walk.obyektovNet': 'Aylanish uchun obyektlar yoʻq',
   'walk.obhodTolkoDlyaShtata': 'Aylanish obyekt xizmati xodimlariga ochiq',

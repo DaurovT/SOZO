@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../identity/auth.guard';
-import { OBSERVATION_CATEGORIES, ZONE_TYPE_INFO } from '@sozo/contracts';
+import { OBSERVATION_CATEGORIES, RESOURCE_LABELS, ZONE_TYPE_INFO } from '@sozo/contracts';
 import { BuildingsService } from './buildings.service';
 import type { JwtClaims } from '../../common/jwt';
 
@@ -70,6 +70,18 @@ export class BuildingsController {
   @Get('resolve')
   resolve(@Query('address') address = '') {
     return this.buildings.resolve('t0', address);
+  }
+
+  /**
+   * Подписи ресурсов для кабинета и админки.
+   *
+   * Браузерные приложения не импортируют @sozo/contracts: пакет собирается в
+   * CommonJS под API, а Vite не трансформирует CJS вне node_modules. Справочник
+   * едет по сети — так же, как зоны и категории замечаний.
+   */
+  @Get('resource-labels')
+  resourceLabels() {
+    return Object.entries(RESOURCE_LABELS).map(([code, label]) => ({ code, label }));
   }
 
   /** A-41 — справочник типов зон, флагов допуска и квалификаций */

@@ -1,4 +1,5 @@
 import { BuildingsService } from '../buildings/buildings.service';
+import { resourceLabelLower } from '@sozo/contracts';
 import { AccessService } from '../access/access.service';
 import {
   BadRequestException,
@@ -105,10 +106,6 @@ const HHMM = (min: number): string =>
  * Статусы словами для простого режима (C-57). Кодов и цветов здесь быть не должно:
  * человек, которому нужен этот режим, различает слова, а не оттенки.
  */
-const RESOURCE_WORDS: Record<string, string> = {
-  cold_water: 'холодная вода', hot_water: 'горячая вода', heating: 'отопление',
-  electricity: 'электричество', gas: 'газ', sewage: 'канализация', lift: 'лифт', ventilation: 'вентиляция',
-};
 
 const SIMPLE_STATUS: Record<string, string> = {
   new: 'Заявка принята',
@@ -207,7 +204,7 @@ export class ClientB2CController {
       .filter((x) => x.status !== 'restored' && x.status !== 'cancelled' && Date.parse(x.plannedTo) > now)
       .map((x) => ({
         resourceType: x.resourceType,
-        resourceLabel: RESOURCE_WORDS[x.resourceType] ?? x.resourceType,
+        resourceLabel: resourceLabelLower(x.resourceType),
         windowText: `${new Date(x.plannedFrom).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} — ${new Date(x.plannedTo).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`,
         reason: x.reason,
         status: x.status,

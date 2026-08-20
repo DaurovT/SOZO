@@ -52,17 +52,31 @@ export function zoneName(type: string): string {
   return ZONE_NAMES[type] ?? type;
 }
 
-const RESOURCE_NAMES: Record<string, string> = {
-  cold_water: 'Холодная вода',
-  hot_water: 'Горячая вода',
-  heating: 'Отопление',
-  electricity: 'Электричество',
-  gas: 'Газ',
-  sewage: 'Канализация',
-  lift: 'Лифт',
-  ventilation: 'Вентиляция',
-};
+/**
+ * Подписи ресурсов приходят из общего справочника: своя копия здесь уже
+ * разъезжалась с сервером по регистру, а кабинет и приложение мастера
+ * показывают одно и то же отключение.
+ */
+/**
+ * Подписи ресурсов приходят с сервера (`/buildings/resource-labels`) и живут
+ * здесь до перезагрузки страницы. Своя копия в кабинете уже разъезжалась с
+ * сервером по регистру, а кабинет и приложение мастера показывают одно и то
+ * же отключение.
+ *
+ * Пакет контрактов сюда не импортируется: он собирается в CommonJS под API, а
+ * Vite не трансформирует CJS вне node_modules.
+ */
+let resourceLabels: Record<string, string> = {};
 
+export function setResourceLabels(rows: Array<{ code: string; label: string }>): void {
+  resourceLabels = Object.fromEntries(rows.map((r) => [r.code, r.label]));
+}
+
+export function resourceLabelCodes(): string[] {
+  return Object.keys(resourceLabels);
+}
+
+/** До загрузки справочника возвращаем код: пустая строка хуже — она молчит */
 export function resourceName(type: string): string {
-  return RESOURCE_NAMES[type] ?? type;
+  return resourceLabels[type] ?? type;
 }

@@ -166,6 +166,38 @@ export const RESOURCE_TYPES = [
 ] as const;
 export type ResourceType = (typeof RESOURCE_TYPES)[number];
 
+/**
+ * Подписи ресурсов — один источник на всю систему.
+ *
+ * Копий было четыре: контроллер мастера, контроллер клиента, публичная
+ * карточка дома и форматтер кабинета оператора. Половина писала с большой
+ * буквы, половина с маленькой, и жителю в приложении приходило «Отопление»,
+ * а мастеру в наряде — «отопление» на месте, где нужна была заглавная.
+ *
+ * Хранится с заглавной: привести к строчной в предложении — одна строка,
+ * восстановить заглавную из строчной без знания языка — нельзя.
+ */
+export const RESOURCE_LABELS: Record<ResourceType, string> = {
+  cold_water: 'Холодная вода',
+  hot_water: 'Горячая вода',
+  heating: 'Отопление',
+  electricity: 'Электричество',
+  gas: 'Газ',
+  sewage: 'Канализация',
+  lift: 'Лифт',
+  ventilation: 'Вентиляция',
+};
+
+/** Подпись ресурса; неизвестный код возвращается как есть */
+export function resourceLabel(code: string): string {
+  return RESOURCE_LABELS[code as ResourceType] ?? code;
+}
+
+/** То же в середине предложения: «отключение — холодная вода» */
+export function resourceLabelLower(code: string): string {
+  return resourceLabel(code).toLocaleLowerCase('ru-RU');
+}
+
 export const ZONE_TYPES = [
   'electrical_panel',
   'water_riser',

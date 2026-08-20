@@ -4,7 +4,7 @@ import { getOrgId } from '../auth';
 import { useFetch } from '../useFetch';
 import { BuildingPicker, useSelectedBuilding } from '../components/BuildingPicker';
 import { Empty, ErrorState, Loading } from '../components/States';
-import { resourceName, timeShort } from '../format';
+import { resourceLabelCodes, resourceName, setResourceLabels, timeShort } from '../format';
 import type { Dashboard } from '../types';
 
 /**
@@ -28,7 +28,10 @@ interface Shutdown {
   isEmergency: boolean;
 }
 
-const RESOURCES = ['cold_water', 'hot_water', 'heating', 'electricity', 'gas', 'sewage', 'lift', 'ventilation'];
+/**
+ * Список ресурсов не хардкодим: он приезжает с сервера вместе с подписями,
+ * иначе кабинет предлагает выбрать ресурс, которого сервер не знает.
+ */
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   scheduled: { label: 'Запланировано', cls: 'chip--warning' },
@@ -46,6 +49,8 @@ export function Shutdowns() {
   const dash = useFetch<Dashboard>(org ? `/operator/${org}/dashboard` : null);
   const buildingId = useSelectedBuilding(dash.data);
   const list = useFetch<Shutdown[]>(buildingId ? `/buildings/${buildingId}/shutdowns` : null, [buildingId]);
+  const labels = useFetch<Array<{ code: string; label: string }>>('/buildings/resource-labels');
+  if (labels.data) setResourceLabels(labels.data);
 
   if (dash.loading || list.loading) return <Loading />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={dash.reload} />;
@@ -106,7 +111,7 @@ export function Shutdowns() {
           <label>
             <div className="cap" style={{ marginBottom: 'var(--s4)' }}>Ресурс</div>
             <select className="input" value={form.resourceType} onChange={(e) => setForm({ ...form, resourceType: e.target.value })}>
-              {RESOURCES.map((r) => <option key={r} value={r}>{resourceName(r)}</option>)}
+              {resourceLabelCodes().map((r) => <option key={r} value={r}>{resourceName(r)}</option>)}
             </select>
           </label>
           <label>

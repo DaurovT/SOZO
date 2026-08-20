@@ -72,7 +72,9 @@ class _BranchScreenState extends State<BranchScreen> {
       title: t('branch.netDostupa'),
       subtitle: t('branch.tretyaStoronaNePustila'),
       button: t('common.otpravit'),
-      note: t('branch.zayavkaVstanetNaPauzu'),
+      // «Наряд есть, не пускают» — единственная причина без паузы: обещать её
+      // здесь значит соврать, заявка остаётся за мастером (M-14, DEV-15 §10)
+      note: _permitDenied ? t('branch.dejurnyyBudetOpoveschen') : t('branch.zayavkaVstanetNaPauzu'),
     ),
     BranchKind.clientUnavailable => (
       title: t('branch.klientNedostupen'),
@@ -93,6 +95,10 @@ class _BranchScreenState extends State<BranchScreen> {
       note: t('branch.zamenaZapustitsyaNemedlennoUva'),
     ),
   };
+
+  /// Согласование уже получено, окно допуска идёт — ждать «пока договорятся»
+  /// поздно, и повторное согласование стоит ещё суток.
+  bool get _permitDenied => widget.kind == BranchKind.noAccess && _reason == 'permit_denied';
 
   bool get _canSubmit {
     if (widget.kind == BranchKind.unsafe) return true; // безопасность не ждёт заполнения полей
@@ -121,7 +127,9 @@ class _BranchScreenState extends State<BranchScreen> {
       };
       if (!mounted) return;
       showOk(context, (r['message'] ?? t('common.otpravleno')).toString());
-      Navigator.of(context).pop(true);
+      // Эскалация оставляет заявку за мастером, поэтому экран закрывается
+      // с false: возвращаться в ленту незачем, работа не отдана
+      Navigator.of(context).pop(r['escalated'] != true);
     } on ApiError catch (e) {
       if (e.isOffline) {
         await session.outbox.enqueue(
@@ -215,7 +223,7 @@ class _BranchScreenState extends State<BranchScreen> {
             ),
             const SizedBox(height: SozoSpace.s16),
           ],
-          if (widget.kind == BranchKind.noAccess) ...[
+           if (widget.kind == BranchKind.noAccess && !_permitDenied) ...[
             SectionTitle(t('branch.sleduyuschayaPopytkaPoJelaniyu')),
             SozoCard(
               onTap: () async {

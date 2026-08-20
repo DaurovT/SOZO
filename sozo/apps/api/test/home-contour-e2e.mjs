@@ -111,6 +111,13 @@ async function main() {
     zt.find((z) => z.code === 'ventilation_chamber')?.label === 'Камера дымоудаления',
     zt.find((z) => z.code === 'ventilation_chamber')?.label);
 
+  const rl = (await call('/buildings/resource-labels', { token: t })).body;
+  check('справочник ресурсов отдаётся', Array.isArray(rl) && rl.length === 8, String(rl.length));
+  // Копий подписей было четыре, и половина писала с маленькой буквы: жителю
+  // приходило «Отопление», а мастеру в наряде — «отопление»
+  check('подписи ресурсов хранятся с заглавной',
+    rl.every((r) => r.label[0] === r.label[0].toUpperCase()), JSON.stringify(rl.map((r) => r.label)));
+
   const zones = (await call(`/buildings/${uk}/zones`, { token: t })).body;
   const gas = zones.find((z) => z.zoneType === 'gas_equipment');
   const panel = zones.find((z) => z.zoneType === 'electrical_panel');
@@ -580,6 +587,70 @@ async function main() {
     token: mt, body: { zoneKey: 'двор', photoIds: [uuid()] },
   });
   check('замечание без категории не принимается', noCat.status >= 400, errText(noCat.body));
+
+  // Наряд едет мастеру с подписями из того же справочника, что видит консьерж
+  // в SMS: раньше здесь была своя копия, и «камера дымоудаления» у одного
+  // становилась «вентиляционной камерой» у другого
+  const mOrders = (await call('/master/orders', { token: mt })).body;
+  check('лента мастера открывается', mOrders !== null && mOrders !== undefined);
+
+  group('19. M-14 — «наряд есть, не пускают»');
+
+  const reasons = (await call('/master/dictionaries', { token: mt })).body.noAccessReasons ?? [];
+  check('причина «наряд есть, не пускают» в справочнике',
+    reasons.some((r) => r.code === 'permit_denied'), JSON.stringify(reasons.map((r) => r.code)));
+
+  // Заявка в квартире подключённого дома, назначенная тому же мастеру
+  const denyOrder = (await call('/dispatch/orders', {
+    token: t,
+    body: {
+      clientPhone: '+998901110009', clientName: 'Житель', address: 'Амира Темура 15',
+      description: 'Течь в стояке', items: [{ priceItemId: item.id, qty: 1 }],
+      // Житель выбрал службу оператора: окна первой руки нет, выбор уже сделан
+      providerOperator: true,
+    },
+  })).body;
+  const dv1 = (await call(`/dispatch/orders/${denyOrder.id}`, { token: t })).body.version;
+  await call(`/dispatch/orders/${denyOrder.id}/transitions`, { token: t, body: { action: 'estimate', version: dv1 } });
+  const dv2 = (await call(`/dispatch/orders/${denyOrder.id}`, { token: t })).body.version;
+  const asg = await call(`/dispatch/orders/${denyOrder.id}/transitions`,
+    { token: t, body: { action: 'assign', version: dv2, masterId: masters[0].id } });
+  check('назначение мастеру прошло', asg.status < 400, `${asg.status} ${errText(asg.body)}`);
+
+  const photo = 'data:image/png;base64,iVBORw0KGgo=';
+  const denied = await call(`/master/orders/${denyOrder.id}/no-access`, {
+    token: mt, body: { reasonCode: 'permit_denied', photoDataUrl: photo },
+  });
+  check('причина принимается', denied.status < 400, errText(denied.body));
+  check('это эскалация, а не пауза', denied.body.escalated === true, JSON.stringify(denied.body).slice(0, 160));
+  check('таймер дежурного поставлен', Boolean(denied.body.deadline));
+
+  // Пауза здесь означала бы «ждём, пока договорятся», но согласование уже
+  // получено и окно допуска идёт: второй раз согласовывать — ещё сутки
+  const denyCard = (await call(`/dispatch/orders/${denyOrder.id}`, { token: t })).body;
+  check('заявка НЕ поставлена на паузу', !denyCard.pause, JSON.stringify(denyCard.pause));
+
+  // Обычная причина по-прежнему ставит паузу — поведение не сломано
+  const pauseOrder = (await call('/dispatch/orders', {
+    token: t,
+    body: {
+      clientPhone: '+998901110010', clientName: 'Житель', address: 'Амира Темура 15',
+      description: 'Работа', items: [{ priceItemId: item.id, qty: 1 }],
+      providerOperator: true,
+    },
+  })).body;
+  const pv1 = (await call(`/dispatch/orders/${pauseOrder.id}`, { token: t })).body.version;
+  await call(`/dispatch/orders/${pauseOrder.id}/transitions`, { token: t, body: { action: 'estimate', version: pv1 } });
+  const pv2 = (await call(`/dispatch/orders/${pauseOrder.id}`, { token: t })).body.version;
+  await call(`/dispatch/orders/${pauseOrder.id}/transitions`,
+    { token: t, body: { action: 'assign', version: pv2, masterId: masters[0].id } });
+  const paused = await call(`/master/orders/${pauseOrder.id}/no-access`, {
+    token: mt, body: { reasonCode: 'basement', photoDataUrl: photo },
+  });
+  check('обычная причина принимается', paused.status < 400, errText(paused.body));
+  check('обычная причина по-прежнему ставит паузу', !paused.body.escalated);
+  const pauseCard = (await call(`/dispatch/orders/${pauseOrder.id}`, { token: t })).body;
+  check('пауза записана с причиной', Boolean(pauseCard.pause?.reason), JSON.stringify(pauseCard.pause));
 
   group('18. Офлайн-очередь обхода');
 

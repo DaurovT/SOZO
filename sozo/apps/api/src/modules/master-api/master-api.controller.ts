@@ -1,4 +1,5 @@
 import { AccessService } from '../access/access.service';
+import { zoneLabel, resourceLabelLower } from '@sozo/contracts';
 import {
   BadRequestException,
   Body,
@@ -75,17 +76,6 @@ const ACTION_TITLES: Record<string, string> = {
  * фото есть в хранилище, чеки приложены, приёмка зафиксирована. Мастер сообщает только то,
  * что знает лично: получил наличные, номер этапа, причина паузы.
  */
-const ZONE_LABELS: Record<string, string> = {
-  electrical_panel: 'Электрощитовая', water_riser: 'Стояк ХВС', sewage_riser: 'Канализационный стояк',
-  basement: 'Подвал', roof: 'Кровля', technical_floor: 'Техэтаж', lift_machine_room: 'Лифтовая',
-  ventilation_chamber: 'Вентиляционная камера', heat_point: 'ИТП', gas_equipment: 'Газовое оборудование',
-  fire_system: 'Пожарные системы', yard: 'Двор',
-};
-
-const RESOURCE_LABELS: Record<string, string> = {
-  cold_water: 'холодная вода', hot_water: 'горячая вода', heating: 'отопление',
-  electricity: 'электричество', gas: 'газ', sewage: 'канализация', lift: 'лифт', ventilation: 'вентиляция',
-};
 
 function windowText(from: string | null, to: string | null): string {
   if (!from || !to) return 'время не выбрано';
@@ -836,7 +826,7 @@ export class MasterApiController {
     return {
       id: live.id,
       status: live.status,
-      zoneLabels: live.zoneTypes.map((z) => ZONE_LABELS[z] ?? z),
+      zoneLabels: live.zoneTypes.map((z) => zoneLabel(z)),
       hasCriticalZone: live.hasCriticalZone,
       requiresShutdown: live.requiresShutdown,
       affectedUnitIds: live.affectedUnitIds,
@@ -844,7 +834,7 @@ export class MasterApiController {
       escortName: null,
       dutyPhone: building?.dispatchPhone ?? building?.emergencyPhone ?? null,
       shutdownId: shutdown?.id ?? null,
-      shutdownResource: shutdown ? RESOURCE_LABELS[shutdown.resourceType] ?? shutdown.resourceType : null,
+      shutdownResource: shutdown ? resourceLabelLower(shutdown.resourceType) : null,
       shutdownStartedAt: shutdown?.actualFrom ?? null,
       qrToken: pass?.qrToken ?? null,
       fallbackCode: pass?.fallbackCode ?? null,
