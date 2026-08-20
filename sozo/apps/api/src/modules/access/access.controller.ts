@@ -23,6 +23,12 @@ export class AccessController {
     return this.access.get('t0', id);
   }
 
+  /** Ссылки согласования по наряду — кабинет показывает, кому и когда ушла SMS */
+  @Get('permits/:id/links')
+  links(@Param('id') id: string) {
+    return this.access.permitLinks(id);
+  }
+
   @Post('permits/:id/transitions')
   transition(@Param('id') id: string, @Body() body: unknown, @Req() req: { auth: JwtClaims }) {
     const parsed = permitTransitionSchema.safeParse(body);

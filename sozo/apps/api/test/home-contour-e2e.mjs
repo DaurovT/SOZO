@@ -316,6 +316,80 @@ async function main() {
   const fee = await call(`/buildings/${uk}/service-fee`, { token: t, body: { bps: 1500 } });
   check('ставка сбора выше потолка 10% отклоняется', fee.status >= 400, errText(fee.body));
 
+  // ---------------------------------------------------------------
+  group('12. W-06 — согласование по SMS-ссылке без регистрации');
+
+  // Отдельный объект: ссылки выпускаются согласующим при submit
+  const smsB = await setupBuilding(t, { name: 'ЖК Ссылка', address: 'Ссылочная 1', org: 'sms', plan: 'free', kind: 'hoa' });
+  const smsPermit = (await call('/orders/o-sms/permits', {
+    token: t,
+    body: {
+      buildingId: smsB, zoneTypes: ['water_riser'], requiresShutdown: true, riserIds: ['R1'],
+      windowFrom: iso(2), windowTo: iso(6), masterIsPlatform: true, qualificationOk: true,
+    },
+  })).body;
+  await call(`/permits/${smsPermit.id}/transitions`, { token: t, body: { action: 'submit', clientOpUuid: uuid() } });
+
+  const links = (await call(`/permits/${smsPermit.id}/links`, { token: t })).body;
+  check('ссылка выпущена каждому согласующему (основному и резервному)', links.length === 2, `${links.length}`);
+
+  const code = links[0]?.code ?? '';
+  const backupCode = links[1]?.code ?? '';
+
+  // Страница живёт вне /v1: её открывает браузер по ссылке из SMS
+  const pageRes = await fetch(`${ROOT}/p/${code}`);
+  const pageHtml = await pageRes.text();
+  check('страница открывается без авторизации', pageRes.status === 200, String(pageRes.status));
+  check('страница закрыта от индексации', (pageRes.headers.get('x-robots-tag') ?? '').includes('noindex'));
+  check('видна зона доступа', pageHtml.includes('стояк ХВС'));
+  check('видна зона влияния отключения', /Затронет \d+ помещ/.test(pageHtml));
+  check('обещан срок авто-согласия', pageHtml.includes('согласуется автоматически'));
+
+  // Критичная зона: авто-согласия не будет — это должно быть сказано ДО решения
+  const critPermit = (await call('/orders/o-sms2/permits', {
+    token: t,
+    body: {
+      buildingId: smsB, zoneTypes: ['electrical_panel'], windowFrom: iso(2), windowTo: iso(6),
+      masterIsPlatform: false, operatorSelfDeclared: true,
+    },
+  })).body;
+  await call(`/permits/${critPermit.id}/transitions`, { token: t, body: { action: 'submit', clientOpUuid: uuid() } });
+  const critLinks = (await call(`/permits/${critPermit.id}/links`, { token: t })).body;
+  const critHtml = await (await fetch(`${ROOT}/p/${critLinks[0].code}`)).text();
+  check('критичная зона: авто-согласие не обещается', !critHtml.includes('согласуется автоматически'));
+  check('критичная зона: предупреждение показано', critHtml.includes('Критичная зона'));
+
+  async function form(path, body) {
+    const r = await fetch(`${ROOT}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body).toString(),
+    });
+    return { status: r.status, html: await r.text() };
+  }
+
+  const smsNoReason = await form(`/p/${critLinks[0].code}/reject`, { reason: '' });
+  check('отказ без причины не принимается', smsNoReason.status === 400, String(smsNoReason.status));
+
+  const rejected = await form(`/p/${critLinks[0].code}/reject`, { reason: 'Зона на ремонте' });
+  check('отказ с причиной проходит', rejected.html.includes('Наряд отклонён'));
+
+  const reused = await fetch(`${ROOT}/p/${critLinks[0].code}`);
+  check('повторное открытие использованной ссылки отклоняется', reused.status === 410, String(reused.status));
+
+  const approved = await form(`/p/${code}/approve`, {});
+  check('согласование по ссылке проходит', approved.html.includes('Доступ согласован'));
+
+  const afterState = (await call(`/permits/${smsPermit.id}`, { token: t })).body;
+  check('наряд перешёл в approved решением человека', afterState.status === 'approved' && afterState.approvalKind === 'manual',
+    `${afterState.status}/${afterState.approvalKind}`);
+
+  const backupAfter = await fetch(`${ROOT}/p/${backupCode}`);
+  check('ссылка резервного гаснет после решения основного', backupAfter.status === 410, String(backupAfter.status));
+
+  const unknown = await fetch(`${ROOT}/p/ZZZZZZZZ`);
+  check('несуществующий код неотличим от истёкшего', unknown.status === 410, String(unknown.status));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

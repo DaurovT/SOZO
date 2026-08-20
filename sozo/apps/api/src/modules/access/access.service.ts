@@ -3,6 +3,7 @@ import { createPermitStateMachine, uuidv7, type PermitContext } from '@sozo/kern
 import type { PermitAction } from '@sozo/contracts';
 import { EventBus } from '../../common/event-bus';
 import { BuildingsService } from '../buildings/buildings.service';
+import { PermitLinksService } from './permit-links.service';
 import { InMemoryPermitRepository, type PermitRecord, type PassRecord, type ShutdownRecord } from './permit.repository';
 import type { ResourceType } from '@sozo/contracts';
 
@@ -40,6 +41,7 @@ export class AccessService {
   constructor(
     private readonly repo: InMemoryPermitRepository,
     private readonly buildings: BuildingsService,
+    private readonly links: PermitLinksService,
     private readonly bus: EventBus,
   ) {}
 
@@ -242,12 +244,40 @@ export class AccessService {
       case 'decline_window':
         p.rejectReason = req.reason ?? null;
         break;
+      case 'submit': {
+        // Ссылка каждому согласующему: основному и резервному. Требовать от них
+        // кабинет нельзя — согласование должно делаться из SMS в один тап (W-06).
+        const approvers = this.buildings.approvers(p.tenantId, p.buildingId);
+        for (const a of approvers) {
+          const link = this.links.issue(
+            p.id,
+            p.buildingId,
+            a.userPhone,
+            p.slaDeadline ?? new Date(Date.now() + 4 * 3_600_000).toISOString(),
+          );
+          this.bus.publish('permit.link_issued', {
+            permitId: p.id,
+            buildingId: p.buildingId,
+            approverPhone: a.userPhone,
+            approverName: a.fullName,
+            code: link.code,
+            isBackup: a.isBackup,
+          });
+        }
+        break;
+      }
       case 'propose_window':
         p.windowFrom = req.windowFrom ?? p.windowFrom;
         p.windowTo = req.windowTo ?? p.windowTo;
         break;
       case 'open':
         p.openedAt = now;
+        break;
+      case 'cancel':
+      case 'expire':
+        // Ссылка на отменённый наряд не должна открываться: согласующий
+        // подтвердит доступ, которого уже нет
+        this.links.revokeForPermit(p.id);
         break;
       case 'close':
         p.closedAt = now;
@@ -459,5 +489,10 @@ export class AccessService {
       overranMin,
     });
     return { ...x, overranMin };
+  }
+
+  /** Ссылки согласования, выданные по наряду — для кабинета и разбора у диспетчера */
+  permitLinks(permitId: string) {
+    return this.links.listForPermit(permitId);
   }
 }

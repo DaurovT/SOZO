@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { AccessController } from './access.controller';
 import { AccessService } from './access.service';
 import { InMemoryPermitRepository } from './permit.repository';
+import { PermitLinksService } from './permit-links.service';
+import { PermitPageController } from './permit-page.controller';
 import { BuildingsModule } from '../buildings/buildings.module';
 
 /**
@@ -11,8 +13,8 @@ import { BuildingsModule } from '../buildings/buildings.module';
  */
 @Module({
   imports: [BuildingsModule],
-  controllers: [AccessController],
-  providers: [AccessService, InMemoryPermitRepository],
+  controllers: [AccessController, PermitPageController],
+  providers: [AccessService, InMemoryPermitRepository, PermitLinksService],
   exports: [AccessService],
 })
 export class AccessModule {}
