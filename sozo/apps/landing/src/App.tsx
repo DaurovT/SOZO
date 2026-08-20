@@ -1,3 +1,5 @@
+import Operators from './pages/Operators';
+import BuildingPage from './pages/BuildingPage';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import Apply from './pages/Apply';
@@ -21,6 +23,8 @@ export default function App() {
           <Route path="/calculator" element={<Calculator />} /> {/* L-04 */}
           <Route path="/masters" element={<Masters />} /> {/* L-05 */}
           <Route path="/apply" element={<Apply />} /> {/* L-06 */}
+          <Route path="/operators" element={<Operators />} /> {/* L-09 */}
+          <Route path="/b/:code" element={<BuildingPage />} /> {/* L-10 */}
           <Route path="/m/:code" element={<Verify />} /> {/* L-07 — noindex */}
           <Route path="/legal" element={<Legal />} /> {/* L-08 */}
           <Route path="*" element={<NotFound />} />

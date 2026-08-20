@@ -1,3 +1,7 @@
+import { BuildingsPage } from './pages/Buildings';
+import { OperatorsPage } from './pages/Operators';
+import { ZoneTypesPage } from './pages/ZoneTypes';
+import { OperatorBillingPage } from './pages/OperatorBilling';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/Toast';
@@ -76,6 +80,10 @@ export function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/buildings" element={<BuildingsPage />} />
+            <Route path="/operators" element={<OperatorsPage />} />
+            <Route path="/zone-types" element={<ZoneTypesPage />} />
+            <Route path="/operator-billing" element={<OperatorBillingPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/orders" element={<OrdersPage />} />

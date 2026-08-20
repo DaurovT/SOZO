@@ -136,3 +136,37 @@ export function submitLead(payload: LeadPayload): Promise<LeadResponse> {
     body: JSON.stringify(payload),
   });
 }
+
+/* ---------- Публичная карточка объекта (L-10) ---------- */
+
+export interface PublicShutdown {
+  resourceLabel: string;
+  windowText: string;
+  reason: string;
+}
+
+export interface PublicBuilding {
+  name: string | null;
+  address: string | null;
+  operatorName: string | null;
+  connectionStatus: 'unmanaged' | 'claimed' | 'verified' | 'active' | 'degraded';
+  emergencyPhone: string | null;
+  shutdowns: PublicShutdown[];
+}
+
+/**
+ * Карточка дома по коду с наклейки в подъезде.
+ * Неподключённый и несуществующий объект отвечают одинаково — по ответу
+ * нельзя составить реестр наших домов перебором кодов.
+ */
+export function fetchBuilding(code: string): Promise<PublicBuilding> {
+  return request<PublicBuilding>(`/public/buildings/${encodeURIComponent(code)}`);
+}
+
+/** «Моего дома здесь нет» — обращение копится в реестре модерации (A-39) */
+export function submitDemand(address: string, phone?: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/public/demand', {
+    method: 'POST',
+    body: JSON.stringify({ address, phone }),
+  });
+}

@@ -17,6 +17,15 @@ const MENU: {
       { to: '/analytics', label: 'Аналитика' },
     ],
   },
+  {
+    section: 'Контур «Дом»',
+    links: [
+      { to: '/buildings', label: 'Подключение объектов' },
+      { to: '/operators', label: 'Эксплуатирующие организации' },
+      { to: '/operator-billing', label: 'Подписки и расчёты' },
+      { to: '/zone-types', label: 'Типы зон и допуски' },
+    ],
+  },
   { section: 'Прайс и экономика', links: [{ to: '/price-releases', label: 'Релизы прайса' }] },
   {
     section: 'Клиенты',

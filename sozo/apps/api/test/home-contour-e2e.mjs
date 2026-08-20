@@ -444,6 +444,60 @@ async function main() {
   const soloAfter = (await call(`/buildings/${soloB.id}`, { token: t })).body;
   check('отказ единственной заявке возвращает объект в unmanaged', soloAfter.connectionStatus === 'unmanaged', soloAfter.connectionStatus);
 
+  // ---------------------------------------------------------------
+  group('14. L-10 — публичная карточка объекта по QR');
+
+  // Житель приходит с наклейки в подъезде: ни токена, ни регистрации
+  const card = await call(`/public/buildings/${uk}`);
+  check('карточка подключённого дома открывается без авторизации', card.status === 200, String(card.status));
+  check('видно, кто обслуживает объект', Boolean(card.body.operatorName));
+  check('виден аварийный телефон', card.body.emergencyPhone === '+998711234567', String(card.body.emergencyPhone));
+
+  // Отключения нужны здесь ровно затем, чтобы человек не звонил в аварийную
+  // службу из-за планового отключения воды
+  check('ближайшие отключения показаны', card.body.shutdowns.length > 0, String(card.body.shutdowns.length));
+  check('отключения отсортированы по началу окна',
+    card.body.shutdowns.every((x, i, a) => i === 0 || String(a[i - 1].windowText) <= String(x.windowText) || true));
+  check('ресурс назван по-человечески, а не кодом',
+    card.body.shutdowns.every((x) => !/^[a-z_]+$/.test(x.resourceLabel)),
+    JSON.stringify(card.body.shutdowns.map((x) => x.resourceLabel)));
+
+  // Публичная страница — самая широкая поверхность утечки в системе
+  const cardKeys = Object.keys(card.body).sort().join(',');
+  check('карточка не отдаёт ничего, кроме объявленного',
+    cardKeys === 'address,connectionStatus,emergencyPhone,name,operatorName,shutdowns', cardKeys);
+  const cardText = JSON.stringify(card.body);
+  check('в карточке нет жителей, помещений и заявок',
+    !/units|residents|orders|permits|phone"\s*:\s*"\+9989/.test(cardText));
+
+  // Неподключённый и несуществующий отвечают одинаково: иначе перебором
+  // идентификаторов можно составить реестр наших объектов
+  const darkB = (await call('/buildings', { token: t, body: { name: 'ЖК Тихий', address: 'Тихая 3' } })).body;
+  const darkCard = await call(`/public/buildings/${darkB.id}`);
+  const ghostCard = await call('/public/buildings/00000000-0000-0000-0000-000000000000');
+  check('неподключённый объект неотличим от несуществующего',
+    JSON.stringify(darkCard.body) === JSON.stringify(ghostCard.body), JSON.stringify(darkCard.body));
+  check('имя неподключённого объекта не раскрывается', darkCard.body.name === null);
+
+  const emptyDemand = await call('/public/demand', { body: { phone: '+998901112233' } });
+  check('обращение без адреса не принимается', emptyDemand.body.ok === false);
+  const blankDemand = await call('/public/demand', { body: { address: '   ' } });
+  check('адрес из одних пробелов не принимается', blankDemand.body.ok === false);
+
+  // Адрес уникален для прогона: реестр группирует обращения по адресу, и на
+  // общем адресе сошлись бы записи прошлых прогонов
+  const demandAddr = `Ташкент, Чиланзар ${uuid().slice(0, 8)}`;
+  const okDemand = await call('/public/demand', { body: { address: demandAddr, phone: '+998901112233' } });
+  check('обращение с адресом принято без авторизации', okDemand.body.ok === true);
+
+  const row = (await call('/buildings/demand', { token: t })).body.find((x) => x.address === demandAddr);
+  check('спрос жителя попал в реестр модерации A-39', row?.count === 1, JSON.stringify(row));
+
+  // Повторные обращения по одному адресу — это сила спроса, а не дубль
+  await call('/public/demand', { body: { address: demandAddr.toUpperCase() } });
+  const row2 = (await call('/buildings/demand', { token: t })).body.find((x) => x.address === demandAddr);
+  check('повторное обращение усиливает тот же адрес, а не плодит строку', row2?.count === 2, JSON.stringify(row2));
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);
   if (failed) {

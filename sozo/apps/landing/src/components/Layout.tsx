@@ -8,11 +8,12 @@ import { SozoLogo, SozoMark } from './Logo';
 const NAV = [
   { to: '/', label: 'Частным', end: true },
   { to: '/business', label: 'Бизнесу', end: false },
+  { to: '/operators', label: 'Домам', end: false },
   { to: '/masters', label: 'Мастерам', end: false },
 ];
 
 /** Страницы с тёмным героем — шапка на них стартует прозрачной. */
-const DARK_HERO = new Set(['/', '/business', '/masters']);
+const DARK_HERO = new Set(['/', '/business', '/operators', '/masters']);
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return isActive ? 'is-active' : '';
@@ -181,6 +182,7 @@ function Footer() {
             <p className="footer-col-title">Бизнесу и мастерам</p>
             <nav className="footer-links" aria-label="Бизнесу и мастерам">
               <Link to="/business">Обслуживание точек</Link>
+              <Link to="/operators">Управляющим компаниям</Link>
               <Link to="/calculator">Рассчитать абонентку</Link>
               <Link to="/masters">Работа мастером</Link>
               <Link to="/apply">Анкета мастера</Link>

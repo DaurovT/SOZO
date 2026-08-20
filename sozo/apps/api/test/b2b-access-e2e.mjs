@@ -16,6 +16,7 @@ const BASE = `${ROOT}/v1`;
 const STAFF = '+998900000803'; // сотрудник точки
 const SITE_MANAGER = '+998900000802'; // руководитель точки
 const ORG_MANAGER = '+998900000801'; // руководитель организации
+const SUBORDINATE = '+998900000804'; // сотрудник на точке руководителя
 
 let passed = 0;
 let failed = 0;
@@ -60,8 +61,68 @@ async function contextOf(token) {
   return me.body.contexts?.[0] ?? {};
 }
 
+const ADMIN = '+998900000000';
+
+/**
+ * Фикстуры набора.
+ *
+ * Раньше три телефона брались из состояния разработчика, и на чистой базе
+ * прогон рассыпался целиком — не потому, что права сломаны, а потому что
+ * контекстов не существовало. Роли завязаны на разные точки: две роли на
+ * одном человеке в одной точке невозможны, телефон в карточке точки один.
+ * Демо-сид здесь не годится — он вешает все три роли на один номер.
+ */
+async function seedFixtures() {
+  const admin = await login(ADMIN);
+  const orgs = (await call('/admin/organizations', { token: admin })).body;
+  const existing = Array.isArray(orgs) ? orgs : orgs.items ?? [];
+  let org = existing.find((o) => o.name === 'Сеть «Доступ» (e2e)');
+  if (!org) {
+    org = (await call('/admin/organizations', {
+      token: admin,
+      body: { name: 'Сеть «Доступ» (e2e)', inn: '300000001', contractType: 'subscription' },
+    })).body;
+  }
+
+  const full = (await call(`/admin/organizations/${org.id}`, { token: admin })).body;
+  const need = [
+    { name: 'Аптека Чиланзар', phone: STAFF, role: 'Провизор', limit: 0, primary: false },
+    { name: 'Аптека Юнусабад', phone: SITE_MANAGER, role: 'Руководитель точки', limit: 100_000_000, primary: true },
+    { name: 'Аптека Мирабад', phone: ORG_MANAGER, role: 'Руководитель организации', limit: null, primary: false },
+    // Подчинённый на точке руководителя — иначе нечего править и половина
+    // проверок на границы его прав просто не выполняется
+    { name: 'Аптека Юнусабад', phone: SUBORDINATE, role: 'Провизор', limit: 0, primary: false },
+  ];
+
+  // Точки ищем по накопленной карте, а не по разовому снимке org: две роли
+  // сидят на одной точке, и по стрым locations второй проход завёл бы дубль
+  const byName = new Map((full.locations ?? []).map((l) => [l.name, l]));
+
+  for (const n of need) {
+    let loc = byName.get(n.name);
+    if (!loc) {
+      loc = (await call(`/admin/organizations/${org.id}/locations`, {
+        token: admin,
+        body: { name: n.name, address: `Ташкент, ${n.name}`, orderLimitTiyin: 200_000_000, monthlyLimitTiyin: 800_000_000 },
+      })).body;
+      loc.representatives = loc.representatives ?? [];
+      byName.set(n.name, loc);
+    }
+    if (!loc.representatives.some((r) => r.phone === n.phone)) {
+      const rep = (await call(`/admin/organizations/${org.id}/locations/${loc.id}/representatives`, {
+        token: admin,
+        body: { fullName: n.role, phone: n.phone, role: n.role, approvalLimitTiyin: n.limit, primary: n.primary },
+      })).body;
+      loc.representatives.push(rep);
+    }
+  }
+  return org.id;
+}
+
 async function main() {
   console.log(`\nПрава в B2B-контуре: ${ROOT}\n${'='.repeat(52)}`);
+
+  await seedFixtures();
 
   const staff = await login(STAFF);
   const siteManager = await login(SITE_MANAGER);

@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start:dev": "ts-node --project tsconfig.json src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test:e2e": "node test/run-e2e.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",

@@ -71,6 +71,16 @@ export class BuildingsController {
     return this.buildings.resolve('t0', address);
   }
 
+  /**
+   * Спрос жителей с публичной страницы объекта (L-10).
+   * Обязан быть объявлен выше @Get(':id') — иначе параметрический роут
+   * перехватит 'demand' как идентификатор объекта.
+   */
+  @Get('demand')
+  demand() {
+    return this.buildings.demandByAddress('t0');
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     const b = this.buildings.get('t0', id);
@@ -126,12 +136,6 @@ export class BuildingsController {
     @Req() req: { auth: JwtClaims },
   ) {
     return this.buildings.decideClaim('t0', claimId, body.decision, body.reason ?? '', req.auth.phone);
-  }
-
-  /** Спрос жителей с публичной страницы объекта (L-10) */
-  @Get('demand')
-  demand() {
-    return this.buildings.demandByAddress('t0');
   }
 
   /** Верификация модератором платформы — автоматически не происходит никогда */
