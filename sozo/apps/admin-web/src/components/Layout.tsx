@@ -24,6 +24,7 @@ const MENU: {
       { to: '/operators', label: 'Эксплуатирующие организации' },
       { to: '/operator-billing', label: 'Подписки и расчёты' },
       { to: '/zone-types', label: 'Типы зон и допуски' },
+      { to: '/observation-categories', label: 'Категории замечаний' },
     ],
   },
   { section: 'Прайс и экономика', links: [{ to: '/price-releases', label: 'Релизы прайса' }] },

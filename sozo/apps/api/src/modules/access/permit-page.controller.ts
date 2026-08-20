@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { uuidv7 } from '@sozo/kernel';
+import { ZONE_TYPE_INFO } from '@sozo/contracts';
 import { AccessService } from './access.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { PermitLinksService } from './permit-links.service';
@@ -8,12 +9,17 @@ import {
   renderPermitPage, renderReschedulePage, renderRejectPage, renderResultPage,
 } from './permit-page.view';
 
-const ZONE: Record<string, string> = {
-  electrical_panel: 'электрощитовая', water_riser: 'стояк ХВС', sewage_riser: 'канализационный стояк',
-  basement: 'подвал', roof: 'кровля', technical_floor: 'техэтаж', lift_machine_room: 'лифтовая',
-  ventilation_chamber: 'вентиляционная камера', heat_point: 'ИТП', gas_equipment: 'газовое оборудование',
-  fire_system: 'пожарные системы', yard: 'двор',
-};
+/**
+ * Подписи зон — из общего справочника A-41, а не своей копией: консьерж
+ * читает эту страницу в SMS, инженер видит то же в кабинете, и расходиться
+ * они не должны.
+ *
+ * Регистр не трогаем: в подписях есть аббревиатуры («Стояк ХВС», «ИТП»), и
+ * приведение к нижнему регистру превращает их в «хвс» и «итп».
+ */
+const ZONE: Record<string, string> = Object.fromEntries(
+  ZONE_TYPE_INFO.map((z) => [z.code, z.label]),
+);
 
 const REJECT_REASONS = [
   'Работы в это время недопустимы',

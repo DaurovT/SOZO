@@ -5,7 +5,7 @@ import { useFetch } from '../useFetch';
 import { BuildingPicker, useSelectedBuilding } from '../components/BuildingPicker';
 import { Empty, ErrorState, Loading } from '../components/States';
 import { timeShort } from '../format';
-import type { Dashboard, Observation } from '../types';
+import type { Dashboard, Observation, ObservationCategory } from '../types';
 
 /**
  * U-16. Всё, что «не заявка»: грязь во дворе, разбитый плафон, подтёк в подвале.
@@ -46,6 +46,11 @@ export function Observations() {
     buildingId ? `/buildings/${buildingId}/observations?status=${tab}` : null,
     [buildingId, tab],
   );
+  // Подписи категорий берём с сервера: свой список здесь означал бы, что
+  // мастер на обходе нажимает одно, а в кабинете написано другое
+  const cats = useFetch<ObservationCategory[]>('/buildings/observation-categories');
+  const categoryLabel = (id: string) =>
+    cats.data?.find((c) => c.id === id)?.label ?? id;
 
   if (dash.loading || list.loading) return <Loading />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={dash.reload} />;
@@ -133,9 +138,11 @@ export function Observations() {
                       <span className="chip chip--neutral">{o.zoneKey}</span>
                       <span className="cap">источник: {SOURCE[o.source] ?? o.source}</span>
                     </div>
-                    <div className="dense">{o.comment || o.categoryId}</div>
+                    <div className="dense">{categoryLabel(o.categoryId)}</div>
+                    {o.comment && <div className="cap" style={{ marginTop: 'var(--s4)' }}>{o.comment}</div>}
                     <div className="cap" style={{ marginTop: 'var(--s4)' }}>
                       {timeShort(o.createdAt)} · фото: {o.photoIds.length}
+                      {o.routedEntityId && ' · заявка создана автоматически'}
                     </div>
                   </div>
 
@@ -148,7 +155,11 @@ export function Observations() {
                         onChange={(e) => e.target.value && route(o, e.target.value)}
                       >
                         <option value="" disabled>Направить…</option>
-                        {ROUTES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                        {ROUTES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}{r.value === o.suggestedRoute ? ' — обычно так' : ''}
+                          </option>
+                        ))}
                       </select>
                     )}
                     {o.status !== 'resolved' && (

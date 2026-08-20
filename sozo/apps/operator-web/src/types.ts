@@ -81,5 +81,19 @@ export interface Observation {
   status: 'open' | 'routed' | 'resolved' | 'rejected';
   photoIds: string[];
   comment: string | null;
+  /** маршрут, предложенный категорией A-44 — не решение, а подсказка */
+  suggestedRoute: 'task' | 'defect' | 'order' | 'contractor' | 'journal';
+  routedTo: 'task' | 'defect' | 'order' | 'contractor' | 'journal' | null;
+  /** заявка, созданная по замечанию (аварийное — автоматически) */
+  routedEntityId: string | null;
   createdAt: string;
+}
+
+/** Справочник A-44 — читается с сервера, чтобы подписи не разъехались */
+export interface ObservationCategory {
+  id: string;
+  label: string;
+  defaultSeverity: Observation['severity'];
+  defaultRoute: Observation['suggestedRoute'];
+  icon: string;
 }

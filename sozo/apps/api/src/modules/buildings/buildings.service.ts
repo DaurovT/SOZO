@@ -5,6 +5,7 @@ import { EventBus } from '../../common/event-bus';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { CrmService } from '../crm/crm.service';
 import type { ObservationSeverity, ObservationSource } from '@sozo/contracts';
+import { CRITICAL_ZONE_TYPES, LICENSED_ZONE_TYPES, OBSERVATION_CATEGORIES, observationCategory } from '@sozo/contracts';
 import {
   InMemoryBuildingRepository,
   type ObservationRecord,
@@ -26,10 +27,8 @@ import {
  * Критичные — авто-согласие молчанием запрещено всегда (DEV-15 §9.3).
  * Лицензируемые — наряд мастеру платформы не выдаётся никогда (ТЗ 17.8).
  */
-export const DEFAULT_CRITICAL_ZONES = [
-  'electrical_panel', 'gas_equipment', 'lift_machine_room', 'roof', 'fire_system', 'heat_point', 'ventilation_chamber',
-];
-export const DEFAULT_LICENSED_ZONES = ['gas_equipment', 'lift_machine_room', 'fire_system'];
+export const DEFAULT_CRITICAL_ZONES: readonly string[] = CRITICAL_ZONE_TYPES;
+export const DEFAULT_LICENSED_ZONES: readonly string[] = LICENSED_ZONE_TYPES;
 
 export interface ResolveResult {
   match: 'exact' | 'candidates' | 'none';
@@ -644,6 +643,16 @@ export class BuildingsService {
       throw new BadRequestException('Замечание фиксируется только с фотографией');
     }
 
+    // Категория обязана быть из справочника A-44: по ней подставляются
+    // серьёзность и маршрут, а свободная строка молча увела бы замечание
+    // в «содержание» — аварийная безопасность попала бы в уборку
+    const category = observationCategory(dto.categoryId);
+    if (!category) {
+      throw new BadRequestException(
+        `Неизвестная категория замечания: ${dto.categoryId}. Допустимые: ${OBSERVATION_CATEGORIES.map((c) => c.id).join(', ')}`,
+      );
+    }
+
     if (dto.joinObservationId) {
       const target = this.repo.getObservation(tenantId, dto.joinObservationId);
       if (!target) throw new NotFoundException('Замечание для присоединения не найдено');
@@ -663,12 +672,17 @@ export class BuildingsService {
       unitId: dto.unitId ?? null,
       authorPhone: dto.authorPhone,
       source: dto.source ?? 'walkthrough',
-      categoryId: dto.categoryId,
-      severity: dto.severity ?? 'housekeeping',
+      categoryId: category.id,
+      // Умолчание берётся из категории, а не из константы: фиксирующий чаще
+      // всего серьёзность не указывает, и «содержание» для всего подряд
+      // означало бы, что аварийное замечание ждёт в общей очереди
+      severity: dto.severity ?? category.defaultSeverity,
       photoIds: dto.photoIds,
       comment: dto.comment ?? null,
       status: 'open',
       routedTo: null,
+      suggestedRoute: category.defaultRoute,
+      routedEntityId: null,
       resolvedPhotoId: null,
       resolvedAt: null,
       joinedBy: [],
@@ -680,8 +694,28 @@ export class BuildingsService {
       buildingId,
       severity: rec.severity,
       source: rec.source,
+      categoryId: rec.categoryId,
+      zoneKey: rec.zoneKey,
+      authorPhone: rec.authorPhone,
+      comment: rec.comment,
     });
     return { observation: rec, duplicates, joined: false };
+  }
+
+  /**
+   * Связать замечание с созданной по нему заявкой.
+   *
+   * Отдельный метод, а не поле в addObservation: заявку создаёт подписчик в
+   * orders уже после того, как замечание сохранено, — иначе buildings пришлось
+   * бы знать про orders.
+   */
+  linkObservationOrder(tenantId: string, observationId: string, orderId: string): void {
+    const o = this.repo.getObservation(tenantId, observationId);
+    if (!o) return;
+    o.routedTo = 'order';
+    o.routedEntityId = orderId;
+    o.status = 'routed';
+    this.repo.saveObservation(o);
   }
 
   listObservations(tenantId: string, buildingId: string, status?: ObservationRecord['status']) {
@@ -695,7 +729,15 @@ export class BuildingsService {
   ): ObservationRecord {
     const o = this.repo.getObservation(tenantId, id);
     if (!o) throw new NotFoundException('Замечание не найдено');
+    // Устранённое замечание закрыто фотографией приёмки. Перемаршрутизация
+    // молча вернула бы его в работу и обнулила бы доказательство устранения
+    if (o.status === 'resolved' || o.status === 'rejected') {
+      throw new BadRequestException('Замечание уже закрыто — перемаршрутизировать его нельзя');
+    }
     o.routedTo = routedTo;
+    // Ссылка на заявку осмысленна только при маршруте «заявка»: при смене
+    // маршрута она указывала бы на чужую сущность
+    if (routedTo !== 'order') o.routedEntityId = null;
     o.status = 'routed';
     this.repo.saveObservation(o);
     return o;

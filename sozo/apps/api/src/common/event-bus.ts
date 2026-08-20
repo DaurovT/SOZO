@@ -54,3 +54,16 @@ export interface OrderClosedEvent {
   /** ставка сервисного сбора объекта в базисных пунктах */
   serviceFeeBps?: number;
 }
+
+/** Payload события observation.created — контракт для подписчика в orders */
+export interface ObservationCreatedEvent {
+  observationId: string;
+  buildingId: string;
+  severity: 'emergency' | 'work_required' | 'housekeeping' | 'info';
+  source: 'walkthrough' | 'resident' | 'master' | 'complaint';
+  categoryId: string;
+  /** зона или место — идёт в адрес заявки, чтобы бригада знала, куда ехать */
+  zoneKey: string;
+  authorPhone: string;
+  comment: string | null;
+}

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { ObservationOrdersService } from './observation-orders.service';
 import { DispatchController } from './dispatch.controller';
 import { ClientsController } from './clients.controller';
 import { PhotosController } from './photos.controller';
@@ -21,7 +22,7 @@ import { SlaModule } from '../sla/sla.module';
 @Module({
   imports: [PricingModule, MastersModule, CrmModule, PromoModule, AccessModule, BuildingsModule, SlaModule],
   controllers: [OrdersController, DispatchController, ClientsController, PhotosController, AdminOrdersController],
-  providers: [OrdersService, { provide: ORDER_REPOSITORY, useClass: InMemoryOrderRepository }],
+  providers: [OrdersService, { provide: ORDER_REPOSITORY, useClass: InMemoryOrderRepository }, ObservationOrdersService],
   exports: [OrdersService],
 })
 export class OrdersModule {}

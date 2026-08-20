@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../identity/auth.guard';
+import { OBSERVATION_CATEGORIES, ZONE_TYPE_INFO } from '@sozo/contracts';
 import { BuildingsService } from './buildings.service';
 import type { JwtClaims } from '../../common/jwt';
 
@@ -69,6 +70,22 @@ export class BuildingsController {
   @Get('resolve')
   resolve(@Query('address') address = '') {
     return this.buildings.resolve('t0', address);
+  }
+
+  /** A-41 — справочник типов зон, флагов допуска и квалификаций */
+  @Get('zone-types')
+  zoneTypes() {
+    return ZONE_TYPE_INFO;
+  }
+
+  /**
+   * A-44 — справочник категорий замечаний.
+   * Как и `demand`, объявлен выше @Get(':id'), иначе параметрический роут
+   * перехватит 'observation-categories' как идентификатор объекта.
+   */
+  @Get('observation-categories')
+  observationCategories() {
+    return OBSERVATION_CATEGORIES;
   }
 
   /**

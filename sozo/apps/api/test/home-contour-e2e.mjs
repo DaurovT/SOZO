@@ -102,6 +102,15 @@ async function main() {
 
   // ---------------------------------------------------------------
   group('2. Справочник зон A-41');
+  const zt = (await call('/buildings/zone-types', { token: t })).body;
+  check('справочник зон отдаётся целиком', Array.isArray(zt) && zt.length === 12, String(zt.length));
+  // Два флага несут разный смысл: критичная запрещает авто-согласие,
+  // лицензируемая запрещает самого исполнителя
+  check('лицензируемая зона всегда и критичная', zt.filter((z) => z.licensed).every((z) => z.critical));
+  check('подпись зоны одна на всю систему',
+    zt.find((z) => z.code === 'ventilation_chamber')?.label === 'Камера дымоудаления',
+    zt.find((z) => z.code === 'ventilation_chamber')?.label);
+
   const zones = (await call(`/buildings/${uk}/zones`, { token: t })).body;
   const gas = zones.find((z) => z.zoneType === 'gas_equipment');
   const panel = zones.find((z) => z.zoneType === 'electrical_panel');
@@ -345,7 +354,10 @@ async function main() {
   const pageHtml = await pageRes.text();
   check('страница открывается без авторизации', pageRes.status === 200, String(pageRes.status));
   check('страница закрыта от индексации', (pageRes.headers.get('x-robots-tag') ?? '').includes('noindex'));
-  check('видна зона доступа', pageHtml.includes('стояк ХВС'));
+  // Подпись ровно как в справочнике A-41: страница в SMS и кабинет обязаны
+  // называть зону одинаково, иначе консьерж и инженер говорят о разном
+  check('видна зона доступа подписью из справочника', pageHtml.includes('Стояк ХВС'));
+  check('аббревиатура в подписи не испорчена регистром', !pageHtml.includes('стояк хвс'));
   check('видна зона влияния отключения', /Затронет \d+ помещ/.test(pageHtml));
   check('обещан срок авто-согласия', pageHtml.includes('согласуется автоматически'));
 
@@ -443,6 +455,76 @@ async function main() {
   await call(`/buildings/claims/${solo.claim.id}/decide`, { token: t, body: { decision: 'reject', reason: 'документ не подтверждает права' } });
   const soloAfter = (await call(`/buildings/${soloB.id}`, { token: t })).body;
   check('отказ единственной заявке возвращает объект в unmanaged', soloAfter.connectionStatus === 'unmanaged', soloAfter.connectionStatus);
+
+  // ---------------------------------------------------------------
+  group('15. A-44 — справочник категорий замечаний');
+
+  const cats = (await call('/buildings/observation-categories', { token: t })).body;
+  check('справочник отдаётся', Array.isArray(cats) && cats.length === 11, String(cats.length));
+  check('у каждой категории есть умолчания и иконка',
+    cats.every((c) => c.id && c.label && c.defaultSeverity && c.defaultRoute && c.icon));
+
+  // Свободная строка молча уводила бы замечание в «содержание»: аварийная
+  // безопасность попала бы в очередь уборки
+  const badCat = await call(`/buildings/${uk}/observations`, {
+    token: t, body: { zoneKey: 'подвал', categoryId: 'выдуманная', photoIds: [uuid()] },
+  });
+  check('категория вне справочника отклоняется', badCat.status >= 400, errText(badCat.body));
+
+  const lightObs = (await call(`/buildings/${uk}/observations`, {
+    token: t, body: { zoneKey: 'подъезд 4', categoryId: 'lighting', photoIds: [uuid()] },
+  })).body.observation;
+  check('серьёзность подставлена из категории, а не константой',
+    lightObs.severity === 'work_required', lightObs.severity);
+  check('маршрут предложен категорией', lightObs.suggestedRoute === 'task', lightObs.suggestedRoute);
+  check('предложение маршрута не выдаётся за решение',
+    lightObs.routedTo === null && lightObs.status === 'open');
+
+  // Явно указанная серьёзность важнее умолчания: человек на месте видит больше
+  const forced = (await call(`/buildings/${uk}/observations`, {
+    token: t, body: { zoneKey: 'подъезд 5', categoryId: 'lighting', severity: 'info', photoIds: [uuid()] },
+  })).body.observation;
+  check('указанная серьёзность важнее умолчания категории', forced.severity === 'info', forced.severity);
+
+  group('16. Аварийное замечание становится заявкой само');
+
+  const ordersBefore = (await call('/admin/orders', { token: t })).body.length;
+  const danger = (await call(`/buildings/${uk}/observations`, {
+    token: t, body: { zoneKey: 'детская площадка', categoryId: 'safety', photoIds: [uuid()], comment: 'Сорван поручень' },
+  })).body.observation;
+  check('категория безопасности аварийна по умолчанию', danger.severity === 'emergency', danger.severity);
+
+  const linked = (await call(`/buildings/${uk}/observations`, { token: t })).body.find((x) => x.id === danger.id);
+  check('замечание связано с созданной заявкой', Boolean(linked?.routedEntityId), JSON.stringify(linked?.routedEntityId));
+  check('замечание помечено как маршрутизированное в заявку',
+    linked?.routedTo === 'order' && linked?.status === 'routed', `${linked?.routedTo}/${linked?.status}`);
+
+  const ordersAfter = (await call('/admin/orders', { token: t })).body;
+  check('заявка действительно создана', ordersAfter.length === ordersBefore + 1, `${ordersBefore} -> ${ordersAfter.length}`);
+
+  const auto = (await call(`/orders/${linked?.routedEntityId}`, { token: t })).body;
+  // Замечание всегда об общем имуществе — правило владельца абсолютное:
+  // мастеру платформы такая заявка не достаётся ни при каких условиях
+  check('заявка создана как общее имущество', auto?.orderScope === 'common_area', auto?.orderScope);
+  check('окна первой руки нет', !auto?.firstRefusalUntil, String(auto?.firstRefusalUntil));
+  check('заявка закреплена за оператором', Boolean(auto?.claimedByOperator), String(auto?.claimedByOperator));
+  check('труд считается окладом оператора, платформа не в деньгах',
+    auto?.laborSettlement === 'salary', String(auto?.laborSettlement));
+  check('заявка аварийная', auto?.graphType === 'emergency', String(auto?.graphType));
+
+  // Не аварийное — решение остаётся за человеком, автоматика не вмешивается
+  const countBefore = (await call('/admin/orders', { token: t })).body.length;
+  await call(`/buildings/${uk}/observations`, {
+    token: t, body: { zoneKey: 'газон', categoryId: 'greenery', photoIds: [uuid()] },
+  });
+  const countAfter = (await call('/admin/orders', { token: t })).body.length;
+  check('обычное замечание заявку не создаёт', countAfter === countBefore, `${countBefore} -> ${countAfter}`);
+
+  // Закрытое замечание не должно тихо возвращаться в работу
+  const reroute = await call(`/buildings/observations/${o1.observation.id}/route`, {
+    token: t, body: { routedTo: 'task' },
+  });
+  check('закрытое замечание перемаршрутизировать нельзя', reroute.status >= 400, errText(reroute.body));
 
   // ---------------------------------------------------------------
   group('14. L-10 — публичная карточка объекта по QR');

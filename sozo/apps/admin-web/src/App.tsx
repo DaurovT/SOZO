@@ -1,6 +1,7 @@
 import { BuildingsPage } from './pages/Buildings';
 import { OperatorsPage } from './pages/Operators';
 import { ZoneTypesPage } from './pages/ZoneTypes';
+import { ObservationCategoriesPage } from './pages/ObservationCategories';
 import { OperatorBillingPage } from './pages/OperatorBilling';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
@@ -83,6 +84,7 @@ export function App() {
             <Route path="/buildings" element={<BuildingsPage />} />
             <Route path="/operators" element={<OperatorsPage />} />
             <Route path="/zone-types" element={<ZoneTypesPage />} />
+            <Route path="/observation-categories" element={<ObservationCategoriesPage />} />
             <Route path="/operator-billing" element={<OperatorBillingPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/map" element={<MapPage />} />

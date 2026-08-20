@@ -1,3 +1,7 @@
+import { api } from '../api';
+import { useFetch } from '../useFetch';
+import { EmptyRow, ErrorBanner, Loading } from '../components/States';
+
 /**
  * A-41. Справочник типов общих зон и маппинг допусков.
  *
@@ -7,6 +11,9 @@
  *
  * Флаги редактирует только админ платформы. Оператор вправе ужесточить
  * критичность на своём объекте, ослабить — нет.
+ *
+ * Читается из API: раньше копия списка жила здесь, а флаги и подписи — ещё в
+ * трёх местах на сервере, и подписи уже разъехались.
  */
 
 interface ZoneType {
@@ -17,22 +24,17 @@ interface ZoneType {
   qualification: string | null;
 }
 
-const ZONES: ZoneType[] = [
-  { code: 'water_riser', label: 'Стояк ХВС', critical: false, licensed: false, qualification: null },
-  { code: 'sewage_riser', label: 'Канализационный стояк', critical: false, licensed: false, qualification: null },
-  { code: 'basement', label: 'Подвал', critical: false, licensed: false, qualification: 'замкнутые пространства' },
-  { code: 'yard', label: 'Двор', critical: false, licensed: false, qualification: null },
-  { code: 'technical_floor', label: 'Техэтаж', critical: false, licensed: false, qualification: null },
-  { code: 'electrical_panel', label: 'Электрощитовая', critical: true, licensed: false, qualification: 'группа по электробезопасности' },
-  { code: 'roof', label: 'Кровля', critical: true, licensed: false, qualification: 'работы на высоте' },
-  { code: 'heat_point', label: 'ИТП', critical: true, licensed: false, qualification: 'тепловые энергоустановки' },
-  { code: 'ventilation_chamber', label: 'Камера дымоудаления', critical: true, licensed: false, qualification: null },
-  { code: 'gas_equipment', label: 'Газовое оборудование', critical: true, licensed: true, qualification: 'лицензия на газ' },
-  { code: 'lift_machine_room', label: 'Лифтовая', critical: true, licensed: true, qualification: 'лицензия на лифты' },
-  { code: 'fire_system', label: 'Пожарные системы', critical: true, licensed: true, qualification: 'лицензия МЧС' },
-];
-
 export function ZoneTypesPage() {
+  const { data, loading, error } = useFetch<ZoneType[]>(
+    () => api.get<ZoneType[]>('/buildings/zone-types'),
+    [],
+  );
+
+  if (loading) return <Loading />;
+  if (error !== null) return <ErrorBanner message={error} />;
+
+  const zones = data ?? [];
+
   return (
     <>
       <div className="page-header">
@@ -51,7 +53,8 @@ export function ZoneTypesPage() {
             <tr><th>Зона</th><th>Код</th><th>Критичная</th><th>Лицензируемая</th><th>Требуемая квалификация</th></tr>
           </thead>
           <tbody>
-            {ZONES.map((z) => (
+            {zones.length === 0 && <EmptyRow colSpan={5} text="Справочник пуст" />}
+            {zones.map((z) => (
               <tr key={z.code}>
                 <td>{z.label}</td>
                 <td className="muted">{z.code}</td>

@@ -182,6 +182,60 @@ export const ZONE_TYPES = [
 ] as const;
 export type ZoneType = (typeof ZONE_TYPES)[number];
 
+export interface ZoneTypeInfo {
+  code: ZoneType;
+  label: string;
+  /** авто-согласие молчанием запрещено — наряд ждёт решения человека */
+  critical: boolean;
+  /** наряд мастеру платформы не выдаётся вообще (ТЗ 17.8) */
+  licensed: boolean;
+  /** квалификация, без которой мастер платформы в зону не заходит */
+  qualification: string | null;
+}
+
+/**
+ * A-41 — справочник типов общих зон (DEV-15 §4).
+ *
+ * Единственный источник: раньше коды жили в ZONE_TYPES, флаги критичности —
+ * в buildings.service, подписи — в контроллере страницы согласования, а
+ * админка держала свою копию всего сразу. Подписи уже разъехались
+ * («вентиляционная камера» против «камеры дымоудаления»), и это ровно тот
+ * случай, когда консьерж в SMS читает одно, а инженер в кабинете — другое.
+ *
+ * Два флага несут разный смысл и путать их нельзя: критичная зона запрещает
+ * авто-согласие, лицензируемая запрещает самого исполнителя.
+ */
+export const ZONE_TYPE_INFO = [
+  { code: 'water_riser',         label: 'Стояк ХВС',                critical: false, licensed: false, qualification: null },
+  { code: 'sewage_riser',        label: 'Канализационный стояк',    critical: false, licensed: false, qualification: null },
+  { code: 'basement',            label: 'Подвал',                   critical: false, licensed: false, qualification: 'замкнутые пространства' },
+  { code: 'yard',                label: 'Двор',                     critical: false, licensed: false, qualification: null },
+  { code: 'technical_floor',     label: 'Техэтаж',                  critical: false, licensed: false, qualification: null },
+  { code: 'electrical_panel',    label: 'Электрощитовая',           critical: true,  licensed: false, qualification: 'группа по электробезопасности' },
+  { code: 'roof',                label: 'Кровля',                   critical: true,  licensed: false, qualification: 'работы на высоте' },
+  { code: 'heat_point',          label: 'ИТП',                      critical: true,  licensed: false, qualification: 'тепловые энергоустановки' },
+  { code: 'ventilation_chamber', label: 'Камера дымоудаления',      critical: true,  licensed: false, qualification: null },
+  { code: 'gas_equipment',       label: 'Газовое оборудование',     critical: true,  licensed: true,  qualification: 'лицензия на газ' },
+  { code: 'lift_machine_room',   label: 'Лифтовая',                 critical: true,  licensed: true,  qualification: 'лицензия на лифты' },
+  { code: 'fire_system',         label: 'Пожарные системы',         critical: true,  licensed: true,  qualification: 'лицензия МЧС' },
+] as const satisfies readonly ZoneTypeInfo[];
+
+/**
+ * Компилятор следит, что справочник покрывает все коды: добавили зону в
+ * ZONE_TYPES и забыли описать — сборка падает здесь, а не молча в рантайме,
+ * где зона окажется некритичной и уйдёт под авто-согласие.
+ */
+type AssertNever<T extends never> = T;
+type _ZoneCoverage = AssertNever<Exclude<ZoneType, (typeof ZONE_TYPE_INFO)[number]['code']>>;
+
+export const CRITICAL_ZONE_TYPES = ZONE_TYPE_INFO.filter((z) => z.critical).map((z) => z.code);
+export const LICENSED_ZONE_TYPES = ZONE_TYPE_INFO.filter((z) => z.licensed).map((z) => z.code);
+
+/** Подпись зоны для человека; неизвестный код возвращается как есть */
+export function zoneLabel(code: string): string {
+  return ZONE_TYPE_INFO.find((z) => z.code === code)?.label ?? code;
+}
+
 export const ORDER_SCOPES = ['private', 'common_area'] as const;
 export type OrderScope = (typeof ORDER_SCOPES)[number];
 
@@ -223,6 +277,50 @@ export type ObservationSeverity = (typeof OBSERVATION_SEVERITIES)[number];
 
 export const OBSERVATION_SOURCES = ['walkthrough', 'resident', 'master', 'complaint'] as const;
 export type ObservationSource = (typeof OBSERVATION_SOURCES)[number];
+
+export const OBSERVATION_ROUTES = ['task', 'defect', 'order', 'contractor', 'journal'] as const;
+export type ObservationRoute = (typeof OBSERVATION_ROUTES)[number];
+
+export interface ObservationCategory {
+  id: string;
+  label: string;
+  /** серьёзность, если фиксирующий её не указал */
+  defaultSeverity: ObservationSeverity;
+  /** куда замечание уходит по умолчанию — решение всё равно за человеком */
+  defaultRoute: ObservationRoute;
+  /** иконка плитки быстрой фиксации M-49 */
+  icon: string;
+}
+
+/**
+ * A-44 — справочник категорий замечаний (DEV-15 §7.7.2, PRD-04 A-44).
+ *
+ * Шире каталога дефектов намеренно: грязь во дворе, перегоревший фонарь и
+ * граффити не являются дефектами оборудования, но терять их нельзя. Тащить
+ * их в DEFECT неправильно — техдолг перестал бы означать состояние здания.
+ *
+ * Порядок значим: это порядок плиток на экране быстрой фиксации, а мастер
+ * бьёт по ним не глядя. Сверху то, что встречается на каждом обходе.
+ */
+export const OBSERVATION_CATEGORIES: readonly ObservationCategory[] = [
+  { id: 'housekeeping',  label: 'Содержание и уборка',       defaultSeverity: 'housekeeping',   defaultRoute: 'task',       icon: 'broom' },
+  { id: 'lighting',      label: 'Освещение',                  defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'bulb' },
+  { id: 'small_forms',   label: 'Малые архитектурные формы',   defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'bench' },
+  { id: 'greenery',      label: 'Зелёные насаждения',          defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'tree' },
+  { id: 'parking',       label: 'Парковка и проезды',          defaultSeverity: 'housekeeping',   defaultRoute: 'journal',    icon: 'car' },
+  { id: 'waste',         label: 'Мусорные площадки',           defaultSeverity: 'housekeeping',   defaultRoute: 'contractor', icon: 'trash' },
+  { id: 'vandalism',     label: 'Вандализм и граффити',        defaultSeverity: 'work_required',  defaultRoute: 'task',       icon: 'spray' },
+  { id: 'engineering',   label: 'Инженерные системы',          defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'valve' },
+  { id: 'structure',     label: 'Конструктив',                 defaultSeverity: 'work_required',  defaultRoute: 'defect',     icon: 'wall' },
+  { id: 'safety',        label: 'Безопасность и доступность',  defaultSeverity: 'emergency',      defaultRoute: 'order',      icon: 'shield' },
+  { id: 'residents',     label: 'Нарушения жителей',           defaultSeverity: 'info',           defaultRoute: 'journal',    icon: 'person' },
+] as const;
+
+export const OBSERVATION_CATEGORY_IDS = OBSERVATION_CATEGORIES.map((c) => c.id);
+
+export function observationCategory(id: string): ObservationCategory | undefined {
+  return OBSERVATION_CATEGORIES.find((c) => c.id === id);
+}
 
 /** Коды ошибок контура (DEV-03) */
 export const PERMIT_ERROR_CODES = [

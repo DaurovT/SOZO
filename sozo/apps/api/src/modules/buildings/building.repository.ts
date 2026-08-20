@@ -336,6 +336,10 @@ export interface ObservationRecord {
   comment: string | null;
   status: 'open' | 'routed' | 'resolved' | 'rejected';
   routedTo: 'task' | 'defect' | 'order' | 'contractor' | 'journal' | null;
+  /** маршрут из категории A-44 — предложение кабинету, решение за человеком */
+  suggestedRoute: 'task' | 'defect' | 'order' | 'contractor' | 'journal';
+  /** заявка, созданная по этому замечанию (аварийное — автоматически) */
+  routedEntityId: string | null;
   resolvedPhotoId: string | null;
   resolvedAt: string | null;
   /** к какому замечанию присоединились дубликаты */
