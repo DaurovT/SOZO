@@ -59,10 +59,61 @@ export class BuildingsController {
     return { ...b, readinessGaps: this.buildings.readinessGaps('t0', b) };
   }
 
-  /** Заявка оператора на подключение объекта (self-serve) */
+  /** Заявка организации на подключение объекта (self-serve). Прав не даёт — только очередь модерации */
   @Post(':id/claim')
-  claim(@Param('id') id: string, @Body() body: { operatorOrgId: string }) {
-    return this.buildings.claim('t0', id, body.operatorOrgId);
+  claim(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      operatorOrgId: string;
+      operatorName?: string;
+      applicantPhone?: string;
+      documentKind?: string;
+      documentId?: string;
+      contactPhone?: string;
+    },
+    @Req() req: { auth: JwtClaims },
+  ) {
+    return this.buildings.claim('t0', id, {
+      operatorOrgId: body.operatorOrgId,
+      operatorName: body.operatorName,
+      applicantPhone: body.applicantPhone ?? req.auth.phone,
+      documentKind: body.documentKind ?? 'договор управления',
+      documentId: body.documentId,
+      contactPhone: body.contactPhone,
+    });
+  }
+
+  // ---------- A-39: модерация подключений ----------
+
+  @Get('claims/queue')
+  claims(@Query('status') status?: 'pending' | 'frozen' | 'approved' | 'rejected') {
+    return this.buildings.listClaims('t0', status);
+  }
+
+  @Get('claims/:claimId/signals')
+  claimSignals(@Param('claimId') claimId: string) {
+    return this.buildings.claimSignals('t0', claimId);
+  }
+
+  @Post('claims/:claimId/callback')
+  callback(@Param('claimId') claimId: string, @Body() body: { result: 'confirmed' | 'denied' | 'no_answer' }) {
+    return this.buildings.setCallback('t0', claimId, body.result);
+  }
+
+  @Post('claims/:claimId/decide')
+  decide(
+    @Param('claimId') claimId: string,
+    @Body() body: { decision: 'approve' | 'reject'; reason?: string },
+    @Req() req: { auth: JwtClaims },
+  ) {
+    return this.buildings.decideClaim('t0', claimId, body.decision, body.reason ?? '', req.auth.phone);
+  }
+
+  /** Спрос жителей с публичной страницы объекта (L-10) */
+  @Get('demand')
+  demand() {
+    return this.buildings.demandByAddress('t0');
   }
 
   /** Верификация модератором платформы — автоматически не происходит никогда */

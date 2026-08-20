@@ -3,6 +3,7 @@ import { BuildingsController } from './buildings.controller';
 import { BuildingsService } from './buildings.service';
 import { InMemoryBuildingRepository } from './building.repository';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+import { CrmModule } from '../crm/crm.module';
 
 /**
  * Модуль buildings (DEV-07 §2.1): объекты, помещения, зоны, персонал оператора,
@@ -10,7 +11,7 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
  * Никого доменного не импортирует — его импортируют access и operator-api.
  */
 @Module({
-  imports: [SubscriptionsModule],
+  imports: [SubscriptionsModule, CrmModule],
   controllers: [BuildingsController],
   providers: [BuildingsService, InMemoryBuildingRepository],
   exports: [BuildingsService],

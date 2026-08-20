@@ -81,6 +81,8 @@ export class InMemoryBuildingRepository {
   private equipment = new Map<string, EquipmentRecord>();
   private defects = new Map<string, DefectRecord>();
   private opPrices = new Map<string, OperatorPriceItem>();
+  private claims = new Map<string, ClaimRequest>();
+  private demand = new Map<string, DemandSignal>();
   private routes = new Map<string, WalkthroughRoute>();
   private walks = new Map<string, WalkthroughRecord>();
 
@@ -96,6 +98,8 @@ export class InMemoryBuildingRepository {
         equipment: [...this.equipment.values()],
         defects: [...this.defects.values()],
         opPrices: [...this.opPrices.values()],
+        claims: [...this.claims.values()],
+        demand: [...this.demand.values()],
         routes: [...this.routes.values()],
         walks: [...this.walks.values()],
       }),
@@ -109,6 +113,8 @@ export class InMemoryBuildingRepository {
           equipment?: EquipmentRecord[];
           defects?: DefectRecord[];
           opPrices?: OperatorPriceItem[];
+          claims?: ClaimRequest[];
+          demand?: DemandSignal[];
           routes?: WalkthroughRoute[];
           walks?: WalkthroughRecord[];
         };
@@ -120,6 +126,8 @@ export class InMemoryBuildingRepository {
         this.equipment = new Map((d.equipment ?? []).map((e) => [e.id, e]));
         this.defects = new Map((d.defects ?? []).map((x) => [x.id, x]));
         this.opPrices = new Map((d.opPrices ?? []).map((x) => [x.id, x]));
+        this.claims = new Map((d.claims ?? []).map((x) => [x.id, x]));
+        this.demand = new Map((d.demand ?? []).map((x) => [x.id, x]));
         this.routes = new Map((d.routes ?? []).map((x) => [x.id, x]));
         this.walks = new Map((d.walks ?? []).map((x) => [x.id, x]));
       },
@@ -270,6 +278,29 @@ export class InMemoryBuildingRepository {
       .filter((x) => x.tenantId === tenantId && x.buildingId === buildingId)
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   }
+
+  saveClaim(c: ClaimRequest): void {
+    this.claims.set(c.id, c);
+  }
+  getClaim(tenantId: string, id: string): ClaimRequest | undefined {
+    const c = this.claims.get(id);
+    return c && c.tenantId === tenantId ? c : undefined;
+  }
+  listClaims(tenantId: string, status?: ClaimRequest['status']): ClaimRequest[] {
+    return [...this.claims.values()]
+      .filter((c) => c.tenantId === tenantId && (!status || c.status === status))
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  }
+  claimsForBuilding(tenantId: string, buildingId: string): ClaimRequest[] {
+    return [...this.claims.values()].filter((c) => c.tenantId === tenantId && c.buildingId === buildingId);
+  }
+
+  saveDemand(d: DemandSignal): void {
+    this.demand.set(d.id, d);
+  }
+  listDemand(tenantId: string): DemandSignal[] {
+    return [...this.demand.values()].filter((d) => d.tenantId === tenantId);
+  }
 }
 
 export interface ObservationRecord {
@@ -388,4 +419,42 @@ export interface WalkthroughRecord {
   passedZones: string[];
   /** замечания, зафиксированные в этом обходе */
   observationIds: string[];
+}
+
+/**
+ * Заявка организации на подключение объекта (DEV-15 §10.9).
+ *
+ * Отдельная сущность, а не поле здания: заявок на один объект может быть
+ * несколько, и решение по каждой должно храниться со своей причиной.
+ * Отклонённая заявка не удаляется — она защита от повторной попытки того же
+ * заявителя и материал для чёрного списка.
+ */
+export interface ClaimRequest {
+  id: string;
+  tenantId: string;
+  buildingId: string;
+  operatorOrgId: string;
+  operatorName: string;
+  applicantPhone: string;
+  /** договор управления · протокол ОСС · свидетельство · договор ТО */
+  documentKind: string;
+  documentId: string | null;
+  /** телефон, указанный заявителем — сверяется с накопленным контактом */
+  contactPhone: string | null;
+  status: 'pending' | 'frozen' | 'approved' | 'rejected';
+  /** результат обратного звонка на телефон объекта из открытых источников */
+  callbackResult: 'confirmed' | 'denied' | 'no_answer' | null;
+  decisionBy: string | null;
+  decisionAt: string | null;
+  decisionReason: string | null;
+  createdAt: string;
+}
+
+/** Обращение «моего дома здесь нет» с публичной страницы объекта (L-10) */
+export interface DemandSignal {
+  id: string;
+  tenantId: string;
+  address: string;
+  phone: string | null;
+  createdAt: string;
 }

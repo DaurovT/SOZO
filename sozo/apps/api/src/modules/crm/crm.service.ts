@@ -291,6 +291,17 @@ export class CrmService {
     this.store.persist();
   }
 
+  /**
+   * Все точки с их паспортами и контактами — нужен контуру «Дом» для сверки
+   * заявки на подключение объекта с контактом ТСЖ/УК, который мастера
+   * накопили при первых осмотрах (A-09). Эти данные старше любой заявки.
+   */
+  allLocations(): Array<LocationRec & { orgId: string; orgName: string }> {
+    return this.orgs.flatMap((o) =>
+      (o.locations ?? []).map((l) => ({ ...l, orgId: o.id, orgName: o.name })),
+    );
+  }
+
   list(): Array<Omit<OrganizationRec, 'locations'> & { locationsCount: number }> {
     return this.orgs.map(({ locations, ...o }) => ({ ...o, locationsCount: locations.length }));
   }

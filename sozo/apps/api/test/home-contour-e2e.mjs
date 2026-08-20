@@ -90,7 +90,11 @@ async function main() {
 
   await call(`/buildings/${raw.id}/claim`, { token: t, body: { operatorOrgId: 'op-x' } });
   const conflict = await call(`/buildings/${raw.id}/claim`, { token: t, body: { operatorOrgId: 'op-y' } });
-  check('второй заявитель на тот же объект отклоняется', conflict.status === 409, errText(conflict.body));
+  check('второй заявитель замораживается вместе с первым, а не отклоняется',
+    conflict.body?.claim?.status === 'frozen', JSON.stringify(conflict.body?.claim?.status));
+  const bothFrozen = (await call('/buildings/claims/queue?status=frozen', { token: t })).body
+    .filter((c) => c.buildingId === raw.id);
+  check('обе заявки на спорный объект заморожены', bothFrozen.length === 2, `${bothFrozen.length}`);
 
   const uk = await setupBuilding(t, { name: 'ЖК Сокол', address: 'Амира Темура 15', org: 'uk1', plan: 'free', kind: 'hoa' });
   const bc = await setupBuilding(t, { name: 'БЦ Пойтахт', address: 'Шота Руставели 4', org: 'bc1', plan: 'pro', kind: 'bc' });
@@ -389,6 +393,56 @@ async function main() {
 
   const unknown = await fetch(`${ROOT}/p/ZZZZZZZZ`);
   check('несуществующий код неотличим от истёкшего', unknown.status === 410, String(unknown.status));
+
+  // ---------------------------------------------------------------
+  group('13. A-39 — модерация подключений');
+
+  const modB = (await call('/buildings', { token: t, body: { name: 'ЖК Спорный', address: 'Ташкент, Чиланзар-9' } })).body;
+
+  const first = (await call(`/buildings/${modB.id}/claim`, {
+    token: t,
+    body: { operatorOrgId: 'mod-a', operatorName: 'УК Первая', documentKind: 'договор управления', contactPhone: '+998712001122' },
+  })).body;
+  check('заявка встаёт в очередь, а не даёт прав', first.claim.status === 'pending' && first.building.connectionStatus === 'claimed');
+
+  const second = (await call(`/buildings/${modB.id}/claim`, {
+    token: t,
+    body: { operatorOrgId: 'mod-b', operatorName: 'УК Вторая', documentKind: 'протокол ОСС', contactPhone: '+998901112233' },
+  })).body;
+  check('второй заявитель замораживается, а не отклоняется', second.claim.status === 'frozen');
+
+  const frozen = (await call('/buildings/claims/queue?status=frozen', { token: t })).body;
+  check('замораживаются ОБЕ заявки — платформа не арбитр', frozen.length >= 2, `${frozen.length}`);
+
+  const sig = (await call(`/buildings/claims/${first.claim.id}/signals`, { token: t })).body;
+  check('сигнал сверки с накопленным контактом ТСЖ/УК считается', Array.isArray(sig.signals.knownContacts));
+  check('видно конкурирующую заявку', sig.competing.length === 1, `${sig.competing.length}`);
+
+  const noReasonReject = await call(`/buildings/claims/${first.claim.id}/decide`, {
+    token: t, body: { decision: 'reject' },
+  });
+  check('отклонение заявки без причины не принимается', noReasonReject.status >= 400, errText(noReasonReject.body));
+
+  const claimApproved = (await call(`/buildings/claims/${first.claim.id}/decide`, {
+    token: t, body: { decision: 'approve', reason: 'документы и контакт сошлись' },
+  })).body;
+  check('решение записано с автором и основанием', claimApproved.status === 'approved' && Boolean(claimApproved.decisionBy) && Boolean(claimApproved.decisionReason));
+
+  const afterB = (await call(`/buildings/${modB.id}`, { token: t })).body;
+  check('объект поднялся до verified только решением человека', afterB.connectionStatus === 'verified');
+
+  const rivals = (await call('/buildings/claims/queue', { token: t })).body.filter((c) => c.operatorOrgId === 'mod-b');
+  check('конкурирующая заявка закрыта с объяснением', rivals[0]?.status === 'rejected' && Boolean(rivals[0]?.decisionReason));
+
+  // Отказ единственной заявке возвращает объект в unmanaged: иначе он навсегда
+  // повиснет в claimed и его никто не сможет заявить снова
+  const soloB = (await call('/buildings', { token: t, body: { name: 'ЖК Отказ', address: 'Отказная 1' } })).body;
+  const solo = (await call(`/buildings/${soloB.id}/claim`, {
+    token: t, body: { operatorOrgId: 'mod-c', documentKind: 'договор ТО' },
+  })).body;
+  await call(`/buildings/claims/${solo.claim.id}/decide`, { token: t, body: { decision: 'reject', reason: 'документ не подтверждает права' } });
+  const soloAfter = (await call(`/buildings/${soloB.id}`, { token: t })).body;
+  check('отказ единственной заявке возвращает объект в unmanaged', soloAfter.connectionStatus === 'unmanaged', soloAfter.connectionStatus);
 
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);

@@ -3,6 +3,7 @@ import { uuidv7 } from '@sozo/kernel';
 import { SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus } from '../../common/event-bus';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { CrmService } from '../crm/crm.service';
 import type { ObservationSeverity, ObservationSource } from '@sozo/contracts';
 import {
   InMemoryBuildingRepository,
@@ -13,6 +14,8 @@ import {
   type OperatorPriceItem,
   type WalkthroughRoute,
   type WalkthroughRecord,
+  type ClaimRequest,
+  type DemandSignal,
   type BuildingRecord,
   type BuildingStaffRecord,
 } from './building.repository';
@@ -46,6 +49,7 @@ export class BuildingsService {
     private readonly repo: InMemoryBuildingRepository,
     private readonly bus: EventBus,
     private readonly subs: SubscriptionsService,
+    private readonly crm: CrmService,
   ) {}
 
   /**
@@ -187,25 +191,260 @@ export class BuildingsService {
     return b;
   }
 
-  /** Заявка оператора на подключение (self-serve, DEV-15 §10.9.1) */
-  claim(tenantId: string, buildingId: string, operatorOrgId: string): BuildingRecord {
+  /**
+   * Заявка организации на подключение объекта (self-serve, DEV-15 §10.9.1).
+   *
+   * Заявка НЕ даёт прав: она только встаёт в очередь модерации. Право
+   * появляется решением человека — иначе любой заявит чужой дом и начнёт
+   * согласовывать допуски в жилое здание.
+   *
+   * Второй заявитель не отклоняется: **замораживаются обе заявки**. Платформа
+   * не арбитр в споре хозяйствующих субъектов, и молча отдать объект тому,
+   * кто успел первым, — худшее из решений.
+   */
+  claim(
+    tenantId: string,
+    buildingId: string,
+    dto: {
+      operatorOrgId: string;
+      operatorName?: string;
+      applicantPhone: string;
+      documentKind: string;
+      documentId?: string;
+      contactPhone?: string;
+    },
+  ): { claim: ClaimRequest; frozen: boolean; building: BuildingRecord } {
     const b = this.get(tenantId, buildingId);
-    if (b.operatorOrgId && b.operatorOrgId !== operatorOrgId && b.connectionStatus !== 'unmanaged') {
-      // конфликт двух заявителей: обе заявки замораживаются, разбор вручную (DEV-15 §10.9.3)
-      throw new ConflictException('Объект уже заявлен другой организацией — заявки заморожены до разбора');
+
+    const existing = this.repo
+      .claimsForBuilding(tenantId, buildingId)
+      .filter((c) => c.status === 'pending' || c.status === 'frozen');
+
+    const own = existing.find((c) => c.operatorOrgId === dto.operatorOrgId);
+    if (own) return { claim: own, frozen: own.status === 'frozen', building: b };
+
+    const rec: ClaimRequest = {
+      id: uuidv7(),
+      tenantId,
+      buildingId,
+      operatorOrgId: dto.operatorOrgId,
+      operatorName: dto.operatorName ?? dto.operatorOrgId,
+      applicantPhone: dto.applicantPhone,
+      documentKind: dto.documentKind,
+      documentId: dto.documentId ?? null,
+      contactPhone: dto.contactPhone ?? null,
+      status: existing.length > 0 ? 'frozen' : 'pending',
+      callbackResult: null,
+      decisionBy: null,
+      decisionAt: null,
+      decisionReason: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.repo.saveClaim(rec);
+
+    // конфликт: замораживаем и ранее поданные — обе стороны ждут разбора
+    if (existing.length > 0) {
+      for (const c of existing) {
+        c.status = 'frozen';
+        this.repo.saveClaim(c);
+      }
+      this.bus.publish('building.claim_conflict', { buildingId, claims: existing.length + 1 });
     }
-    b.operatorOrgId = operatorOrgId;
-    b.connectionStatus = 'claimed';
-    this.repo.saveBuilding(b);
-    this.bus.publish('building.claimed', { buildingId: b.id, operatorOrgId });
-    return b;
+
+    if (b.connectionStatus === 'unmanaged') {
+      b.connectionStatus = 'claimed';
+      this.repo.saveBuilding(b);
+    }
+    this.bus.publish('building.claimed', { buildingId: b.id, operatorOrgId: dto.operatorOrgId });
+    return { claim: rec, frozen: rec.status === 'frozen', building: b };
   }
 
-  /** Верификация модератором платформы (A-39). Автоматически не происходит никогда. */
+  /**
+   * Сигналы верификации для модератора (A-39). Ни один не решает сам —
+   * они лишь показывают, сходится ли картина.
+   *
+   * Главный из них: контакт ТСЖ/УК, накопленный мастерами при первых осмотрах
+   * (A-09). Эти данные старше любой заявки, и подделать их задним числом нельзя.
+   */
+  claimSignals(tenantId: string, claimId: string) {
+    const c = this.repo.getClaim(tenantId, claimId);
+    if (!c) throw new NotFoundException('Заявка не найдена');
+    const b = this.get(tenantId, c.buildingId);
+
+    const digits = (s: string | null) => (s ?? '').replace(/\D/g, '').slice(-9);
+    const claimed = digits(c.contactPhone);
+
+    // точки в этом же доме: сверяем накопленный контакт ТСЖ/УК с заявленным
+    const known: Array<{ locationName: string; hoaContact: string; matches: boolean }> = [];
+    const needle = b.address.toLowerCase().slice(0, 12);
+    for (const loc of this.crm.allLocations()) {
+      const sameAddress = typeof loc.address === 'string' && loc.address.toLowerCase().includes(needle);
+      const hoa = loc.access?.hoaContact ?? null;
+      if (sameAddress && hoa) {
+        known.push({ locationName: loc.name, hoaContact: hoa, matches: digits(hoa) === claimed && claimed !== '' });
+      }
+    }
+
+    const residents = this.repo
+      .listUnits(tenantId, c.buildingId)
+      .length;
+
+    const competing = this.repo
+      .claimsForBuilding(tenantId, c.buildingId)
+      .filter((x) => x.id !== c.id && (x.status === 'pending' || x.status === 'frozen'));
+
+    return {
+      claim: c,
+      building: { id: b.id, name: b.name, address: b.address, connectionStatus: b.connectionStatus },
+      signals: {
+        /** совпадение с контактом, собранным мастерами до заявки */
+        knownContacts: known,
+        contactMatches: known.some((k) => k.matches),
+        callbackResult: c.callbackResult,
+        unitsRegistered: residents,
+        demandFromResidents: this.repo
+          .listDemand(tenantId)
+          .filter((d) => d.address.toLowerCase().includes(b.address.toLowerCase().slice(0, 12))).length,
+      },
+      competing: competing.map((x) => ({
+        id: x.id,
+        operatorName: x.operatorName,
+        documentKind: x.documentKind,
+        createdAt: x.createdAt,
+      })),
+    };
+  }
+
+  listClaims(tenantId: string, status?: ClaimRequest['status']) {
+    return this.repo.listClaims(tenantId, status);
+  }
+
+  /** Результат обратного звонка на телефон объекта из открытых источников */
+  setCallback(tenantId: string, claimId: string, result: NonNullable<ClaimRequest['callbackResult']>): ClaimRequest {
+    const c = this.repo.getClaim(tenantId, claimId);
+    if (!c) throw new NotFoundException('Заявка не найдена');
+    c.callbackResult = result;
+    this.repo.saveClaim(c);
+    return c;
+  }
+
+  /**
+   * Решение модератора. Автоматически объект выше `claimed` не поднимается
+   * никогда — только здесь, с записью кто и на каком основании.
+   */
+  decideClaim(
+    tenantId: string,
+    claimId: string,
+    decision: 'approve' | 'reject',
+    reason: string,
+    moderatorPhone: string,
+  ): ClaimRequest {
+    const c = this.repo.getClaim(tenantId, claimId);
+    if (!c) throw new NotFoundException('Заявка не найдена');
+    if (c.status === 'approved' || c.status === 'rejected') {
+      throw new BadRequestException('По заявке уже принято решение');
+    }
+    if (decision === 'reject' && !reason) {
+      throw new BadRequestException('Отклонение требует причины — она остаётся в аудите');
+    }
+
+    c.status = decision === 'approve' ? 'approved' : 'rejected';
+    c.decisionBy = moderatorPhone;
+    c.decisionAt = new Date().toISOString();
+    c.decisionReason = reason || null;
+    this.repo.saveClaim(c);
+
+    if (decision === 'approve') {
+      const b = this.get(tenantId, c.buildingId);
+      b.operatorOrgId = c.operatorOrgId;
+      b.connectionStatus = 'verified';
+      b.verifiedBy = moderatorPhone;
+      b.verifiedAt = c.decisionAt;
+      this.repo.saveBuilding(b);
+      // конкурирующие заявки закрываются той же причиной: объект отдан другому
+      for (const other of this.repo.claimsForBuilding(tenantId, c.buildingId)) {
+        if (other.id !== c.id && (other.status === 'pending' || other.status === 'frozen')) {
+          other.status = 'rejected';
+          other.decisionBy = moderatorPhone;
+          other.decisionAt = c.decisionAt;
+          other.decisionReason = 'Объект передан другой организации по решению модератора';
+          this.repo.saveClaim(other);
+        }
+      }
+      this.bus.publish('building.verified', { buildingId: b.id, by: moderatorPhone });
+    } else {
+      // если других живых заявок не осталось — объект возвращается в unmanaged
+      const alive = this.repo
+        .claimsForBuilding(tenantId, c.buildingId)
+        .filter((x) => x.status === 'pending' || x.status === 'frozen');
+      if (alive.length === 0) {
+        const b = this.get(tenantId, c.buildingId);
+        if (b.connectionStatus === 'claimed') {
+          b.connectionStatus = 'unmanaged';
+          b.operatorOrgId = null;
+          this.repo.saveBuilding(b);
+        }
+      } else if (alive.length === 1) {
+        // конфликт разрешился сам: оставшаяся заявка выходит из заморозки
+        alive[0].status = 'pending';
+        this.repo.saveClaim(alive[0]);
+      }
+    }
+    return c;
+  }
+
+  /** Обращение «моего дома здесь нет» с публичной страницы объекта (L-10) */
+  addDemand(tenantId: string, address: string, phone?: string): DemandSignal {
+    const rec: DemandSignal = {
+      id: uuidv7(),
+      tenantId,
+      address,
+      phone: phone ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    this.repo.saveDemand(rec);
+    return rec;
+  }
+
+  /** Спрос по адресам: где жители просят подключить дом (вкладка A-39) */
+  demandByAddress(tenantId: string) {
+    const groups = new Map<string, { address: string; count: number; lastAt: string }>();
+    for (const d of this.repo.listDemand(tenantId)) {
+      const key = d.address.trim().toLowerCase();
+      const g = groups.get(key) ?? { address: d.address, count: 0, lastAt: d.createdAt };
+      g.count += 1;
+      if (d.createdAt > g.lastAt) g.lastAt = d.createdAt;
+      groups.set(key, g);
+    }
+    return [...groups.values()].sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Верификация модератором (A-39), быстрый путь: когда заявка одна и разбирать
+   * нечего. Оператор назначается **из заявки**, а не подразумевается: объект,
+   * верифицированный без оператора, невозможно ни настроить, ни активировать.
+   *
+   * При конфликте заявок этот путь закрыт — решение принимается в очереди
+   * модерации, где видны документы и сигналы обеих сторон.
+   */
   verify(tenantId: string, buildingId: string, moderatorPhone: string): BuildingRecord {
     const b = this.get(tenantId, buildingId);
     if (b.connectionStatus !== 'claimed') {
       throw new BadRequestException('Верифицировать можно только объект в статусе claimed');
+    }
+    const alive = this.repo
+      .claimsForBuilding(tenantId, buildingId)
+      .filter((c) => c.status === 'pending' || c.status === 'frozen');
+    if (alive.length > 1) {
+      throw new ConflictException({
+        code: 'ClaimConflict',
+        message: 'На объект несколько заявок — решение принимается в очереди модерации A-39',
+      });
+    }
+    if (alive.length === 1) {
+      // проводим через общее решение: одна запись в аудите, один путь
+      this.decideClaim(tenantId, alive[0].id, 'approve', 'Единственная заявка, конфликта нет', moderatorPhone);
+      return this.get(tenantId, buildingId);
     }
     b.connectionStatus = 'verified';
     b.verifiedBy = moderatorPhone;
