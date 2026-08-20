@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { OrderStatus } from '@sozo/contracts';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import type { OrderRecord, OrderRepository } from './order.repository';
@@ -36,6 +37,10 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    // Провайдер создаётся всегда, даже когда база выключена: Nest поднимает
+    // всех, а выбор делает фабрика. Без этой проверки выключенная база
+    // роняла приложение на старте
+    if (!this.prisma.enabled) return;
     const rows = await this.prisma.withContext(async (tx) =>
       tx.order.findMany({
         include: { lines: true, quotes: true, photos: true, materials: true, statusLog: true },
@@ -121,8 +126,18 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
         locationId: o.locationId ?? null,
         buildingId: o.buildingId ?? null,
         unitId: o.unitId ?? null,
-        orderScope: o.orderScope ?? null,
-        laborSettlement: o.laborSettlement ?? null,
+        // Перечни с умолчанием в схеме: undefined оставляет значение по
+        // умолчанию, null его стирает и ломает NOT NULL
+        orderScope: (o.orderScope ?? undefined) as never,
+        laborSettlement: (o.laborSettlement ?? undefined) as never,
+        /**
+         * Канал оплаты. B2B платит с абонентки, B2C — онлайн или наличными
+         * мастеру; до закрытия заявки канал ещё не определён, и «онлайн» тут
+         * не догадка, а состояние по умолчанию: наличные ставит мастер явно.
+         */
+        paymentChannel: (o.graphType === 'b2b'
+          ? 'subscription'
+          : ((o.payment as { method?: string } | undefined)?.method === 'cash' ? 'cash' : 'online')) as never,
         serviceFeeTiyin: BigInt(o.serviceFeeTiyin ?? 0),
         firstRefusalUntil: o.firstRefusalUntil ? new Date(o.firstRefusalUntil) : null,
         claimedByOperator: o.claimedByOperator ?? null,
@@ -150,12 +165,24 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
         slaDueAt: o.slaDueAt ? new Date(o.slaDueAt) : null,
         rescheduleCount: o.rescheduleCount ?? 0,
         acceptanceCode: o.acceptanceCode ?? null,
-        acceptanceJson: (o.acceptance ?? null) as object | null,
-        acceptanceRequestJson: (o.acceptanceRequest ?? null) as object | null,
-        addressDetailsJson: (o.addressDetails ?? null) as object | null,
-        paymentJson: (o.payment ?? null) as object | null,
-        requestedWindowJson: (o.requestedWindow ?? null) as object | null,
-        commonAreaAccessJson: (o.commonAreaAccess ?? null) as object | null,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        acceptanceJson: (o.acceptance ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        acceptanceRequestJson: (o.acceptanceRequest ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        addressDetailsJson: (o.addressDetails ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        paymentJson: (o.payment ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        requestedWindowJson: (o.requestedWindow ?? Prisma.DbNull) as Prisma.InputJsonValue,
+        // Prisma требует своё значение для NULL в jsonb: обычный null тут
+        // означал бы «не трогать поле», а не «очистить»
+        commonAreaAccessJson: (o.commonAreaAccess ?? Prisma.DbNull) as Prisma.InputJsonValue,
       };
       await tx.order.upsert({
         where: { id: o.id },
@@ -175,6 +202,10 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
             unitCopy: l.unit,
             priceFromTiyinCopy: BigInt(l.priceFromTiyin ?? 0),
             priceToTiyinCopy: BigInt(l.priceToTiyin ?? 0),
+            // Историческая одиночная цена: держим равной нижней границе вилки,
+            // чтобы старые запросы не начали видеть ноль
+            priceTiyinCopy: BigInt(l.priceFromTiyin ?? 0),
+            normHoursCopy: 0,
             qty: l.qty,
           },
         });
@@ -187,8 +218,11 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
             id: crypto.randomUUID(),
             tenantId,
             orderId: o.id,
-            kind: q.kind,
+            kind: q.kind as never,
             amountTiyin: BigInt(q.amountTiyin ?? 0),
+            // Позиции сметы в записи не хранятся отдельно от заявки — кладём
+            // пустой массив, а не выдумываем состав задним числом
+            positionsJson: [],
             approvedVia: q.approvedVia ?? null,
             note: q.note ?? null,
             createdAt: new Date(q.at),
@@ -251,13 +285,28 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
   }
 }
 
+/**
+ * Арендатор в приложении и в базе обозначаются по-разному.
+ *
+ * Код везде передаёт литерал 't0' — так сложилось с первого дня и встречается
+ * в каждом контроллере. В базе tenant_id это uuid, потому что на нём стоят
+ * политики RLS. Репозиторий переводит одно в другое: наружу отдаёт то, что
+ * ожидает остальной код, внутрь пишет то, что понимает база.
+ *
+ * Это временный мост, а не решение. Правильно — перевести приложение на
+ * настоящий идентификатор арендатора, но это отдельная работа: 't0' зашит
+ * в сотнях мест, и менять его заодно с переносом хранилища значит смешать
+ * две несвязанные правки.
+ */
+const APP_TENANT = 't0';
+
 /** Строка базы → запись приложения */
 function fromDb(r: Record<string, unknown>): OrderRecord {
   const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
   const rows = <T>(v: unknown): T[] => ((v ?? []) as T[]);
   return {
     id: r.id as string,
-    tenantId: r.tenantId as string,
+    tenantId: APP_TENANT,
     number: r.number as string,
     graphType: r.type as OrderRecord['graphType'],
     status: r.status as OrderStatus,
@@ -347,5 +396,7 @@ function fromDb(r: Record<string, unknown>): OrderRecord {
       at: l.createdAt as Date,
     })),
     createdAt: (r.createdAt as Date).toISOString(),
-  } as OrderRecord;
+    // Приведение через unknown: собранный объект шире записи на служебные
+    // поля Prisma, и точечно перечислять их значило бы дублировать модель
+  } as unknown as OrderRecord;
 }
