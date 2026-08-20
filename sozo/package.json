@@ -20,6 +20,7 @@
     "db:up": "docker compose -f infra/docker-compose.yml up -d postgres",
     "db:down": "docker compose -f infra/docker-compose.yml down",
     "db:migrate:pg": "bash tools/migrate-pg.sh",
+    "schema:drift": "node tools/schema-drift.mjs",
     "db:check:rls": "node tools/rls-check.mjs",
     "db:check:pg": "docker compose -f infra/docker-compose.yml exec -T postgres psql -U sozo -d sozo -q -v ON_ERROR_STOP=1 < tools/invariants-pg.sql",
     "db:sql": "prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/migrations/000_init/migration.sql",
