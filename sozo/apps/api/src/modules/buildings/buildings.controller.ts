@@ -22,6 +22,24 @@ export class BuildingsController {
     return this.buildings.addUnit('t0', id, body);
   }
 
+  @Post('units/:unitId/residents')
+  addResident(
+    @Param('unitId') unitId: string,
+    @Body() body: { userPhone: string; fullName?: string; residentRole?: 'owner' | 'tenant' | 'family' },
+  ) {
+    return this.buildings.addResident('t0', unitId, body);
+  }
+
+  @Get('units/:unitId/residents')
+  residents(@Param('unitId') unitId: string) {
+    return this.buildings.listResidents('t0', unitId);
+  }
+
+  @Get(':id/residents-summary')
+  residentsSummary(@Param('id') id: string) {
+    return this.buildings.residentsSummary('t0', id);
+  }
+
   @Get(':id/units')
   units(@Param('id') id: string) {
     return this.buildings.listUnits('t0', id);

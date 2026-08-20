@@ -131,6 +131,16 @@ export class InMemoryPermitRepository {
     );
   }
 
+  /** Все пропуска объекта — журнал доступа U-10 */
+  passesByBuilding(tenantId: string, buildingId: string): PassRecord[] {
+    return [...this.passes.values()].filter((x) => x.tenantId === tenantId && x.buildingId === buildingId);
+  }
+
+  /** Наряды объекта — для журнала вскрытий */
+  permitsByBuilding(tenantId: string, buildingId: string): PermitRecord[] {
+    return [...this.permits.values()].filter((p) => p.tenantId === tenantId && p.buildingId === buildingId);
+  }
+
   rememberOp(key: string, permitId: string): void {
     this.ops.set(key, permitId);
   }

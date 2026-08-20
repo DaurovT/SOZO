@@ -102,6 +102,12 @@ export class AccessController {
     return this.access.createShutdown('t0', { buildingId, ...body });
   }
 
+  /** U-10: журнал доступа объекта */
+  @Get('buildings/:buildingId/access-journal')
+  journal(@Param('buildingId') buildingId: string) {
+    return this.access.accessJournal('t0', buildingId);
+  }
+
   @Get('buildings/:buildingId/shutdowns')
   listShutdowns(@Param('buildingId') buildingId: string) {
     return this.access.listShutdowns('t0', buildingId);

@@ -530,6 +530,35 @@ export class AccessService {
     };
   }
 
+  /**
+   * Журнал доступа объекта (U-10): кто, когда и в какую зону заходил.
+   * Для бизнес-центра это самостоятельная ценность — доказательство перед
+   * арендатором и службой безопасности, а не служебный лог.
+   */
+  accessJournal(tenantId: string, buildingId: string) {
+    const rows: Array<{
+      at: string;
+      kind: 'zone_opened' | 'zone_closed' | 'pass_issued' | 'pass_revoked';
+      permitId?: string;
+      zones?: string[];
+      masterId?: string | null;
+      passType?: string;
+      status?: string;
+    }> = [];
+
+    for (const p of this.repo.permitsByBuilding(tenantId, buildingId)) {
+      if (p.openedAt) rows.push({ at: p.openedAt, kind: 'zone_opened', permitId: p.id, zones: p.zoneTypes, masterId: p.masterId });
+      if (p.closedAt) rows.push({ at: p.closedAt, kind: 'zone_closed', permitId: p.id, zones: p.zoneTypes, masterId: p.masterId });
+    }
+    for (const x of this.repo.passesByBuilding(tenantId, buildingId)) {
+      rows.push({ at: x.validFrom, kind: 'pass_issued', masterId: x.masterId, passType: x.passType, status: x.status });
+      if (x.status === 'revoked') {
+        rows.push({ at: x.validTo, kind: 'pass_revoked', masterId: x.masterId, passType: x.passType, status: x.status });
+      }
+    }
+    return rows.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  }
+
   /** Ссылки согласования, выданные по наряду — для кабинета и разбора у диспетчера */
   permitLinks(permitId: string) {
     return this.links.listForPermit(permitId);

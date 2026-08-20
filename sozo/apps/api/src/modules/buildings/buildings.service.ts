@@ -16,6 +16,7 @@ import {
   type WalkthroughRecord,
   type ClaimRequest,
   type DemandSignal,
+  type ResidentRecord,
   type BuildingRecord,
   type BuildingStaffRecord,
 } from './building.repository';
@@ -181,6 +182,52 @@ export class BuildingsService {
     const sub = this.subs.get(tenantId, building.operatorOrgId);
     const plan = sub?.plan ?? 'free';
     return plan === 'free' ? building.serviceFeeBps : 0;
+  }
+
+  addResident(
+    tenantId: string,
+    unitId: string,
+    dto: { userPhone: string; fullName?: string; residentRole?: ResidentRecord['residentRole'] },
+  ): ResidentRecord {
+    const rec: ResidentRecord = {
+      id: uuidv7(),
+      tenantId,
+      unitId,
+      userPhone: dto.userPhone,
+      fullName: dto.fullName ?? null,
+      residentRole: dto.residentRole ?? 'owner',
+      // заведён оператором — самый надёжный из способов подтверждения
+      verifiedBy: 'operator',
+      createdAt: new Date().toISOString(),
+    };
+    this.repo.saveResident(rec);
+    return rec;
+  }
+
+  listResidents(tenantId: string, unitId: string) {
+    return this.repo.listResidents(tenantId, unitId);
+  }
+
+  /** Сводка заселённости объекта для U-06 */
+  residentsSummary(tenantId: string, buildingId: string) {
+    const units = this.repo.listUnits(tenantId, buildingId);
+    const residents = this.repo.residentsOfBuilding(tenantId, units.map((u) => u.id));
+    const byUnit = new Map<string, number>();
+    for (const r of residents) byUnit.set(r.unitId, (byUnit.get(r.unitId) ?? 0) + 1);
+    return {
+      unitsTotal: units.length,
+      unitsWithResidents: byUnit.size,
+      residentsTotal: residents.length,
+      units: units.map((u) => ({
+        id: u.id,
+        number: u.number,
+        entrance: u.entrance,
+        floor: u.floor,
+        unitType: u.unitType,
+        riserIds: u.riserIds,
+        residentsCount: byUnit.get(u.id) ?? 0,
+      })),
+    };
   }
 
   /** Портфель объектов оператора — U-01 в режиме портфеля */

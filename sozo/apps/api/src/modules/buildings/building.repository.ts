@@ -87,6 +87,7 @@ export class InMemoryBuildingRepository {
   private opPrices = new Map<string, OperatorPriceItem>();
   private claims = new Map<string, ClaimRequest>();
   private demand = new Map<string, DemandSignal>();
+  private residents = new Map<string, ResidentRecord>();
   private routes = new Map<string, WalkthroughRoute>();
   private walks = new Map<string, WalkthroughRecord>();
 
@@ -104,6 +105,7 @@ export class InMemoryBuildingRepository {
         opPrices: [...this.opPrices.values()],
         claims: [...this.claims.values()],
         demand: [...this.demand.values()],
+        residents: [...this.residents.values()],
         routes: [...this.routes.values()],
         walks: [...this.walks.values()],
       }),
@@ -119,6 +121,7 @@ export class InMemoryBuildingRepository {
           opPrices?: OperatorPriceItem[];
           claims?: ClaimRequest[];
           demand?: DemandSignal[];
+          residents?: ResidentRecord[];
           routes?: WalkthroughRoute[];
           walks?: WalkthroughRecord[];
         };
@@ -132,6 +135,7 @@ export class InMemoryBuildingRepository {
         this.opPrices = new Map((d.opPrices ?? []).map((x) => [x.id, x]));
         this.claims = new Map((d.claims ?? []).map((x) => [x.id, x]));
         this.demand = new Map((d.demand ?? []).map((x) => [x.id, x]));
+        this.residents = new Map((d.residents ?? []).map((x) => [x.id, x]));
         this.routes = new Map((d.routes ?? []).map((x) => [x.id, x]));
         this.walks = new Map((d.walks ?? []).map((x) => [x.id, x]));
       },
@@ -305,6 +309,16 @@ export class InMemoryBuildingRepository {
   listDemand(tenantId: string): DemandSignal[] {
     return [...this.demand.values()].filter((d) => d.tenantId === tenantId);
   }
+
+  saveResident(r: ResidentRecord): void {
+    this.residents.set(r.id, r);
+  }
+  listResidents(tenantId: string, unitId: string): ResidentRecord[] {
+    return [...this.residents.values()].filter((r) => r.tenantId === tenantId && r.unitId === unitId);
+  }
+  residentsOfBuilding(tenantId: string, unitIds: string[]): ResidentRecord[] {
+    return [...this.residents.values()].filter((r) => r.tenantId === tenantId && unitIds.includes(r.unitId));
+  }
 }
 
 export interface ObservationRecord {
@@ -460,5 +474,20 @@ export interface DemandSignal {
   tenantId: string;
   address: string;
   phone: string | null;
+  createdAt: string;
+}
+
+/**
+ * Житель помещения. Арендатор ограничен в правах по общему имуществу
+ * (DEV-15 §12 п.6): распоряжаться им вправе собственник.
+ */
+export interface ResidentRecord {
+  id: string;
+  tenantId: string;
+  unitId: string;
+  userPhone: string;
+  fullName: string | null;
+  residentRole: 'owner' | 'tenant' | 'family';
+  verifiedBy: 'operator' | 'document' | 'self' | 'crowd';
   createdAt: string;
 }

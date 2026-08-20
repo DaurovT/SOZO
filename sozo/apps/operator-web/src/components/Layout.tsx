@@ -5,8 +5,10 @@ const NAV = [
   { to: '/', label: 'Дашборд', end: true },
   { to: '/permits', label: 'Наряды-допуски' },
   { to: '/first-refusal', label: 'Первая рука' },
-  { to: '/observations', label: 'Замечания' },
+  { to: '/units', label: 'Помещения и жители' },
+  { to: '/observations', label: 'Замечания и обходы' },
   { to: '/shutdowns', label: 'Отключения' },
+  { to: '/journal', label: 'Журнал доступа' },
   { to: '/finance', label: 'Финансы' },
   { to: '/settings', label: 'Настройки объекта' },
 ];

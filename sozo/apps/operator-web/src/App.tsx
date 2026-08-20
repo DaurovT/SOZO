@@ -6,9 +6,12 @@ import { Dashboard } from './pages/Dashboard';
 import { Permits } from './pages/Permits';
 import { Finance } from './pages/Finance';
 import { Login } from './pages/Login';
-import { Stub } from './pages/Stub';
 import { FirstRefusal } from './pages/FirstRefusal';
 import { Settings } from './pages/Settings';
+import { Units } from './pages/Units';
+import { Observations } from './pages/Observations';
+import { Shutdowns } from './pages/Shutdowns';
+import { Journal } from './pages/Journal';
 import type { Dashboard as DashboardData } from './types';
 
 export function App() {
@@ -27,15 +30,11 @@ export function App() {
           <Route path="/permits" element={<Permits />} />
           <Route path="/finance" element={<Finance />} />
           <Route path="/first-refusal" element={<FirstRefusal />} />
-          <Route
-            path="/observations"
-            element={<Stub title="Замечания и обходы" note="Экран собирается следом за первой рукой" />}
-          />
-          <Route
-            path="/shutdowns"
-            element={<Stub title="Отключения" note="Экран собирается следом за замечаниями" />}
-          />
+          <Route path="/observations" element={<Observations />} />
+          <Route path="/shutdowns" element={<Shutdowns />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/units" element={<Units />} />
+          <Route path="/journal" element={<Journal />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
