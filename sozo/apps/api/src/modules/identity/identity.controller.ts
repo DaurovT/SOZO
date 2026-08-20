@@ -47,8 +47,8 @@ export class UsersController {
    */
   @Get('login-log')
   @Roles('admin')
-  loginLog() {
-    const events = this.identity.loginLog();
+  async loginLog() {
+    const events = await this.identity.loginLog();
     return {
       events,
       failed: events.filter((e) => !e.ok).length,
@@ -59,8 +59,8 @@ export class UsersController {
   /** A-10: назначение ролей (матрица прав ТЗ 2.3) */
   @Put(':id/roles')
   @Roles('admin')
-  setRoles(@Param('id') id: string, @Body() body: { roles?: string[] }, @Req() req: { auth: JwtClaims }) {
-    const user = this.identity.setRoles(id, body?.roles ?? []);
+  async setRoles(@Param('id') id: string, @Body() body: { roles?: string[] }, @Req() req: { auth: JwtClaims }) {
+    const user = await this.identity.setRoles(id, body?.roles ?? []);
     this.audit.write({
       actorPhone: req.auth.phone,
       action: 'user.roles_changed',
@@ -79,8 +79,8 @@ export class UsersController {
    */
   @Post(':id/block')
   @Roles('admin')
-  block(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req: { auth: JwtClaims }) {
-    const user = this.identity.setBlocked(id, true, body?.reason);
+  async block(@Param('id') id: string, @Body() body: { reason?: string }, @Req() req: { auth: JwtClaims }) {
+    const user = await this.identity.setBlocked(id, true, body?.reason);
     this.audit.write({
       actorPhone: req.auth.phone,
       action: 'user.blocked',
@@ -93,8 +93,8 @@ export class UsersController {
 
   @Post(':id/unblock')
   @Roles('admin')
-  unblock(@Param('id') id: string, @Req() req: { auth: JwtClaims }) {
-    const user = this.identity.setBlocked(id, false);
+  async unblock(@Param('id') id: string, @Req() req: { auth: JwtClaims }) {
+    const user = await this.identity.setBlocked(id, false);
     this.audit.write({
       actorPhone: req.auth.phone,
       action: 'user.unblocked',

@@ -194,6 +194,15 @@ model User {
   fullName    String?  @map("full_name")
   language    String   @default("ru") // ru | uz — язык всех коммуникаций (ТЗ 14)
   isBlocked   Boolean  @default(false) @map("is_blocked")
+  /**
+   * Блокировка с причиной и временем. Схема знала только флаг, а сервис
+   * хранит и то и другое: «доступ закрыт» без причины и даты бесполезно при
+   * разборе — увольнение и компрометация выглядят одинаково.
+   */
+  blockedAt     DateTime? @map("blocked_at") @db.Timestamptz()
+  blockedReason String?   @map("blocked_reason")
+  /** По последнему входу видно, кто ещё пользуется доступом */
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz()
   marketingOk Boolean  @default(false) @map("marketing_ok") // отдельное согласие (ТЗ 17.12)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
@@ -205,6 +214,27 @@ model User {
 
   @@unique([tenantId, phone])
   @@map("user")
+}
+
+/**
+ * След входа в систему. Пишем и удачные, и неудачные: при разборе инцидента
+ * важнее всего вторые — серия отказов по чужому номеру означает подбор.
+ *
+ * Это оперативный журнал, а не архив: в отличие от audit_log хранение
+ * ограничено, и старые записи вычищаются.
+ */
+model LoginEvent {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  phone    String
+  ok       Boolean
+  reason   String?
+  roles    String[]
+  at       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, at])
+  @@index([tenantId, phone])
+  @@map("login_event")
 }
 
 model UserRole {

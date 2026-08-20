@@ -1,6 +1,9 @@
 import { Global, Module } from '@nestjs/common';
 import { IdentityController, UsersController } from './identity.controller';
-import { IdentityService } from './identity.service';
+import { IDENTITY_REPOSITORY, IdentityService } from './identity.service';
+import { InMemoryIdentityRepository, PrismaIdentityRepository, type IdentityRepository } from './identity.repository';
+import { PrismaService } from '../../common/prisma.service';
+import { StateStore } from '../../common/state-store';
 import { AuthGuard } from './auth.guard';
 
 /**
@@ -11,7 +14,16 @@ import { AuthGuard } from './auth.guard';
 @Global()
 @Module({
   controllers: [IdentityController, UsersController],
-  providers: [IdentityService, AuthGuard],
+  providers: [
+    IdentityService,
+    AuthGuard,
+    {
+      provide: IDENTITY_REPOSITORY,
+      inject: [PrismaService, StateStore],
+      useFactory: (prisma: PrismaService, store: StateStore): IdentityRepository =>
+        prisma.enabled ? new PrismaIdentityRepository(prisma) : new InMemoryIdentityRepository(store),
+    },
+  ],
   exports: [IdentityService, AuthGuard],
 })
 export class IdentityModule {}
