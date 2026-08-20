@@ -297,6 +297,63 @@ export class OrdersService {
     this.sla.start(tenantId, order.id, policy);
   }
 
+  /**
+   * Очередь окна первой руки для кабинета (U-04).
+   *
+   * Показываем и уже истёкшие за последний час: диспетчер оператора должен
+   * видеть, что он упустил, — иначе окно молча тикает и статистика «сколько
+   * служба не тянет» собирается без его ведома.
+   */
+  async firstRefusalQueue(tenantId: string, buildingIds: string[], now = Date.now()) {
+    const all = await this.repo.list(tenantId);
+    const recent = now - 3_600_000;
+    return all
+      .filter(
+        (o) =>
+          o.buildingId &&
+          buildingIds.includes(o.buildingId) &&
+          o.firstRefusalUntil &&
+          !o.claimedByOperator &&
+          Date.parse(o.firstRefusalUntil) > recent &&
+          o.status !== 'cancelled',
+      )
+      .map((o) => ({
+        id: o.id,
+        number: o.number,
+        buildingId: o.buildingId,
+        description: o.description,
+        address: o.address,
+        addressDetails: o.addressDetails ?? null,
+        totalFromTiyin: o.totalFromTiyin,
+        firstRefusalUntil: o.firstRefusalUntil,
+        expired: Date.parse(o.firstRefusalUntil!) <= now,
+        releasedReason: o.releasedReason ?? null,
+        createdAt: o.createdAt,
+      }))
+      .sort((a, b) => Date.parse(a.firstRefusalUntil!) - Date.parse(b.firstRefusalUntil!));
+  }
+
+  /** Статистика отказов за период — аргумент оператору на продление подписки */
+  async firstRefusalStats(tenantId: string, buildingIds: string[], days = 30) {
+    const all = await this.repo.list(tenantId);
+    const since = Date.now() - days * 86_400_000;
+    const scoped = all.filter(
+      (o) => o.buildingId && buildingIds.includes(o.buildingId) && Date.parse(String(o.createdAt)) >= since,
+    );
+    const taken = scoped.filter((o) => o.claimedByOperator).length;
+    const released = scoped.filter((o) => o.releasedReason).length;
+    const reasons = new Map<string, number>();
+    for (const o of scoped) {
+      if (o.releasedReason) reasons.set(o.releasedReason, (reasons.get(o.releasedReason) ?? 0) + 1);
+    }
+    return {
+      days,
+      taken,
+      released,
+      topReasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+    };
+  }
+
   /** Служба оператора забирает заявку себе (U-04) */
   async claimByOperator(tenantId: string, orderId: string, operatorOrgId: string): Promise<OrderRecord> {
     const order = await this.record(tenantId, orderId);

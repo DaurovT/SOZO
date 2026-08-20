@@ -97,6 +97,17 @@ export class OperatorApiController {
     return 'green';
   }
 
+  /** U-04: очередь заявок в окне первой руки */
+  @Get(':orgId/first-refusal')
+  async firstRefusal(@Param('orgId') orgId: string) {
+    const ids = this.buildings.listBuildings('t0', orgId).map((b) => b.id);
+    const [queue, stats] = await Promise.all([
+      this.orders.firstRefusalQueue('t0', ids),
+      this.orders.firstRefusalStats('t0', ids),
+    ]);
+    return { queue, stats };
+  }
+
   /** U-04: забрать заявку своей службой в окне первой руки */
   @Post(':orgId/orders/:orderId/claim')
   claim(@Param('orgId') orgId: string, @Param('orderId') orderId: string) {

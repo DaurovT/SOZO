@@ -529,6 +529,10 @@ export class BuildingsService {
     return rec;
   }
 
+  listStaff(tenantId: string, buildingId: string) {
+    return this.repo.listStaff(tenantId, buildingId);
+  }
+
   /** Согласующие объекта в порядке эскалации: основной → резервный (DEV-15 §4.4) */
   approvers(tenantId: string, buildingId: string): BuildingStaffRecord[] {
     return this.repo

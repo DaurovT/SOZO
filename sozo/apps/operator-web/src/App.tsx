@@ -7,6 +7,8 @@ import { Permits } from './pages/Permits';
 import { Finance } from './pages/Finance';
 import { Login } from './pages/Login';
 import { Stub } from './pages/Stub';
+import { FirstRefusal } from './pages/FirstRefusal';
+import { Settings } from './pages/Settings';
 import type { Dashboard as DashboardData } from './types';
 
 export function App() {
@@ -24,10 +26,7 @@ export function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/permits" element={<Permits />} />
           <Route path="/finance" element={<Finance />} />
-          <Route
-            path="/first-refusal"
-            element={<Stub title="Первая рука" note="Экран собирается следующим — API уже отдаёт очередь заявок в окне первой руки" />}
-          />
+          <Route path="/first-refusal" element={<FirstRefusal />} />
           <Route
             path="/observations"
             element={<Stub title="Замечания и обходы" note="Экран собирается следом за первой рукой" />}
@@ -36,10 +35,7 @@ export function App() {
             path="/shutdowns"
             element={<Stub title="Отключения" note="Экран собирается следом за замечаниями" />}
           />
-          <Route
-            path="/settings"
-            element={<Stub title="Настройки объекта" note="Экран собирается следом — чек-лист готовности уже считается на сервере" />}
-          />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

@@ -148,6 +148,11 @@ export class BuildingsController {
     });
   }
 
+  @Get(':id/staff')
+  staff(@Param('id') id: string) {
+    return this.buildings.listStaff('t0', id);
+  }
+
   @Post(':id/service-fee')
   setFee(@Param('id') id: string, @Body() body: { bps: number }) {
     return this.buildings.setServiceFee('t0', id, body.bps);
