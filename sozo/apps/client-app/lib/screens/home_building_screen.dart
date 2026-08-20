@@ -80,7 +80,6 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
                         _shutdownCard(_shutdowns(d).first),
                         const SizedBox(height: SozoSpace.s16),
                       ],
-                      _actions(),
                       const SizedBox(height: SozoSpace.s24),
                       if (_announcements(d).isNotEmpty) _announcementsBlock(d),
                     ],
@@ -152,49 +151,17 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
     );
   }
 
-  Widget _actions() {
-    return SozoCard(
-      children: [
-        CardTitle(t('building.chtoMozhno')),
-        _row('alert-triangle', t('building.problemaVDome'), t('building.peredadimVUk'), () {
-          Navigator.of(context).pushNamed('/building/report');
-        }),
-        const SozoDivider(),
-        _row('calendar', t('building.otklyucheniyaIRaboty'), t('building.kalendarRabot'), () {
-          Navigator.of(context).pushNamed('/building/shutdowns');
-        }),
-        const SozoDivider(),
-        _row('credit-card', t('building.propuskGostyu'), t('building.qrZa10Sekund'), () {
-          Navigator.of(context).pushNamed('/building/pass');
-        }),
-      ],
-    );
-  }
-
-  Widget _row(String icon, String title, String subtitle, VoidCallback onTap) => InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: SozoSpace.s12),
-          child: Row(
-            children: [
-              FigmaIcon(icon, size: 22, color: SozoColors.textSecondary),
-              const SizedBox(width: SozoSpace.s12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(subtitle, style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary)),
-                  ],
-                ),
-              ),
-              const FigmaIcon('chevron-right', size: 18, color: SozoColors.textTertiary),
-            ],
-          ),
-        ),
-      );
-
+  // Карточка «Что можно» убрана до C-52…C-54.
+  //
+  // Она вела на именованные маршруты `/building/report`, `/building/shutdowns`
+  // и `/building/pass`, которых не существует: в MaterialApp нет ни таблицы
+  // routes, ни onGenerateRoute — во всём остальном приложении экраны
+  // открываются через MaterialPageRoute. Нажатие роняло приложение.
+  //
+  // Кнопка, которая падает, хуже отсутствующей, а заглушку «скоро» этот
+  // продукт не ставит. Ближайшие отключения житель и так видит выше на этом
+  // же экране; сообщение о проблеме и пропуск гостю вернутся вместе со
+  // своими экранами и эндпоинтами.
   Widget _announcementsBlock(Map<String, dynamic>? d) {
     return SozoCard(
       children: [
