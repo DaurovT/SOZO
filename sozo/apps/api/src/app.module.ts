@@ -1,4 +1,5 @@
-import { Controller, Get, Module } from '@nestjs/common';
+import { Controller, Get, Global, Module } from '@nestjs/common';
+import { PrismaService } from './common/prisma.service';
 import { OrdersModule } from './modules/orders/orders.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { PlatformModule } from './modules/platform/platform.module';
@@ -32,11 +33,28 @@ import { FieldModule } from './modules/field/field.module';
 import { ClientApiModule } from './modules/client-api/client-api.module';
 import { ClientB2CModule } from './modules/client-b2c/client-b2c.module';
 
+/**
+ * Доступ к базе — глобальный модуль: подключение одно на процесс, и таскать
+ * его импортом через тридцать модулей значит тридцать раз написать одно и то же.
+ */
+@Global()
+@Module({ providers: [PrismaService], exports: [PrismaService] })
+export class PrismaModule {}
+
 @Controller('health')
 class HealthController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Get()
-  health() {
-    return { status: 'ok', service: 'sozo-api', ts: new Date().toISOString() };
+  async health() {
+    // Состояние базы в /health — не украшение: при переезде на PostgreSQL
+    // «сервер поднялся» и «сервер видит данные» перестают быть одним и тем же
+    return {
+      status: 'ok',
+      service: 'sozo-api',
+      ts: new Date().toISOString(),
+      db: await this.prisma.ping(),
+    };
   }
 }
 
@@ -50,6 +68,7 @@ class HealthController {
  */
 @Module({
   imports: [
+    PrismaModule,
     BuildingsModule,
     AccessModule,
     SubscriptionsModule,

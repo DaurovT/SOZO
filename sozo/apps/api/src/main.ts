@@ -4,6 +4,35 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { localeOf, runWithLocale } from './common/locale';
 import { I18nExceptionFilter, I18nInterceptor } from './common/i18n.interceptor';
+import { DEFAULT_TENANT, runWithDbContext, type DbContext } from './common/db-context';
+
+/**
+ * Роль запроса в терминах политик базы.
+ *
+ * Соответствие намеренно грубое: политики различают платформу, оператора,
+ * жителя и мастера, а ролей в системе больше. Бухгалтер и диспетчер для базы
+ * одно и то же — оба видят весь тенант и не видят чужие объекты. Дробить
+ * политики под каждую роль приложения значит держать два разных набора
+ * правил доступа, которые обязательно разойдутся.
+ */
+function dbRoleOf(roles: string[]): DbContext['role'] {
+  if (roles.includes('admin')) return 'platform_admin';
+  if (roles.includes('dispatcher') || roles.includes('accountant')) return 'platform_dispatcher';
+  if (roles.includes('master')) return 'master';
+  return 'resident';
+}
+
+/** Состав токена без проверки подписи: её делает AuthGuard */
+function readClaims(header: string | undefined): { sub?: string; roles?: string[] } | null {
+  const raw = header?.startsWith('Bearer ') ? header.slice(7) : null;
+  const payload = raw?.split('.')[1];
+  if (!payload) return null;
+  try {
+    return JSON.parse(Buffer.from(payload, 'base64url').toString()) as { sub?: string; roles?: string[] };
+  } catch {
+    return null;
+  }
+}
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -43,7 +72,21 @@ async function bootstrap() {
   // сервера уходят узбекские причины отказа, вопросы экзамена и ошибки.
   // Админка и диспетчерская заголовок не шлют и получают русский.
   app.use((req: { headers: Record<string, string | undefined> }, _res: unknown, next: () => void) => {
-    runWithLocale(localeOf(req.headers['accept-language']), next);
+    // Контекст RLS ставится здесь же, одним проходом с языком: политики базы
+    // читают его из переменных сессии, а собрать их можно только из токена.
+    // Разбираем без проверки подписи — подпись проверяет AuthGuard, а здесь
+    // нужен лишь состав контекста; неподписанный токен всё равно не пройдёт
+    // дальше guard'а, а до базы запрос без guard'а не доходит
+    const claims = readClaims(req.headers['authorization']);
+    runWithDbContext(
+      {
+        tenantId: DEFAULT_TENANT,
+        role: dbRoleOf(claims?.roles ?? []),
+        operatorOrgId: null,
+        userId: claims?.sub ?? null,
+      },
+      () => runWithLocale(localeOf(req.headers['accept-language']), next),
+    );
   });
 
   // Журнал обращений: без него отладка мобильных приложений превращается

@@ -7,6 +7,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Путь задан явно: npm-воркспейсы кладут @prisma/client то в корень, то в
+  // apps/api, и без этого `prisma generate` собирал клиент не туда, где его
+  // ищет приложение — «did not initialize yet» на пустом месте
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
