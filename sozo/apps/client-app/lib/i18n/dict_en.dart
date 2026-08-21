@@ -716,7 +716,7 @@ const enDict = <String, String>{
   'c44.overlimit': 'Over limit',
   'c44.paidIn': 'Paid in',
   'c44.consumed': 'Used',
-  'c44.forecast': 'At the current rate this lasts until roughly the {day}th',
+  'c44.forecast': "At the current rate this lasts until roughly the {day}th",
   'c44.carryover': 'Carries over to the next period ({percent}%)',
   'c44.openInvoice': 'Open the invoice for printing',
   'c44.reconciliation': 'Reconciliation report for the period',
