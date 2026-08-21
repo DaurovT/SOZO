@@ -28,9 +28,17 @@ class SozoClientApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         // Крупный системный шрифт не должен ломать экран, но и растягивать
         // вёрстку бесконечно нельзя (чек-лист DEV-08 §6 п.8)
-        builder: (context, child) => MediaQuery.withClampedTextScaling(
-          maxScaleFactor: 1.3,
-          child: child ?? const SizedBox.shrink(),
+        //
+        // Направление письма задаём здесь, а не через flutter_localizations:
+        // делегаты тянут перевод системных виджетов, которых в экранах нет
+        // (DEV-12 правило 3 запрещает Material-иконки и Material-диалоги), а
+        // переворачивать раскладку для арабского всё равно нужно всему дереву.
+        builder: (context, child) => Directionality(
+          textDirection: l10n.direction,
+          child: MediaQuery.withClampedTextScaling(
+            maxScaleFactor: 1.3,
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
         // Куда попадает пользователь: вход → выбор контекста → приложение.
         //

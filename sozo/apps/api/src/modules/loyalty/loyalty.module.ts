@@ -6,6 +6,8 @@ import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
 import { CrmService } from '../crm/crm.service';
 import { CrmModule } from '../crm/crm.module';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import type { JwtClaims } from '../../common/jwt';
 
 /**
@@ -40,10 +42,13 @@ export class LoyaltyService implements OnModuleInit {
     { id: uuidv7(), code: 'KRZ-0003', nominalTiyin: 20_000_000, expiresAt: '2026-11-01', status: 'free' },
   ];
 
+  private readonly mirror: PgMirror;
+
   constructor(
     private readonly bus: EventBus,
     private readonly crm: CrmService,
     private readonly store: StateStore,
+    prisma: PrismaService,
   ) {
     this.store.register(
       'loyalty',
@@ -56,6 +61,86 @@ export class LoyaltyService implements OnModuleInit {
         this.vouchers.push(...data.vouchers);
       },
     );
+    this.mirror = new PgMirror(prisma, 'Loyalty', {
+      load: async (tx) => {
+        const [accounts, entries, vouchers] = await Promise.all([
+          tx.loyaltyAccount.findMany(),
+          tx.loyaltyEntry.findMany({ orderBy: { at: 'asc' } }),
+          tx.voucher.findMany(),
+        ]);
+        if (accounts.length) {
+          this.accounts.clear();
+          for (const a of accounts) {
+            this.accounts.set(a.phone, {
+              phone: a.phone,
+              balanceTiyin: Number(a.balanceTiyin),
+              history: entries
+                .filter((e) => e.phone === a.phone)
+                .map((e) => ({
+                  id: e.id,
+                  kind: e.kind as LoyaltyAccount['history'][number]['kind'],
+                  amountTiyin: Number(e.amountTiyin),
+                  note: e.note,
+                  at: e.at.toISOString(),
+                })),
+            });
+          }
+        }
+        if (vouchers.length) {
+          this.vouchers.length = 0;
+          this.vouchers.push(
+            ...vouchers.map((v) => ({
+              id: v.id,
+              code: v.code,
+              nominalTiyin: Number(v.nominalTiyin),
+              expiresAt: v.expiresAt.toISOString().slice(0, 10),
+              status: v.status as VoucherRec['status'],
+              issuedToPhone: v.issuedToPhone ?? undefined,
+              issuedAt: v.issuedAt?.toISOString(),
+            })),
+          );
+        }
+        return accounts.length + vouchers.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const a of this.accounts.values()) {
+          await tx.loyaltyAccount.upsert({
+            where: { tenantId_phone: { tenantId, phone: a.phone } },
+            create: { tenantId, phone: a.phone, balanceTiyin: BigInt(a.balanceTiyin) },
+            update: { balanceTiyin: BigInt(a.balanceTiyin) },
+          });
+          // Движения append-only: начисление или сторно переписывать нельзя,
+          // из них считается баланс
+          for (const h of a.history) {
+            await tx.loyaltyEntry.upsert({
+              where: { id: h.id },
+              create: {
+                id: h.id, tenantId, phone: a.phone, kind: h.kind,
+                amountTiyin: BigInt(h.amountTiyin), note: h.note, at: new Date(h.at),
+              },
+              update: {},
+            });
+          }
+        }
+        for (const v of this.vouchers) {
+          const data = {
+            code: v.code,
+            nominalTiyin: BigInt(v.nominalTiyin),
+            expiresAt: new Date(`${v.expiresAt.slice(0, 10)}T00:00:00Z`),
+            status: v.status,
+            issuedToPhone: v.issuedToPhone ?? null,
+            issuedAt: v.issuedAt ? new Date(v.issuedAt) : null,
+          };
+          await tx.voucher.upsert({ where: { id: v.id }, create: { id: v.id, tenantId, ...data }, update: data });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   touch(): void {
@@ -63,6 +148,7 @@ export class LoyaltyService implements OnModuleInit {
   }
 
   onModuleInit(): void {
+    void this.mirror.init();
     this.bus.subscribe<OrderClosedEvent>('order.closed', (e) => {
       if (e.graphType !== 'b2b' || !e.organizationId || !e.clientPhone) return;
       try {

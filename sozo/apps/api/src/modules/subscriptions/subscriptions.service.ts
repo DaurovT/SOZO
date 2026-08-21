@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { subscriptionCharge, operatorSettlement, uuidv7, type BillingUnit } from '@sozo/kernel';
 import type { SubscriptionPlan, TenantKind } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror, APP_TENANT } from '../../common/pg-mirror';
 import { EventBus } from '../../common/event-bus';
 
 export interface SubscriptionRecord {
@@ -35,11 +37,22 @@ export interface OperatorLedgerRow {
  * Правило DEV-07 §3 п.8: billing его не импортирует — модуль публикует события.
  */
 @Injectable()
-export class SubscriptionsService {
+export class SubscriptionsService implements OnModuleInit {
   private subs = new Map<string, SubscriptionRecord>();
   private ledger: OperatorLedgerRow[] = [];
 
-  constructor(store: StateStore, private readonly bus: EventBus) {
+  private readonly mirror: PgMirror;
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
+  }
+
+  constructor(store: StateStore, private readonly bus: EventBus, prisma: PrismaService) {
     store.register(
       'subscriptions',
       () => ({ subs: [...this.subs.values()], ledger: this.ledger }),
@@ -49,6 +62,74 @@ export class SubscriptionsService {
         this.ledger = data.ledger ?? [];
       },
     );
+    this.mirror = new PgMirror(prisma, 'Subscriptions', {
+      load: async (tx) => {
+        const [subs, ledger] = await Promise.all([
+          tx.operatorSubscription.findMany(),
+          tx.operatorLedgerRow.findMany({ orderBy: { at: 'asc' } }),
+        ]);
+        if (subs.length) {
+          this.subs = new Map(
+            subs.map((x) => [
+              x.id,
+              {
+                id: x.id,
+                tenantId: APP_TENANT,
+                operatorOrgId: x.operatorOrgId,
+                plan: x.plan as SubscriptionRecord['plan'],
+                tenantKind: x.tenantKind as SubscriptionRecord['tenantKind'],
+                billingUnit: x.billingUnit as SubscriptionRecord['billingUnit'],
+                priceTiyin: Number(x.priceTiyin),
+                unitsBilled: x.unitsBilled,
+                periodFrom: x.periodFrom.toISOString(),
+                periodTo: x.periodTo.toISOString(),
+                status: x.status as SubscriptionRecord['status'],
+              },
+            ]),
+          );
+        }
+        if (ledger.length) {
+          this.ledger = ledger.map((r) => ({
+            id: r.id,
+            tenantId: APP_TENANT,
+            operatorOrgId: r.operatorOrgId,
+            kind: r.kind as OperatorLedgerRow['kind'],
+            amountTiyin: Number(r.amountTiyin),
+            note: r.note,
+            at: r.at.toISOString(),
+          }));
+        }
+        return subs.length + ledger.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const x of this.subs.values()) {
+          const data = {
+            operatorOrgId: x.operatorOrgId,
+            plan: x.plan as never,
+            tenantKind: x.tenantKind as never,
+            billingUnit: x.billingUnit as never,
+            unitsBilled: x.unitsBilled,
+            priceTiyin: BigInt(x.priceTiyin),
+            periodFrom: new Date(x.periodFrom),
+            periodTo: new Date(x.periodTo),
+            status: x.status,
+          };
+          await tx.operatorSubscription.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+        // Строка расчёта не меняется после записи: это документ, по которому
+        // платят. Поэтому create с пропуском уже записанных, а не upsert
+        for (const r of this.ledger) {
+          await tx.operatorLedgerRow.upsert({
+            where: { id: r.id },
+            create: {
+              id: r.id, tenantId, operatorOrgId: r.operatorOrgId, kind: r.kind,
+              amountTiyin: BigInt(r.amountTiyin), note: r.note, at: new Date(r.at),
+            },
+            update: {},
+          });
+        }
+      },
+    });
     this.subscribeToFees();
   }
 
@@ -107,6 +188,7 @@ export class SubscriptionsService {
     rec.priceTiyin = price || rec.priceTiyin;
     rec.unitsBilled = dto.unitsBilled ?? rec.unitsBilled;
     this.subs.set(rec.id, rec);
+    this.mirror.schedule();
     if (prevPlan !== rec.plan) {
       this.bus.publish('subscription.plan_changed', { operatorOrgId, from: prevPlan, to: rec.plan });
     }
@@ -140,6 +222,7 @@ export class SubscriptionsService {
       this.bus.publish('subscription.plan_changed', { operatorOrgId, from, to: 'free', reason: 'past_due' });
     }
     this.subs.set(sub.id, sub);
+    this.mirror.schedule();
     return sub;
   }
 
@@ -160,6 +243,7 @@ export class SubscriptionsService {
       at: new Date().toISOString(),
     };
     this.ledger.push(row);
+    this.mirror.schedule();
     return row;
   }
 

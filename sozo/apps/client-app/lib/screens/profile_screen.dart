@@ -338,18 +338,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       };
 
   /// Название языка — на нём самом: человек, ищущий английский, узнаёт слово
-  /// «English», а не «Английский»
-  static String _languageName(String code) => switch (code) {
-        'uz' => t('c01.langUz'),
-        'en' => 'English',
-        _ => t('c01.langRu'),
-      };
+  /// «English», а не «Английский». Список ведёт `L10n.names`, иначе при
+  /// добавлении языка switch здесь молча отдавал бы русское название.
+  static String _languageName(String code) => L10n.names[code] ?? code;
 
   Future<void> _pickLanguage() async {
     await showSozoSheet<void>(
       context,
       title: t('c30.language'),
-      child: Padding(
+      // Языков десять — в лист они на маленьком экране не помещаются,
+      // поэтому список прокручивается, а не обрезается снизу.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16),
         child: Column(
           mainAxisSize: MainAxisSize.min,

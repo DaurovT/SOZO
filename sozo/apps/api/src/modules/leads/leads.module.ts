@@ -1,10 +1,12 @@
-import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, Req, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { AuditService } from '../platform/audit.service';
 import { CrmService } from '../crm/crm.service';
 import { CrmModule } from '../crm/crm.module';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import type { JwtClaims } from '../../common/jwt';
 
 /**
@@ -32,10 +34,15 @@ export interface LeadRec {
 }
 
 @Injectable()
-export class LeadsService {
+export class LeadsService implements OnModuleInit {
   readonly leads: LeadRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.leads.push({
       id: uuidv7(),
       company: 'Сеть кофеен «Дон» (демо-лид)',
@@ -55,6 +62,63 @@ export class LeadsService {
         this.leads.push(...(d as LeadRec[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'Leads', {
+      load: async (tx) => {
+        const rows = await tx.lead.findMany({ orderBy: { createdAt: 'asc' } });
+        if (!rows.length) return 0;
+        this.leads.length = 0;
+        this.leads.push(
+          ...rows.map((r) => ({
+            id: r.id,
+            company: r.company,
+            contactName: r.contactName,
+            phone: r.phone,
+            pointsCount: r.pointsCount,
+            objectType: r.objectType ?? undefined,
+            stage: r.stage as LeadRec['stage'],
+            rejectReason: r.rejectReason ?? undefined,
+            utm: (r.utm as Record<string, string>) ?? undefined,
+            note: r.note ?? undefined,
+            organizationId: r.organizationId ?? undefined,
+            nextTouchAt: r.nextTouchAt?.toISOString(),
+            createdAt: r.createdAt.toISOString(),
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const l of this.leads) {
+          const data = {
+            company: l.company,
+            contactName: l.contactName,
+            phone: l.phone,
+            pointsCount: l.pointsCount,
+            objectType: l.objectType ?? null,
+            stage: l.stage,
+            rejectReason: l.rejectReason ?? null,
+            utm: (l.utm ?? {}) as object,
+            note: l.note ?? null,
+            organizationId: l.organizationId ?? null,
+            nextTouchAt: l.nextTouchAt ? new Date(l.nextTouchAt) : null,
+          };
+          await tx.lead.upsert({
+            where: { id: l.id },
+            create: { id: l.id, tenantId, createdAt: new Date(l.createdAt), ...data },
+            update: data,
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   touch(): void {

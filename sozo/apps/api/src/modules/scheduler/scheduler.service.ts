@@ -1,6 +1,8 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { EventBus } from '../../common/event-bus';
 import { AuditService } from '../platform/audit.service';
 import { BillingService } from '../billing/billing.service';
@@ -31,16 +33,69 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   /** Ключи уже выполненных периодических задач: не дублируем в одном периоде */
   private readonly done = new Set<string>();
   /** Смещение «виртуального времени» в днях — для симуляции прогона месяца в dev */
+  /**
+   * Сдвиг дня для прогона таймеров вперёд. Живёт только в памяти процесса и
+   * намеренно не переезжает в базу: это отладочный рычаг, которым прогоняют
+   * завтрашний день сегодня, а не свойство системы. Пережить перезапуск он
+   * не должен — иначе забытый сдвиг незаметно смещает всю работу таймеров.
+   */
   private dayOffset = 0;
+
+  /** Журнал прогонов и отметки «сделано» — в базе (DEV-19, m36) */
+  private readonly mirror: PgMirror;
 
   constructor(
     private readonly store: StateStore,
+    prisma: PrismaService,
     private readonly bus: EventBus,
     private readonly audit: AuditService,
     private readonly billing: BillingService,
     private readonly crm: CrmService,
     private readonly orders: OrdersService,
   ) {
+    this.mirror = new PgMirror(prisma, 'Scheduler', {
+      load: async (tx) => {
+        const [runs, done] = await Promise.all([
+          tx.timerRun.findMany({ orderBy: { at: 'asc' }, take: 200 }),
+          tx.timerDone.findMany(),
+        ]);
+        if (runs.length) {
+          this.runs.length = 0;
+          this.runs.push(
+            ...runs.map((r) => ({
+              id: r.id,
+              timer: r.timer,
+              title: r.title,
+              result: r.result,
+              affected: r.affected,
+              simulated: r.simulated,
+              at: r.at.toISOString(),
+            })),
+          );
+        }
+        for (const d of done) this.done.add(d.key);
+        return runs.length + done.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const r of this.runs) {
+          await tx.timerRun.upsert({
+            where: { id: r.id },
+            create: {
+              id: r.id, tenantId, timer: r.timer, title: r.title, result: r.result,
+              affected: r.affected, simulated: r.simulated, at: new Date(r.at),
+            },
+            update: {},
+          });
+        }
+        for (const key of this.done) {
+          await tx.timerDone.upsert({
+            where: { tenantId_key: { tenantId, key } },
+            create: { tenantId, key },
+            update: {},
+          });
+        }
+      },
+    });
     this.store.register(
       'scheduler',
       () => ({ runs: this.runs.slice(-200), done: [...this.done], dayOffset: this.dayOffset }),
@@ -55,7 +110,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
+  }
+
   onModuleInit(): void {
+    void this.mirror.init();
     // Минутный тик: короткие операционные таймеры
     this.handle = setInterval(() => void this.tick(false), 60_000);
     void this.tick(false); // первый прогон на старте
@@ -86,6 +147,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private log(timer: string, title: string, result: string, affected: number, simulated: boolean): void {
     if (affected === 0 && !simulated) return; // не засоряем журнал пустыми тиками
     this.runs.push({ id: uuidv7(), timer, title, result, affected, at: this.now().toISOString(), simulated });
+    this.mirror.schedule();
     if (this.runs.length > 500) this.runs.splice(0, this.runs.length - 500);
     this.store.persist();
   }
@@ -201,7 +263,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         /* период закрыт — пропускаем */
       }
     }
-    if (issued) this.done.add(key);
+    if (issued) {
+      this.done.add(key);
+      this.mirror.schedule();
+      this.mirror.schedule();
+    }
     this.log('#15', 'Начисление абоненток (1-е число)', `выставлено СФ: ${issued}`, issued, sim);
   }
 
@@ -254,6 +320,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       const key = `dunning:${inv.id}:${stage[0]}`;
       if (this.done.has(key)) continue; // один этап дунинга — одно уведомление
       this.done.add(key);
+      this.mirror.schedule();
       this.audit.write({
         actorPhone: 'система',
         action: 'timer.dunning',

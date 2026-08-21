@@ -1,9 +1,11 @@
-import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Req, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { AuditService } from '../platform/audit.service';
 import { EventBus } from '../../common/event-bus';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import type { JwtClaims } from '../../common/jwt';
 
 /**
@@ -26,10 +28,15 @@ export interface DamageCase {
 }
 
 @Injectable()
-export class ReserveService {
+export class ReserveService implements OnModuleInit {
   readonly cases: DamageCase[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'reserve',
       () => this.cases,
@@ -38,6 +45,59 @@ export class ReserveService {
         this.cases.push(...(d as DamageCase[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'Reserve', {
+      load: async (tx) => {
+        const rows = await tx.damageCase.findMany({ orderBy: { createdAt: 'asc' } });
+        if (!rows.length) return 0;
+        this.cases.length = 0;
+        this.cases.push(
+          ...rows.map((r) => ({
+            id: r.id,
+            orderId: r.orderId ?? undefined,
+            description: r.description,
+            claimantName: r.claimantName,
+            amountTiyin: Number(r.amountTiyin),
+            regressTiyin: Number(r.regressTiyin),
+            masterId: r.masterId ?? undefined,
+            masterName: r.masterName ?? undefined,
+            status: r.status as DamageCase['status'],
+            resolution: r.resolution ?? undefined,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const c of this.cases) {
+          const data = {
+            orderId: c.orderId ?? null,
+            description: c.description,
+            claimantName: c.claimantName,
+            amountTiyin: BigInt(c.amountTiyin),
+            regressTiyin: BigInt(c.regressTiyin),
+            masterId: c.masterId ?? null,
+            masterName: c.masterName ?? null,
+            status: c.status,
+            resolution: c.resolution ?? null,
+          };
+          await tx.damageCase.upsert({
+            where: { id: c.id },
+            create: { id: c.id, tenantId, createdAt: new Date(c.createdAt), ...data },
+            update: data,
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   touch(): void {

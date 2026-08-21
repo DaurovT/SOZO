@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /**
  * Короткие ссылки на веб-карточку заявки.
@@ -31,10 +33,16 @@ export interface WebCardLinkRec {
 }
 
 @Injectable()
-export class WebCardLinksService {
+export class WebCardLinksService implements OnModuleInit {
   private readonly links = new Map<string, WebCardLinkRec>();
 
-  constructor(private readonly store: StateStore) {
+  /** Общая таблица коротких ссылок — см. DEV-19 §3.2 */
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'webCardLinks',
       () => [...this.links.values()],
@@ -43,6 +51,52 @@ export class WebCardLinksService {
         for (const l of (d ?? []) as WebCardLinkRec[]) this.links.set(l.code, l);
       },
     );
+    this.mirror = new PgMirror(prisma, 'WebCardLinks', {
+      load: async (tx) => {
+        const rows = await tx.shortLink.findMany({ where: { kind: 'web_card' } });
+        if (!rows.length) return 0;
+        this.links.clear();
+        for (const r of rows) {
+          this.links.set(r.code, {
+            code: r.code,
+            orderId: r.targetId,
+            clientPhone: r.phone,
+            createdAt: r.createdAt.toISOString(),
+            expiresAt: r.expiresAt.toISOString(),
+            revokedAt: r.revokedAt?.toISOString(),
+            opens: r.opens,
+            lastOpenedAt: r.lastOpenedAt?.toISOString(),
+          });
+        }
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const l of this.links.values()) {
+          const data = {
+            tenantId,
+            kind: 'web_card',
+            targetId: l.orderId,
+            phone: l.clientPhone,
+            buildingId: null,
+            createdAt: new Date(l.createdAt),
+            expiresAt: new Date(l.expiresAt),
+            revokedAt: l.revokedAt ? new Date(l.revokedAt) : null,
+            opens: l.opens,
+            lastOpenedAt: l.lastOpenedAt ? new Date(l.lastOpenedAt) : null,
+          };
+          await tx.shortLink.upsert({ where: { code: l.code }, create: { code: l.code, ...data }, update: data });
+        }
+      },
+    });
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   private newCode(): string {
@@ -75,6 +129,7 @@ export class WebCardLinksService {
       opens: 0,
     };
     this.links.set(rec.code, rec);
+    this.mirror.schedule();
     this.store.persist();
     return rec;
   }
@@ -97,6 +152,7 @@ export class WebCardLinksService {
     if (!rec) return;
     rec.opens += 1;
     rec.lastOpenedAt = new Date().toISOString();
+    this.mirror.schedule();
     this.store.persist();
   }
 
@@ -104,6 +160,7 @@ export class WebCardLinksService {
     const rec = this.links.get(code.toUpperCase());
     if (!rec) return;
     rec.revokedAt = new Date().toISOString();
+    this.mirror.schedule();
     this.store.persist();
   }
 

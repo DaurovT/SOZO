@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Module, Param, Post, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { PricingModule } from '../pricing/pricing.module';
 import { PricingService } from '../pricing/pricing.service';
@@ -8,6 +8,8 @@ import { LeadsModule } from '../leads/leads.module';
 import { LeadsService } from '../leads/leads.module';
 import { AuditService } from '../platform/audit.service';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { Injectable } from '@nestjs/common';
 
 /**
@@ -35,10 +37,15 @@ export interface CallTask {
 }
 
 @Injectable()
-export class PublicLeadsService {
+export class PublicLeadsService implements OnModuleInit {
   readonly tasks: CallTask[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'publicLeads',
       () => this.tasks,
@@ -47,6 +54,63 @@ export class PublicLeadsService {
         this.tasks.push(...(d as CallTask[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'CallTasks', {
+      load: async (tx) => {
+        const rows = await tx.callTask.findMany({ orderBy: { createdAt: 'asc' } });
+        if (!rows.length) return 0;
+        this.tasks.length = 0;
+        this.tasks.push(
+          ...rows.map((r) => ({
+            id: r.id,
+            kind: r.kind as CallTask['kind'],
+            title: r.title,
+            phone: r.phone,
+            payload: (r.payload as Record<string, unknown>) ?? {},
+            slaMinutes: r.slaMinutes,
+            dueAt: r.dueAt.toISOString(),
+            status: r.status as CallTask['status'],
+            source: r.source,
+            utm: (r.utm as Record<string, string>) ?? undefined,
+            createdAt: r.createdAt.toISOString(),
+            doneAt: r.doneAt?.toISOString(),
+            result: r.result ?? undefined,
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const t of this.tasks) {
+          const data = {
+            kind: t.kind,
+            title: t.title,
+            phone: t.phone,
+            payload: (t.payload ?? {}) as object,
+            slaMinutes: t.slaMinutes,
+            dueAt: new Date(t.dueAt),
+            status: t.status,
+            source: t.source,
+            utm: (t.utm ?? {}) as object,
+            doneAt: t.doneAt ? new Date(t.doneAt) : null,
+            result: t.result ?? null,
+          };
+          await tx.callTask.upsert({
+            where: { id: t.id },
+            create: { id: t.id, tenantId, createdAt: new Date(t.createdAt), ...data },
+            update: data,
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   add(task: Omit<CallTask, 'id' | 'createdAt' | 'status' | 'dueAt'>): CallTask {

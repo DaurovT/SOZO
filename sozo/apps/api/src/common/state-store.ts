@@ -59,8 +59,27 @@ export class StateStore implements OnModuleInit {
     }
   }
 
+  /**
+   * Зеркала на PostgreSQL.
+   *
+   * Модуль, переехавший в базу, регистрирует здесь свою запись — и она
+   * вызывается тем же `persist()`, что и запись в файл. Иначе пришлось бы
+   * дописывать вызов в каждое место, где меняется набор, а меняют его и
+   * сервисы, и контроллеры: одно забытое место означает молча потерянную
+   * строку, которую заметят через месяц.
+   */
+  private readonly mirrors: Array<{ schedule: () => void }> = [];
+
+  registerMirror(m: { schedule: () => void }): void {
+    this.mirrors.push(m);
+  }
+
   /** Отложенная запись: вызывается после каждой мутации, склеивает всплески */
   persist(): void {
+    // Зеркала пишут сразу, а не через полсекунды: отложенная запись создаёт
+    // разрыв, в котором ссылающаяся строка упирается в ещё не записанного
+    // родителя. Склейку зеркало делает своим способом — см. PgMirror
+    for (const m of this.mirrors) m.schedule();
     if (!this.ready) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), 500);

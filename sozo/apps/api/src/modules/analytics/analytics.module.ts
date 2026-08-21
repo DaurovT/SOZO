@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Injectable, Module, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Injectable, Module, Post, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { OrdersModule } from '../orders/orders.module';
 import { OrdersService } from '../orders/orders.service';
 import { BillingModule } from '../billing/billing.module';
@@ -26,10 +28,15 @@ export interface DemandMissRec {
 }
 
 @Injectable()
-export class AnalyticsService {
+export class AnalyticsService implements OnModuleInit {
   readonly demandMisses: DemandMissRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'analytics',
       () => this.demandMisses.slice(-2000),
@@ -38,6 +45,47 @@ export class AnalyticsService {
         this.demandMisses.push(...(d as DemandMissRec[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'Analytics', {
+      load: async (tx) => {
+        // Последние две тысячи: неудовлетворённый спрос смотрят за неделю, а
+        // не за всё время, и держать в памяти весь архив незачем
+        const rows = await tx.demandMiss.findMany({ orderBy: { at: 'desc' }, take: 2000 });
+        if (!rows.length) return 0;
+        this.demandMisses.length = 0;
+        this.demandMisses.push(
+          ...rows.reverse().map((r) => ({
+            id: r.id,
+            date: r.date.toISOString().slice(0, 10),
+            reason: r.reason as DemandMissRec['reason'],
+            category: r.category ?? undefined,
+            zone: r.zone ?? undefined,
+            at: r.at.toISOString(),
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const r of this.demandMisses) {
+          await tx.demandMiss.upsert({
+            where: { id: r.id },
+            create: {
+              id: r.id, tenantId, date: new Date(`${r.date}T00:00:00Z`), reason: r.reason,
+              category: r.category ?? null, zone: r.zone ?? null, at: new Date(r.at),
+            },
+            update: {},
+          });
+        }
+      },
+    });
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   /** F-003: клик по недоступному окну — сигнал найма (ТЗ 17.3) */
@@ -45,6 +93,7 @@ export class AnalyticsService {
     const r: DemandMissRec = { id: uuidv7(), at: new Date().toISOString(), ...rec };
     this.demandMisses.push(r);
     if (this.demandMisses.length > 2000) this.demandMisses.splice(0, this.demandMisses.length - 2000);
+    this.mirror.schedule();
     this.store.persist();
     return r;
   }

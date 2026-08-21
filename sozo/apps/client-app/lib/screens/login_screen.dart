@@ -574,86 +574,108 @@ class _LoginFlowState extends State<LoginFlow> {
   }
 }
 
-/// Переключатель языка (макет 165:4): белая пилюля с янтарной рамкой,
-/// активный язык — янтарная пилюля внутри.
+/// Переключатель языка (макет 165:4): белая пилюля с янтарной рамкой.
 ///
-/// Пилюля переезжает, а не перекрашивается скачком: движение показывает, что
-/// нажатие сработало, до того как успеет перерисоваться остальной экран.
+/// Раньше здесь стояли три ячейки с переезжающей подсветкой — на трёх языках
+/// это читалось как вкладки. Языков стало десять: в шапку заставки они не
+/// помещаются ни в строку, ни в две, а горизонтальная лента из десяти кодов
+/// заставляет искать свой язык прокруткой вслепую. Поэтому пилюля показывает
+/// текущий язык, а выбор открывается листом со списком названий — тем же,
+/// что в профиле, чтобы человек второй раз искал язык там же, где в первый.
 class _LanguageSelector extends StatelessWidget {
   const _LanguageSelector();
 
-  /// Ширина ячейки: три кода по два символа, поэтому одинаковая — на этом
-  /// держится переезд подсветки
-  static const _tabWidth = 40.0;
-  static const _tabHeight = 28.0;
+  static const _height = 28.0;
 
-  @override
-  Widget build(BuildContext context) {
-    const codes = L10n.codes;
-    final index = codes.indexOf(l10n.code).clamp(0, codes.length - 1);
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: SozoColors.surface,
-        borderRadius: BorderRadius.circular(SozoRadius.chip),
-        border: Border.all(color: authFeatureBorder),
-      ),
-      child: SizedBox(
-        width: _tabWidth * codes.length,
-        height: _tabHeight,
-        child: Stack(
+  Future<void> _pick(BuildContext context) async {
+    await showSozoSheet<void>(
+      context,
+      title: t('c30.language'),
+      // Десять пунктов не помещаются на маленьком экране — список прокручивается
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              // -1 … 1 по числу ячеек: при трёх это -1, 0, 1
-              alignment: Alignment(-1 + index * 2 / (codes.length - 1), 0),
-              child: Container(
-                width: _tabWidth,
-                height: _tabHeight,
-                decoration: BoxDecoration(
-                  color: authAmber,
-                  borderRadius: BorderRadius.circular(SozoRadius.chip),
+            for (final code in L10n.codes)
+              Padding(
+                padding: const EdgeInsets.only(bottom: SozoSpace.s8),
+                child: SecondaryButton(
+                  L10n.names[code] ?? code,
+                  icon: code == l10n.code ? 'check' : null,
+                  onTap: () async {
+                    await l10n.set(code);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
                 ),
               ),
-            ),
-            Row(
-              children: [
-                for (final code in codes) _tab(code, code == l10n.code),
-              ],
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _tab(String code, bool active) {
-    final label = switch (code) {
-      'uz' => t('c01.langCodeUz'),
-      'en' => t('c01.langCodeEn'),
-      _ => t('c01.langCodeRu'),
-    };
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => l10n.set(code),
+      onTap: () => _pick(context),
       behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: _tabWidth,
-        height: _tabHeight,
-        child: Center(
-          child: AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 220),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
-              color: active ? authInk : authMuted,
+      child: Container(
+        height: _height,
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s8),
+        decoration: BoxDecoration(
+          color: SozoColors.surface,
+          borderRadius: BorderRadius.circular(SozoRadius.chip),
+          border: Border.all(color: authFeatureBorder),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              L10n.shortNames[l10n.code] ?? l10n.code.toUpperCase(),
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: authInk,
+              ),
             ),
-            child: Text(label),
-          ),
+            const SizedBox(width: 2),
+            // Стрелка вниз рисуется треугольником, а не иконкой: набор
+            // figma-иконок подходящей нет, а Material-иконки в экранах
+            // запрещены (DEV-12 правило 3)
+            const _Caret(),
+          ],
         ),
       ),
     );
   }
+}
+
+/// Треугольник 7×4, направленный вниз — метка «откроется список»
+class _Caret extends StatelessWidget {
+  const _Caret();
+
+  @override
+  Widget build(BuildContext context) =>
+      const CustomPaint(size: Size(7, 4), painter: _CaretPainter());
+}
+
+class _CaretPainter extends CustomPainter {
+  const _CaretPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = authMuted);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CaretPainter oldDelegate) => false;
 }
 
 /// Плитка преимущества на заставке (макет 162:27): иконка 24 в поле 56,

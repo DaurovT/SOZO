@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror, APP_TENANT } from '../../common/pg-mirror';
 import { EventBus } from '../../common/event-bus';
 
 export type SlaPriority = 'critical' | 'high' | 'normal' | 'low';
@@ -43,11 +45,12 @@ export interface SlaStateRecord {
  * и движка уведомлений.
  */
 @Injectable()
-export class SlaService {
+export class SlaService implements OnModuleInit {
   private policies = new Map<string, SlaPolicyRecord>();
   private states = new Map<string, SlaStateRecord>();
+  private readonly mirror: PgMirror;
 
-  constructor(store: StateStore, private readonly bus: EventBus) {
+  constructor(store: StateStore, private readonly bus: EventBus, prisma: PrismaService) {
     store.register(
       'sla',
       () => ({ policies: [...this.policies.values()], states: [...this.states.values()] }),
@@ -57,11 +60,99 @@ export class SlaService {
         this.states = new Map((data.states ?? []).map((x) => [x.orderId, x]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'SLA', {
+      load: async (tx) => {
+        const [policies, states] = await Promise.all([tx.slaPolicy.findMany(), tx.slaState.findMany()]);
+        if (policies.length) {
+          this.policies = new Map(
+            policies.map((p) => [
+              p.id,
+              {
+                id: p.id,
+                tenantId: APP_TENANT,
+                operatorOrgId: p.operatorOrgId,
+                buildingId: p.buildingId,
+                categoryId: p.categoryId,
+                priority: p.priority as SlaPolicyRecord['priority'],
+                responseMin: p.responseMin,
+                arrivalMin: p.arrivalMin,
+                resolutionMin: p.resolutionMin,
+                workingHoursOnly: p.workingHoursOnly,
+                escalationChain: (p.escalationChain as string[]) ?? [],
+                appliesToScope: p.appliesToScope as SlaPolicyRecord['appliesToScope'],
+              },
+            ]),
+          );
+        }
+        if (states.length) {
+          this.states = new Map(
+            states.map((x) => [
+              x.orderId,
+              {
+                orderId: x.orderId,
+                tenantId: APP_TENANT,
+                policyId: x.policyId,
+                responseDue: x.responseDue.toISOString(),
+                arrivalDue: x.arrivalDue.toISOString(),
+                resolutionDue: x.resolutionDue.toISOString(),
+                breached: x.breached as SlaStateRecord['breached'],
+                reached: x.reached as SlaStateRecord['reached'],
+                pausedMs: x.pausedMs,
+              },
+            ]),
+          );
+        }
+        return policies.length + states.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const p of this.policies.values()) {
+          const data = {
+            operatorOrgId: p.operatorOrgId,
+            buildingId: p.buildingId,
+            categoryId: p.categoryId,
+            priority: p.priority,
+            responseMin: p.responseMin,
+            arrivalMin: p.arrivalMin,
+            resolutionMin: p.resolutionMin,
+            workingHoursOnly: p.workingHoursOnly,
+            escalationChain: p.escalationChain as unknown as object,
+            appliesToScope: p.appliesToScope,
+          };
+          await tx.slaPolicy.upsert({ where: { id: p.id }, create: { id: p.id, tenantId, ...data }, update: data });
+        }
+        for (const x of this.states.values()) {
+          const data = {
+            policyId: x.policyId,
+            responseDue: new Date(x.responseDue),
+            arrivalDue: new Date(x.arrivalDue),
+            resolutionDue: new Date(x.resolutionDue),
+            breached: x.breached,
+            reached: x.reached,
+            pausedMs: x.pausedMs,
+          };
+          await tx.slaState.upsert({
+            where: { tenantId_orderId: { tenantId, orderId: x.orderId } },
+            create: { tenantId, orderId: x.orderId, ...data },
+            update: data,
+          });
+        }
+      },
+    });
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   upsertPolicy(tenantId: string, dto: Omit<SlaPolicyRecord, 'id' | 'tenantId'>): SlaPolicyRecord {
     const rec: SlaPolicyRecord = { id: uuidv7(), tenantId, ...dto };
     this.policies.set(rec.id, rec);
+    this.mirror.schedule();
     return rec;
   }
 
@@ -112,6 +203,7 @@ export class SlaService {
       pausedMs: 0,
     };
     this.states.set(orderId, rec);
+    this.mirror.schedule();
     return rec;
   }
 
@@ -129,6 +221,7 @@ export class SlaService {
     st.arrivalDue = new Date(Date.parse(st.arrivalDue) + ms).toISOString();
     st.resolutionDue = new Date(Date.parse(st.resolutionDue) + ms).toISOString();
     this.states.set(orderId, st);
+    this.mirror.schedule();
   }
 
   /**
@@ -145,6 +238,7 @@ export class SlaService {
       this.bus.publish('sla.breached', { orderId, flag: stage, due, lateBy: at.getTime() - Date.parse(due) });
     }
     this.states.set(orderId, st);
+    this.mirror.schedule();
   }
 
   /** Детект нарушений. Нарушение фиксируется в момент истечения, а не при закрытии заявки. */

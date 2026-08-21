@@ -1,7 +1,9 @@
-import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, Req, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { AuditService } from '../platform/audit.service';
 import type { JwtClaims } from '../../common/jwt';
 
@@ -43,7 +45,7 @@ export type PromoVerdict = {
 };
 
 @Injectable()
-export class PromoService {
+export class PromoService implements OnModuleInit {
   readonly codes: PromoCodeRec[] = [
     { id: uuidv7(), code: 'SALOM10', discountPercent: 10, active: true, maxUses: 100, usedCount: 0, comment: 'Промо запуска', createdAt: new Date().toISOString() },
     {
@@ -60,7 +62,12 @@ export class PromoService {
     },
   ];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'promo',
       () => this.codes,
@@ -70,6 +77,67 @@ export class PromoService {
         this.ensureWelcome();
       },
     );
+    this.mirror = new PgMirror(prisma, 'Promo', {
+      load: async (tx) => {
+        const rows = await tx.promoCode.findMany({ include: { uses: true } });
+        if (!rows.length) return 0;
+        this.codes.length = 0;
+        this.codes.push(
+          ...rows.map((r) => ({
+            id: r.id,
+            code: r.code,
+            discountPercent: r.discountPercent,
+            active: r.active,
+            maxUses: r.maxUses,
+            usedCount: r.usedCount,
+            comment: r.comment ?? undefined,
+            createdAt: r.createdAt.toISOString(),
+            firstOrderOnly: r.firstOrderOnly,
+            usedByPhones: r.uses.map((u) => u.phone),
+          })),
+        );
+        this.ensureWelcome();
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const c of this.codes) {
+          const data = {
+            code: c.code,
+            discountPercent: c.discountPercent,
+            active: c.active,
+            maxUses: c.maxUses,
+            usedCount: c.usedCount,
+            comment: c.comment ?? null,
+            firstOrderOnly: Boolean(c.firstOrderOnly),
+          };
+          await tx.promoCode.upsert({
+            where: { id: c.id },
+            create: { id: c.id, tenantId, createdAt: new Date(c.createdAt), ...data },
+            update: data,
+          });
+          // Использования — своя таблица: по ним проверяется «только первый
+          // заказ» и считается стоимость кампании. Уникальность (код, телефон)
+          // держит база, поэтому повтор молча пропускается
+          for (const phone of c.usedByPhones ?? []) {
+            await tx.promoUse.upsert({
+              where: { promoCodeId_phone: { promoCodeId: c.id, phone } },
+              create: { id: uuidv7(), tenantId, promoCodeId: c.id, phone },
+              update: {},
+            });
+          }
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   /**

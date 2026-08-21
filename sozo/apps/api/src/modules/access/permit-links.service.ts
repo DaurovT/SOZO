@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /**
  * Короткие ссылки на согласование наряда-допуска (W-06).
@@ -47,10 +49,20 @@ export interface PermitLinkRec {
 }
 
 @Injectable()
-export class PermitLinksService {
+export class PermitLinksService implements OnModuleInit {
   private readonly links = new Map<string, PermitLinkRec>();
 
-  constructor(private readonly store: StateStore) {
+  /**
+   * Ссылки живут в общей таблице short_link вместе с ссылками на веб-карточку
+   * заявки и на ответ жителя о доступе: у всех трёх одинаковые поля, общий
+   * алфавит кода и общие правила срока и отзыва (DEV-19 §3.2).
+   */
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'permitLinks',
       () => [...this.links.values()],
@@ -59,6 +71,55 @@ export class PermitLinksService {
         for (const l of (d ?? []) as PermitLinkRec[]) this.links.set(l.code, l);
       },
     );
+    this.mirror = new PgMirror(prisma, 'PermitLinks', {
+      load: async (tx) => {
+        const rows = await tx.shortLink.findMany({ where: { kind: 'permit_approval' } });
+        if (!rows.length) return 0;
+        this.links.clear();
+        for (const r of rows) {
+          this.links.set(r.code, {
+            code: r.code,
+            permitId: r.targetId,
+            buildingId: r.buildingId ?? '',
+            approverPhone: r.phone,
+            createdAt: r.createdAt.toISOString(),
+            expiresAt: r.expiresAt.toISOString(),
+            usedAt: r.usedAt?.toISOString(),
+            revokedAt: r.revokedAt?.toISOString(),
+            opens: r.opens,
+            lastOpenedAt: r.lastOpenedAt?.toISOString(),
+          });
+        }
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const l of this.links.values()) {
+          const data = {
+            tenantId,
+            kind: 'permit_approval',
+            targetId: l.permitId,
+            phone: l.approverPhone,
+            buildingId: l.buildingId || null,
+            createdAt: new Date(l.createdAt),
+            expiresAt: new Date(l.expiresAt),
+            usedAt: l.usedAt ? new Date(l.usedAt) : null,
+            revokedAt: l.revokedAt ? new Date(l.revokedAt) : null,
+            opens: l.opens,
+            lastOpenedAt: l.lastOpenedAt ? new Date(l.lastOpenedAt) : null,
+          };
+          await tx.shortLink.upsert({ where: { code: l.code }, create: { code: l.code, ...data }, update: data });
+        }
+      },
+    });
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   private newCode(): string {
@@ -92,6 +153,7 @@ export class PermitLinksService {
       opens: 0,
     };
     this.links.set(rec.code, rec);
+    this.mirror.schedule();
     return rec;
   }
 
@@ -106,6 +168,7 @@ export class PermitLinksService {
     if (Date.parse(l.expiresAt) <= Date.now()) return null;
     l.opens += 1;
     l.lastOpenedAt = new Date().toISOString();
+    this.mirror.schedule();
     return l;
   }
 
@@ -116,7 +179,10 @@ export class PermitLinksService {
 
   markUsed(code: string): void {
     const l = this.links.get(code.toUpperCase());
-    if (l) l.usedAt = new Date().toISOString();
+    if (l) {
+      l.usedAt = new Date().toISOString();
+      this.mirror.schedule();
+    }
   }
 
   revokeForPermit(permitId: string): number {
@@ -127,6 +193,7 @@ export class PermitLinksService {
         n += 1;
       }
     }
+    if (n) this.mirror.schedule();
     return n;
   }
 
