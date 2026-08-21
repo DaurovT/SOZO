@@ -4,30 +4,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sozo_client/i18n.dart';
 
-/// Английский словарь — третий язык, а не нарисованная вкладка.
+/// Языки, собранные внутрь приложения, — не нарисованные вкладки.
 ///
 /// Словарь читается из исходника, а не через публичный геттер: открывать карты
 /// наружу ради теста значит держать в продукте дверь, которой пользуется
 /// только тест. Ломается тут ровно одно — ключ, добавленный в русский и
 /// забытый в остальных: человек видит русскую строку посреди чужого экрана.
-Map<String, String> _dict(String source, String name) {
+///
+/// Догружаемые языки сюда не входят: их файлов в сборке нет, они приезжают с
+/// сервера. Их полноту сверяет `tools/check-dicts.mjs`.
+Map<String, String> _dict(String file, String name) {
+  final source = File(file).readAsStringSync();
   final start = source.indexOf('const $name = <String, String>{');
-  if (start < 0) throw StateError('карта $name не найдена');
+  if (start < 0) throw StateError('карта $name не найдена в $file');
   final end = source.indexOf('\n};', start);
   final body = source.substring(start, end);
   final out = <String, String>{};
-  for (final m in RegExp(r"^\s*'((?:[^'\\]|\\.)*)':\s*'((?:[^'\\]|\\.)*)',\s*$", multiLine: true)
-      .allMatches(body)) {
-    out[m.group(1)!] = m.group(2)!;
+  // Значение бывает и в одинарных кавычках, и в двойных: переводы писали
+  // разные руки, и апостроф в тексте одинарными не обойти
+  // Тройные кавычки не случайно: raw-строка не может содержать свой
+  // разделитель, а выражению нужны оба вида кавычек сразу
+  final re = RegExp(
+    r'''^\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*:\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*,''',
+    multiLine: true,
+  );
+  for (final m in re.allMatches(body)) {
+    out[(m.group(1) ?? m.group(2))!] = (m.group(3) ?? m.group(4))!;
   }
   return out;
 }
 
 void main() {
-  final source = File('lib/i18n.dart').readAsStringSync();
-  final ru = _dict(source, '_ru');
-  final uz = _dict(source, '_uz');
-  final en = _dict(source, '_en');
+  final ru = _dict('lib/i18n/dict_ru.dart', 'ruDict');
+  final uz = _dict('lib/i18n/dict_uz.dart', 'uzDict');
+  final en = _dict('lib/i18n/dict_en.dart', 'enDict');
 
   test('в русском словаре есть ключи', () {
     expect(ru.length, greaterThan(700));
@@ -52,8 +62,19 @@ void main() {
     expect(copied, isEmpty, reason: 'ключи скопированы без перевода: ${copied.take(10)}');
   });
 
-  test('в списке языков ровно три кода', () {
-    expect(L10n.codes, ['ru', 'uz', 'en']);
+  test('внутрь приложения собраны ровно три языка', () {
+    // Остальные семь качаются с сервера. Если язык переедет в сборку, вырастет
+    // вес установки — это решение, а не побочный эффект правки словаря
+    expect(L10n.builtIn, {'ru', 'uz', 'en'});
+    expect(L10n.codes.length, 10);
+    expect(L10n.codes.take(3), ['ru', 'uz', 'en']);
+  });
+
+  test('у каждого языка есть подпись на нём самом', () {
+    final missing = L10n.codes.where((c) => (L10n.names[c] ?? '').isEmpty).toList();
+    expect(missing, isEmpty, reason: 'язык без названия в списке выбора: $missing');
+    final noShort = L10n.codes.where((c) => (L10n.shortNames[c] ?? '').isEmpty).toList();
+    expect(noShort, isEmpty, reason: 'язык без кода для переключателя: $noShort');
   });
 
   // `l10n.set` пишет выбор в SharedPreferences. Без мока плагин ждёт ответа
@@ -62,7 +83,8 @@ void main() {
   testWidgets('переключение отдаёт три разные строки', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final seen = <String, String>{};
-    for (final code in L10n.codes) {
+    // Только встроенные: догружаемый язык полез бы в сеть, которой в тесте нет
+    for (final code in L10n.codes.where(L10n.builtIn.contains)) {
       await l10n.set(code);
       expect(l10n.code, code, reason: 'язык не переключился на $code');
       seen[code] = t('tab.profile');
@@ -73,5 +95,18 @@ void main() {
       3,
       reason: 'три языка дали меньше трёх разных строк: ${seen.values.join(' / ')}',
     );
+  });
+
+  testWidgets('догружаемый язык без сети не подменяет текущий', (tester) async {
+    // Сети в тесте нет, значит загрузка обязана провалиться. Проверяем не саму
+    // загрузку, а обещание `set`: неудача возвращает false и оставляет человека
+    // на языке, который у него работает, а не на пустом экране
+    SharedPreferences.setMockInitialValues({});
+    await l10n.set('ru');
+    final ok = await l10n.set('ko');
+    expect(ok, isFalse, reason: 'без сети словарь взяться неоткуда');
+    expect(l10n.code, 'ru', reason: 'язык сменился, хотя словарь не приехал');
+    expect(l10n.status, LocaleStatus.failed, reason: 'экрану нечего показать о неудаче');
+    l10n.clearError();
   });
 }

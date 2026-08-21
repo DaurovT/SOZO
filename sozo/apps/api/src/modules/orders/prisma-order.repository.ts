@@ -85,7 +85,14 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
 
   async create(order: OrderRecord): Promise<OrderRecord> {
     this.orders.set(order.id, order);
-    await this.writeOne(order);
+    // Через общую очередь, хотя и с ожиданием.
+    //
+    // Заявка ссылается на объект внешним ключом, а объект пишется своим
+    // репозиторием через ту же очередь. Прямая запись здесь обгоняла его:
+    // заявка успевала уйти в базу раньше объекта, на который ссылается.
+    // Очередь сохраняет порядок, а await — то, ради чего запись здесь
+    // немедленная: заявка не должна вернуться клиенту раньше, чем записана.
+    await queue().add(() => this.writeOne(order));
     return order;
   }
 
@@ -119,8 +126,9 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
     if (patch) Object.assign(order, patch);
     order.statusLog.push({ ...entry, at: new Date() });
     // Переход пишется сразу, а не отложенно: статус заявки — то, ради чего
-    // всё остальное существует, и терять его при падении процесса нельзя
-    await this.writeOne(order);
+    // всё остальное существует, и терять его при падении процесса нельзя.
+    // Через очередь — чтобы не обогнать запись того, на что заявка ссылается
+    await queue().add(() => this.writeOne(order));
     return order;
   }
 

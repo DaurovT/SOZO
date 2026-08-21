@@ -21,7 +21,7 @@ export interface TimerRun {
   result: string;
   affected: number;
   at: string;
-  simulated: boolean;
+  manual: boolean;
 }
 
 const CALLOUT_TIYIN = 5_000_000;
@@ -68,7 +68,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
               title: r.title,
               result: r.result,
               affected: r.affected,
-              simulated: r.simulated,
+              manual: r.manual,
               at: r.at.toISOString(),
             })),
           );
@@ -82,7 +82,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
             where: { id: r.id },
             create: {
               id: r.id, tenantId, timer: r.timer, title: r.title, result: r.result,
-              affected: r.affected, simulated: r.simulated, at: new Date(r.at),
+              affected: r.affected, manual: r.manual, at: new Date(r.at),
             },
             update: {},
           });
@@ -144,25 +144,32 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private log(timer: string, title: string, result: string, affected: number, simulated: boolean): void {
-    if (affected === 0 && !simulated) return; // не засоряем журнал пустыми тиками
-    this.runs.push({ id: uuidv7(), timer, title, result, affected, at: this.now().toISOString(), simulated });
+  private log(timer: string, title: string, result: string, affected: number, manual: boolean): void {
+    if (affected === 0 && !manual) return; // не засоряем журнал пустыми тиками
+    this.runs.push({ id: uuidv7(), timer, title, result, affected, at: this.now().toISOString(), manual });
     this.mirror.schedule();
     if (this.runs.length > 500) this.runs.splice(0, this.runs.length - 500);
     this.store.persist();
   }
 
-  /** Полный прогон всех таймеров. simulated=true — ручной запуск из админки */
-  async tick(simulated: boolean): Promise<TimerRun[]> {
+  /**
+   * Полный прогон всех таймеров. `manual=true` — запуск человеком из админки
+   * или прогон дней вперёд; расписание ставит false.
+   *
+   * Раньше параметр назывался `manual`, и это было неправдой: побочные
+   * действия выполняются одинаково в обоих случаях. Отличие ровно одно —
+   * пустой тик расписания в журнал не пишется, чтобы не засорять его.
+   */
+  async tick(manual: boolean): Promise<TimerRun[]> {
     const before = this.runs.length;
-    await this.urgentSurchargeRelease(simulated); // #22
-    await this.approvalEscalation(simulated); // #7–9
-    await this.paymentReminders(simulated); // #13–14
-    this.subscriptionCycle(simulated); // #15, ТЗ 8.3
-    this.suspendUnpaid(simulated); // ТЗ 8.3 — приостановка к 10-му
-    this.dunning(simulated); // #15–17, ТЗ 8.9
-    this.balanceChecker(simulated); // #42
-    this.gphExpiry(simulated); // A-11 — алерт за 14 дней
+    await this.urgentSurchargeRelease(manual); // #22
+    await this.approvalEscalation(manual); // #7–9
+    await this.paymentReminders(manual); // #13–14
+    this.subscriptionCycle(manual); // #15, ТЗ 8.3
+    this.suspendUnpaid(manual); // ТЗ 8.3 — приостановка к 10-му
+    this.dunning(manual); // #15–17, ТЗ 8.9
+    this.balanceChecker(manual); // #42
+    this.gphExpiry(manual); // A-11 — алерт за 14 дней
     return this.runs.slice(before).reverse();
   }
 

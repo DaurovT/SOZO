@@ -10,18 +10,30 @@ import 'package:sozo_client/i18n.dart';
 ///
 /// Читаем исходник словаря, а не карты в памяти: они приватные, и делать их
 /// публичными ради теста — менять устройство продукта под тест.
+///
+/// Здесь проверяются только языки, собранные внутрь приложения. Остальные
+/// семь лежат на сервере (`apps/api/src/i18n/client-*.ts`) и сверяются
+/// скриптом `tools/check-dicts.mjs`: их файлов в этой сборке попросту нет.
 void main() {
-  final source = File('lib/i18n.dart').readAsStringSync();
-
-  Map<String, String> entries(String mapName) {
+  /// Значение бывает в одинарных кавычках, бывает в двойных: переводы писали
+  /// разные руки, и во французском апостроф не даёт обойтись одинарными
+  Map<String, String> entries(String file, String mapName) {
+    final source = File(file).readAsStringSync();
     final body = source.split('const $mapName = <String, String>{')[1].split('\n};')[0];
-    // Значение бывает многострочным, поэтому берём его до закрывающей кавычки
-    final re = RegExp(r"'([^']+)':\s*\n?\s*'((?:[^'\\]|\\.)*)'", multiLine: true);
-    return {for (final m in re.allMatches(body)) m.group(1)!: m.group(2)!};
+    // Тройные кавычки не случайно: raw-строка не может содержать свой
+    // разделитель, а выражению нужны оба вида кавычек сразу
+    final re = RegExp(
+      r'''^\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*:\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*,''',
+      multiLine: true,
+    );
+    return {
+      for (final m in re.allMatches(body))
+        (m.group(1) ?? m.group(2))!: (m.group(3) ?? m.group(4))!,
+    };
   }
 
-  final ru = entries('_ru');
-  final uz = entries('_uz');
+  final ru = entries('lib/i18n/dict_ru.dart', 'ruDict');
+  final uz = entries('lib/i18n/dict_uz.dart', 'uzDict');
 
   test('словарь непустой — иначе проверки ниже ничего не значат', () {
     expect(ru.length, greaterThan(500));
@@ -56,7 +68,9 @@ void main() {
     // организации». Глазами это ловится только на снимке экрана
     final unresolved = <String, String>{};
     for (final file in Directory('lib').listSync(recursive: true).whereType<File>()) {
-      if (!file.path.endsWith('.dart') || file.path.endsWith('i18n.dart')) continue;
+      if (!file.path.endsWith('.dart')) continue;
+      // Сам словарь и его файлы пропускаем: в комментариях там примеры t()
+      if (file.path.endsWith('i18n.dart') || file.path.contains('lib/i18n/')) continue;
       final calls = RegExp(r"""(?<![A-Za-z0-9_'"])t\('([^']+)'""").allMatches(file.readAsStringSync());
       for (final m in calls) {
         final key = m.group(1)!;
@@ -89,8 +103,8 @@ void main() {
     final used = <String, String>{};
     for (final f in Directory('lib').listSync(recursive: true)) {
       if (f is! File || !f.path.endsWith('.dart')) continue;
-      // Сам словарь пропускаем: в его комментариях есть примеры вызова t()
-      if (f.path.endsWith('i18n.dart')) continue;
+      // Сам словарь и его файлы пропускаем: в комментариях там примеры t()
+      if (f.path.endsWith('i18n.dart') || f.path.contains('lib/i18n/')) continue;
       // Граница слева обязательна: без неё в улов попадают post('open'),
       // split('T') и любой другой вызов, чьё имя оканчивается на «t»
       for (final m in RegExp(r"(?<![a-zA-Z0-9_])t\('([a-zA-Z0-9_.]+)'")

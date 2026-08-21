@@ -3,6 +3,8 @@
  * Все эндпоинты БЕЗ авторизации. База выносится в VITE_API_URL (см. .env.example).
  */
 
+import { currentLocale } from './i18n';
+
 const RAW_BASE: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/v1';
 
 export const API_BASE = RAW_BASE.replace(/\/+$/, '');
@@ -22,12 +24,14 @@ export class ApiError extends Error {
  * Язык страницы уезжает в заголовке: половина того, что видит посетитель,
  * приходит отсюда — названия позиций прайса, тексты ошибок. Без заголовка
  * французская страница показала бы французские кнопки и русские ошибки
- * между ними. Читаем его из адреса, а не из контекста React: сюда, в
- * обычные функции, контекст не дотягивается, а язык всё равно задан URL-ом.
+ * между ними. Берём его из адреса, а не из контекста React: сюда, в обычные
+ * функции, контекст не дотягивается, а язык всё равно задан URL-ом.
+ *
+ * Через `currentLocale`, а не своим разбором пути: тот принимал за язык любые
+ * две буквы первого сегмента и отправил бы на сервер несуществующий код.
  */
 function acceptLanguage(): string {
-  const first = window.location.pathname.split('/')[1] ?? '';
-  return /^[a-z]{2}$/.test(first) ? first : 'ru';
+  return currentLocale().code;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

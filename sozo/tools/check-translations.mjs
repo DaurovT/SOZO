@@ -11,7 +11,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ALLOWED } from './locale-exceptions.mjs';
+import { ALLOWED, PROPER_NAMES, TG_SAME_AS_RU } from './locale-exceptions.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DIR = join(ROOT, 'apps/landing/src/i18n');
@@ -87,7 +87,11 @@ function audit(title, base, entries, { holders }) {
       const orig = base.get(k);
       if (orig === undefined) continue;
       if (ALLOWED.has(k)) continue;
-      if (v === orig && CYR.test(orig)) same.push(k);
+      // Имя собственное или таджикское заимствование, совпавшее с оригиналом, —
+      // верный перевод, а не пропущенный. Битые байты в них ловим по-прежнему
+      const sameByDesign = PROPER_NAMES.test(k) || (code === 'tg' && TG_SAME_AS_RU.has(k));
+      if (v === orig && CYR.test(orig) && !sameByDesign) same.push(k);
+      else if (v === orig && CYR.test(orig)) { /* совпало по делу */ }
       else if (!cyrillicOk && CYR.test(v)) cyr.push(k);
       if (MOJIBAKE.test(v)) moji.push(k);
       if (!spacingOk && gluedHolders(orig, v, holders).length) glued.push(k);

@@ -28,7 +28,7 @@ const ROOT = `http://localhost:${PORT}`;
 // вход с настоящим SMS, а общий сервер прогона работает на журнальном
 // отправителе. Держать оба режима в одном процессе нельзя — поставщик
 // выбирается один раз при старте.
-const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'otp-sms'];
+const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'platform', 'otp-sms'];
 const suites = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 
 /** Свободен ли порт: занятый означает забытый сервер от прошлого прогона */
@@ -95,12 +95,41 @@ function postgresReady() {
   }
 }
 
+/**
+ * Роль для прогонов — своя, не та, которой ходит прод.
+ *
+ * Переключение прода на базу меняет пароль `sozo_app` на случайный (иначе в
+ * репозитории лежал бы настоящий пароль). Прогоны, ходившие тем же
+ * `sozo_app`, после первого же переключения перестали подключаться вовсе.
+ *
+ * Роль тестов отдельная и, как и прод-роль, без суперпользователя и без
+ * BYPASSRLS: прогон обязан проверять систему с работающей изоляцией, а не
+ * схему без неё.
+ */
+const TEST_ROLE = 'sozo_test';
+const TEST_PASSWORD = 'sozo_test';
+
 function createScratchDb() {
   const name = `sozo_e2e_${randomUUID().slice(0, 8)}`;
   psql('postgres', `CREATE DATABASE ${name};`);
   for (const m of MIGRATIONS) {
     psql(name, readFileSync(join(API_DIR, '../../prisma/migrations', m, 'migration.sql'), 'utf8'));
   }
+  psql(
+    'postgres',
+    `DO $$ BEGIN
+       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${TEST_ROLE}') THEN
+         CREATE ROLE ${TEST_ROLE} LOGIN PASSWORD '${TEST_PASSWORD}';
+       END IF;
+     END $$;
+     ALTER ROLE ${TEST_ROLE} NOSUPERUSER NOBYPASSRLS;`,
+  );
+  psql(
+    name,
+    `GRANT USAGE ON SCHEMA public TO ${TEST_ROLE};
+     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${TEST_ROLE};
+     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${TEST_ROLE};`,
+  );
   return name;
 }
 
@@ -132,7 +161,7 @@ const api = spawn('npx', ['ts-node', '--project', 'tsconfig.json', 'src/main.ts'
     // Приложение ходит в базу ролью sozo_app, а не владельцем: владелец здесь
     // суперпользователь, а суперпользователь обходит RLS целиком. Прогон под
     // владельцем проверял бы схему без изоляции — то есть не ту систему
-    ...(scratchDb ? { DATABASE_URL: `postgresql://sozo_app:sozo_app@127.0.0.1:5432/${scratchDb}` } : {}),
+    ...(scratchDb ? { DATABASE_URL: `postgresql://${TEST_ROLE}:${TEST_PASSWORD}@127.0.0.1:5432/${scratchDb}` } : {}),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
   detached: true, // своя группа процессов — иначе внука не снять
