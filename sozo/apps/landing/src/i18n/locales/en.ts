@@ -34,7 +34,7 @@ const dict: Dict = {
   'apply.step1': "A recruiter calls within 2 working days and answers your questions",
   'apply.step2': "We arrange a skills test in your trade",
   'apply.step3': "We issue a badge and access to the app",
-  'apply.step4': "You go on line and start taking orders",
+  'apply.step4': "You go on shift and start taking orders",
   'apply.mastersNote': "Technicians in 6 trades already work with us",
   'apply.termsTitle': "The terms in short",
   'apply.termsSummary': "Share up to 57% · payouts every week · your own schedule",

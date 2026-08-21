@@ -157,5 +157,51 @@ audit(
   audit('Серверные строки', base, entries, { holders: NUMBERED });
 }
 
+/* ---------- Одно понятие — одно слово во всех трёх словарях ---------- */
+//
+// Лендинг и приложение переводили порознь, и слово расходилось молча: сверка
+// ключей видит непустую строку и успокаивается. Дороже всего обошлась валюта —
+// «сум» прочитали как арифметическую сумму, и цена читалась «1 500 000 итог».
+// Здесь сверяем якорные понятия: у каждого одно слово на язык.
+console.log('\nСквозные понятия');
+{
+  const dartDir = join(ROOT, 'apps/client-app/lib/i18n');
+  const serverDir = join(ROOT, 'apps/api/src/i18n');
+  const landDir = join(DIR, 'locales');
+
+  // Ключ лендинга ↔ ключ приложения, называющие одно и то же
+  const ANCHORS = [
+    { what: 'валюта (сум)', land: 'unit.sum', app: 'common.soums' },
+    { what: 'точка (объект бизнеса)', land: 'calculator.pointsRow', app: 'tab.dashboard' },
+  ];
+
+  const norm = (s) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+  for (const f of readdirSync(landDir).filter((x) => /^[a-z]{2}\.ts$/.test(x)).sort()) {
+    const code = f.slice(0, 2);
+    const land = parse(join(landDir, f));
+    const appPath = ['uz', 'en'].includes(code)
+      ? join(dartDir, `dict_${code}.dart`)
+      : join(serverDir, `client-${code}.ts`);
+    const app = parse(appPath);
+    const bad = ANCHORS.filter((a) => {
+      const l = norm(land.get(a.land));
+      const b = norm(app.get(a.app));
+      // Сравниваем вхождением, а не равенством: подпись в приложении бывает во
+      // множественном числе («Точки»), на лендинге — в единственном
+      return l && b && !b.includes(l) && !l.includes(b);
+    });
+    if (bad.length) {
+      failed += 1;
+      console.log(`  ✗ ${code}`);
+      for (const a of bad) {
+        console.log(`      ${a.what}: лендинг «${land.get(a.land)}», приложение «${app.get(a.app)}»`);
+      }
+    } else {
+      console.log(`  ✓ ${code}`);
+    }
+  }
+}
+
 console.log(failed ? `\nСловарей с замечаниями: ${failed}` : '\nЗамечаний нет');
 process.exit(failed ? 1 : 0);
