@@ -38,6 +38,29 @@ import { InMemoryPermitRepository } from '../modules/access/permit.repository';
 import { PrismaOrderRepository } from '../modules/orders/prisma-order.repository';
 import { BillingService } from '../modules/billing/billing.service';
 import { SchedulingService } from '../modules/scheduling/scheduling.service';
+import { PermitLinksService } from '../modules/access/permit-links.service';
+import { WebCardLinksService } from '../modules/web-card/web-card-links.service';
+import { SlaService } from '../modules/sla/sla.service';
+import { SubscriptionsService } from '../modules/subscriptions/subscriptions.service';
+import { SchedulerService } from '../modules/scheduler/scheduler.service';
+import { AnalyticsService } from '../modules/analytics/analytics.module';
+import { PromoService } from '../modules/promo/promo.module';
+import { LoyaltyService } from '../modules/loyalty/loyalty.module';
+import { ReserveService } from '../modules/reserve/reserve.module';
+import { LeadsService } from '../modules/leads/leads.module';
+import { PublicLeadsService } from '../modules/public-api/public-api.module';
+import { RegistryService } from '../modules/registry/registry.module';
+import { StockService } from '../modules/stock/stock.module';
+import { QualityService } from '../modules/quality/quality.service';
+import { ClientProfilesService } from '../modules/client-b2c/client-profiles.service';
+import { DispatchOpsService } from '../modules/dispatch-ops/dispatch-ops.service';
+import { FieldService } from '../modules/field/field.service';
+import { NotificationsService } from '../modules/master-api/notifications.service';
+import { MasterOffersService } from '../modules/master-api/offers.service';
+import { RatingService } from '../modules/master-api/rating.service';
+import { OnboardingService } from '../modules/master-api/onboarding.service';
+import { ResourcesService } from '../modules/master-api/resources.service';
+import { MasterOpsService } from '../modules/master-api/master-ops.service';
 
 const dry = process.argv.includes('--dry');
 
@@ -219,6 +242,48 @@ async function main(): Promise<void> {
   done.push(['биллинг', await app.get(BillingService).flushToDb()]);
   done.push(['планировщик', await app.get(SchedulingService).flushToDb()]);
   done.push(['аудит', await (app.get(AUDIT_REPOSITORY) as PrismaAuditRepository).importFromState(state.audit)]);
+
+  /**
+   * Модули, переехавшие на спроектированные таблицы (DEV-19).
+   *
+   * Им переносить нечего в том смысле, в каком переносили заявкам: они читают
+   * state.json и с включённой базой, поэтому в памяти к этому моменту уже
+   * лежит содержимое снимка. Нужно только записать — и дождаться записи, а не
+   * «назначить» её.
+   *
+   * Порядок здесь не важен: у их таблиц нет внешних ключей на чужие модули —
+   * это решение принято при проектировании и оно же позволяет не выстраивать
+   * зависимости повторно.
+   */
+  const mirrors: Array<[string, { flushToDb: () => Promise<unknown> }]> = [
+    ['ссылки наряда', app.get(PermitLinksService)],
+    ['ссылки веб-карточки', app.get(WebCardLinksService)],
+    ['SLA', app.get(SlaService)],
+    ['расчёт с оператором', app.get(SubscriptionsService)],
+    ['таймеры', app.get(SchedulerService)],
+    ['спрос', app.get(AnalyticsService)],
+    ['промо', app.get(PromoService)],
+    ['лояльность', app.get(LoyaltyService)],
+    ['резервный фонд', app.get(ReserveService)],
+    ['лиды', app.get(LeadsService)],
+    ['обзвон', app.get(PublicLeadsService)],
+    ['реестры', app.get(RegistryService)],
+    ['склад', app.get(StockService)],
+    ['качество', app.get(QualityService)],
+    ['профили клиентов', app.get(ClientProfilesService)],
+    ['диспетчерская', app.get(DispatchOpsService)],
+    ['акты осмотра', app.get(FieldService)],
+    ['уведомления мастеру', app.get(NotificationsService)],
+    ['предложения мастеру', app.get(MasterOffersService)],
+    ['рейтинг мастера', app.get(RatingService)],
+    ['анкеты кандидатов', app.get(OnboardingService)],
+    ['ресурсы мастера', app.get(ResourcesService)],
+    ['работа на заявке', app.get(MasterOpsService)],
+  ];
+  for (const [name, svc] of mirrors) {
+    await svc.flushToDb();
+    done.push([name, 'записано']);
+  }
 
   console.log('\nПеренесено:');
   for (const [name, res] of done) console.log(`  ${name}: ${typeof res === 'object' ? JSON.stringify(res) : String(res)}`);

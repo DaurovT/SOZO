@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { CrmService } from '../crm/crm.service';
 
 /**
@@ -70,13 +72,15 @@ export interface InspectionActRec {
 }
 
 @Injectable()
-export class FieldService {
+export class FieldService implements OnModuleInit {
   private readonly acts: InspectionActRec[] = [];
   private seq = 1000;
+  private readonly mirror: PgMirror;
 
   constructor(
     private readonly store: StateStore,
     private readonly crm: CrmService,
+    prisma: PrismaService,
   ) {
     this.store.register(
       'field',
@@ -88,6 +92,122 @@ export class FieldService {
         this.seq = data.seq ?? 1000;
       },
     );
+    this.mirror = new PgMirror(prisma, 'Field', {
+      load: async (tx) => {
+        const rows = await tx.inspectionAct.findMany({
+          include: { checklist: true, items: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (!rows.length) return 0;
+        this.acts.length = 0;
+        this.acts.push(
+          ...rows.map((a) => ({
+            id: a.id,
+            number: a.number,
+            orderId: a.orderId,
+            organizationId: a.organizationId,
+            locationId: a.locationId,
+            locationName: a.locationName,
+            masterId: a.masterId,
+            masterName: a.masterName,
+            checklist: a.checklist.map((z) => ({ zone: z.zone, ok: z.ok, note: z.note ?? undefined })),
+            items: a.items.map((i) => ({
+              id: i.id,
+              category: i.category,
+              description: i.description,
+              severity: i.severity as DefectItemRec['severity'],
+              photoIds: i.photoIds,
+              estimateTiyin: i.estimateTiyin === null ? null : Number(i.estimateTiyin),
+              decision: i.decision as DefectItemRec['decision'],
+              declineReason: i.declineReason ?? undefined,
+              orderId: i.orderId ?? undefined,
+            })),
+            status: a.status as InspectionActRec['status'],
+            createdAt: a.createdAt.toISOString(),
+            sentAt: a.sentAt?.toISOString(),
+            decidedAt: a.decidedAt?.toISOString(),
+            representative: a.representativeName
+              ? { id: a.id, fullName: a.representativeName, phone: a.representativePhone ?? '' }
+              : null,
+            decidedBy: a.decidedByName
+              ? { id: a.id, fullName: a.decidedByName, phone: a.decidedByPhone ?? '' }
+              : undefined,
+            rejectionReason: a.rejectionReason ?? undefined,
+            representativeAbsent: a.representativeAbsent,
+            expiresAt: a.expiresAt?.toISOString(),
+          })),
+        );
+        // Счётчик номеров восстанавливается из самих актов, а не хранится
+        // рядом: отдельный счётчик рассыпается ровно тогда, когда нужен —
+        // при восстановлении из резервной копии
+        this.seq = this.acts.reduce((max, a) => Math.max(max, Number(a.number.split('-').pop()) || 0), 1000);
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const a of [...this.acts]) {
+          const data = {
+            number: a.number,
+            orderId: a.orderId,
+            organizationId: a.organizationId,
+            locationId: a.locationId,
+            locationName: a.locationName,
+            masterId: a.masterId,
+            masterName: a.masterName,
+            status: a.status,
+            representativeName: a.representative?.fullName ?? null,
+            representativePhone: a.representative?.phone ?? null,
+            representativeAbsent: Boolean(a.representativeAbsent),
+            decidedByName: a.decidedBy?.fullName ?? null,
+            decidedByPhone: a.decidedBy?.phone ?? null,
+            rejectionReason: a.rejectionReason ?? null,
+            sentAt: a.sentAt ? new Date(a.sentAt) : null,
+            decidedAt: a.decidedAt ? new Date(a.decidedAt) : null,
+            expiresAt: a.expiresAt ? new Date(a.expiresAt) : null,
+          };
+          await tx.inspectionAct.upsert({
+            where: { id: a.id },
+            create: { id: a.id, tenantId, createdAt: new Date(a.createdAt), ...data },
+            update: data,
+          });
+          // Чек-лист переписывается целиком: зон в акте единицы, и разницу
+          // считать здесь — лишний код там, где ошибка теряет отметку
+          await tx.actChecklistZone.deleteMany({ where: { actId: a.id } });
+          for (const z of a.checklist) {
+            await tx.actChecklistZone.create({
+              data: { id: uuidv7(), actId: a.id, zone: z.zone, ok: z.ok, note: z.note ?? null },
+            });
+          }
+          for (const i of a.items) {
+            const idata = {
+              category: i.category,
+              description: i.description,
+              severity: i.severity,
+              photoIds: i.photoIds,
+              estimateTiyin: i.estimateTiyin === null ? null : BigInt(i.estimateTiyin),
+              decision: i.decision,
+              // CHECK в m27: отклонённая позиция обязана нести причину
+              declineReason: i.decision === 'declined' ? (i.declineReason?.trim() || 'без объяснения') : (i.declineReason ?? null),
+              orderId: i.orderId ?? null,
+            };
+            await tx.actDefectItem.upsert({
+              where: { id: i.id },
+              create: { id: i.id, tenantId, actId: a.id, ...idata },
+              update: idata,
+            });
+          }
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   // ---------- Чтение ----------

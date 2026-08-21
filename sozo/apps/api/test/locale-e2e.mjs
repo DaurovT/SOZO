@@ -1,12 +1,17 @@
 /**
- * Сквозной прогон узбекской локали сервера.
+ * Сквозной прогон локалей сервера.
  *
- * Интерфейс приложения мастера переведён целиком, но половина того, что он
- * показывает, приходит отсюда: причины отказа, вопросы экзамена, тексты
+ * Интерфейс приложений переведён целиком, но половина того, что они
+ * показывают, приходит отсюда: причины отказа, вопросы экзамена, тексты
  * ошибок, уведомления. Проверяем ровно это — один и тот же запрос с разным
  * `Accept-Language` должен возвращать разный язык, а данные при этом остаться
  * прежними: значение, которое приложение отправит обратно, переводу не
  * подлежит, иначе сервер его не узнает.
+ *
+ * Узбекский разобран подробно — он первым обзавёлся колонкой и на нём видно
+ * все грани механики. Остальные восемь проверяются короче: что язык вообще
+ * применяется и что справочные значения при этом не тронуты. Дублировать для
+ * каждого весь сценарий незачем — код у них общий, разнятся только словари.
  *
  * Запуск: node apps/api/test/locale-e2e.mjs [http://localhost:3000]
  */
@@ -60,7 +65,7 @@ async function login(phone) {
 const CYR = /[А-Яа-яЁё]/;
 
 async function main() {
-  console.log(`\nУзбекская локаль сервера: ${ROOT}\n${'='.repeat(52)}`);
+  console.log(`\nЛокали сервера: ${ROOT}\n${'='.repeat(52)}`);
 
   const dispatcher = await login(DISPATCHER);
   await call('/app/demo/seed', { token: dispatcher, body: {} });
@@ -270,9 +275,63 @@ async function main() {
     String(dash.status),
   );
 
+  group('Остальные восемь языков');
+  // Проверяем то, что у языков общее: заголовок применяется, текст меняется,
+  // справочное значение остаётся русским. Качество перевода тут не измерить —
+  // это работа вычитки, а не теста
+  for (const lang of ['en', 'tr', 'tg', 'ar', 'fr', 'de', 'zh', 'ko']) {
+    const r = await call('/master/dictionaries', { token: master, lang });
+    const title = r.body.noAccessReasons?.[0]?.title;
+    check(`${lang}: причина переведена`, !!title && title !== ruReason.title, title);
+    check(
+      `${lang}: тип техники остался русским`,
+      r.body.assetTypes?.[0] === ru.body.assetTypes?.[0],
+      r.body.assetTypes?.[0],
+    );
+  }
+
+  group('Регион в заголовке не мешает');
+  // Браузер шлёт «fr-CA», «zh-Hans-CN», «ar-AE» — регион нам безразличен
+  const frCa = await call('/master/dictionaries', { token: master, lang: 'fr-CA' });
+  const fr = await call('/master/dictionaries', { token: master, lang: 'fr' });
+  check(
+    'fr-CA и fr дают один словарь',
+    frCa.body.noAccessReasons?.[0]?.title === fr.body.noAccessReasons?.[0]?.title,
+    frCa.body.noAccessReasons?.[0]?.title,
+  );
+
   group('Неизвестный язык откатывается на русский');
-  const fr = await call('/master/dictionaries', { token: master, lang: 'fr-FR' });
-  check('французский → русский, а не пустота', fr.body.noAccessReasons?.[0]?.title === ruReason.title);
+  const es = await call('/master/dictionaries', { token: master, lang: 'es-ES' });
+  check('испанский → русский, а не пустота', es.body.noAccessReasons?.[0]?.title === ruReason.title);
+
+  group('Догружаемые словари приложения «Клиент»');
+  // Семь языков не лежат в сборке приложения: оно скачивает их отсюда при
+  // выборе языка. Если эндпоинт молчит, человек упирается в невозможность
+  // поставить свой язык — и никакой перевод в репозитории этого не исправит
+  const index = await call('/public/app-locale');
+  check('список языков отдаётся без авторизации', index.status === 200 && Array.isArray(index.body), String(index.status));
+  const codes = (index.body ?? []).map((e) => e.code).sort();
+  check(
+    'в списке ровно семь догружаемых языков',
+    JSON.stringify(codes) === JSON.stringify(['ar', 'de', 'fr', 'ko', 'tg', 'tr', 'zh']),
+    codes.join(','),
+  );
+  check('у каждого языка есть отпечаток', (index.body ?? []).every((e) => e.rev && e.strings > 0));
+
+  const ko = await call('/public/app-locale/ko');
+  check('словарь отдаётся', ko.status === 200 && !!ko.body.strings, String(ko.status));
+  check('в словаре тот же счёт строк, что в списке',
+    Object.keys(ko.body.strings ?? {}).length === index.body.find((e) => e.code === 'ko')?.strings);
+  check('отпечаток совпадает со списком', ko.body.rev === index.body.find((e) => e.code === 'ko')?.rev);
+  check('строки переведены, а не отданы по-русски', !CYR.test(ko.body.strings?.['c30.language'] ?? 'x'),
+    ko.body.strings?.['c30.language']);
+
+  // ru/uz/en собраны внутрь приложения. Запрос за ними — ошибка в клиенте,
+  // и отвечать на неё словарём значило бы прятать эту ошибку
+  const builtIn = await call('/public/app-locale/ru');
+  check('встроенный язык отдаёт ошибку, а не словарь', builtIn.status === 400, String(builtIn.status));
+  const nonsense = await call('/public/app-locale/xx');
+  check('несуществующий язык отдаёт ошибку', nonsense.status === 400, String(nonsense.status));
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`Пройдено: ${passed}   Провалено: ${failed}`);

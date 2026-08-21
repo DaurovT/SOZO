@@ -12,6 +12,7 @@ import '../widgets/app_chrome.dart';
 import '../widgets/blocks.dart';
 import '../widgets/brand.dart';
 import '../widgets/figma_icon.dart';
+import '../widgets/language_sheet.dart';
 
 /// C-01 → C-02 → C-03. Перенос макета 1:1: `161:1569` sozo-intro-screen,
 /// `165:15` login-phone-screen, `167:1587` login-sms-code-screen.
@@ -587,38 +588,10 @@ class _LanguageSelector extends StatelessWidget {
 
   static const _height = 28.0;
 
-  Future<void> _pick(BuildContext context) async {
-    await showSozoSheet<void>(
-      context,
-      title: t('c30.language'),
-      // Десять пунктов не помещаются на маленьком экране — список прокручивается
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final code in L10n.codes)
-              Padding(
-                padding: const EdgeInsets.only(bottom: SozoSpace.s8),
-                child: SecondaryButton(
-                  L10n.names[code] ?? code,
-                  icon: code == l10n.code ? 'check' : null,
-                  onTap: () async {
-                    await l10n.set(code);
-                    if (context.mounted) Navigator.of(context).pop();
-                  },
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _pick(context),
+      onTap: () => showLanguageSheet(context),
       behavior: HitTestBehavior.opaque,
       child: Container(
         height: _height,

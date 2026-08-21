@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchMasterVerify } from '../api';
+import { useT } from '../i18n';
 import { gradeLabel } from '../lib/catalog';
 import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
 import { useResource } from '../lib/useResource';
@@ -15,6 +16,7 @@ import { useResource } from '../lib/useResource';
  */
 
 export default function Verify() {
+  const t = useT();
   const { code = '' } = useParams();
   const load = useCallback(() => fetchMasterVerify(code), [code]);
   const state = useResource(load, [code]);
@@ -24,27 +26,24 @@ export default function Verify() {
       <div className="wrap-narrow">
         <div className="verify stack-lg">
           <div className="section-head" style={{ textAlign: 'center' }}>
-            <p className="eyebrow">Проверка бейджа</p>
-            <h1 className="h2">Сотрудник SOZO</h1>
+            <p className="eyebrow">{t('verify.eyebrow')}</p>
+            <h1 className="h2">{t('verify.title')}</h1>
           </div>
 
           {state.status === 'loading' && (
             <div className="card">
               <p className="muted" style={{ textAlign: 'center' }}>
-                Проверяем бейдж…
+                {t('verify.loading')}
               </p>
             </div>
           )}
 
           {state.status === 'error' && (
             <div className="card stack">
-              <p className="h3">Не удалось проверить бейдж</p>
-              <p className="muted">
-                Сервис проверки временно недоступен — это не подтверждает и не опровергает статус
-                мастера. Обновите страницу или позвоните диспетчеру.
-              </p>
+              <p className="h3">{t('verify.errorTitle')}</p>
+              <p className="muted">{t('verify.errorLead')}</p>
               <a className="btn btn-secondary btn-block" href={DISPATCH_TEL_HREF}>
-                Позвонить {DISPATCH_TEL_DISPLAY}
+                {t('verify.call', { phone: DISPATCH_TEL_DISPLAY })}
               </a>
             </div>
           )}
@@ -52,7 +51,7 @@ export default function Verify() {
           {state.status === 'ready' && state.data.valid && (
             <div className="card stack-lg">
               <div className="verify-photo" aria-hidden="true">
-                фото
+                {t('verify.photoPlaceholder')}
               </div>
               <div className="stack-sm" style={{ textAlign: 'center' }}>
                 <h2 className="h2">{state.data.fullName}</h2>
@@ -63,7 +62,9 @@ export default function Verify() {
                     {tag}
                   </span>
                 ))}
-                <span className="chip chip-grade">Грейд: {gradeLabel(state.data.grade)}</span>
+                <span className="chip chip-grade">
+                  {t('verify.grade', { grade: gradeLabel(state.data.grade, t) })}
+                </span>
               </div>
               <p className="status status-ok">{state.data.message}</p>
             </div>
@@ -72,18 +73,17 @@ export default function Verify() {
           {state.status === 'ready' && !state.data.valid && (
             <div className="card stack-lg">
               <div className="verify-photo" aria-hidden="true">
-                нет
+                {t('verify.noPhotoPlaceholder')}
               </div>
               <p className="status status-bad">{state.data.message}</p>
               <a className="btn btn-secondary btn-block" href={DISPATCH_TEL_HREF}>
-                Позвонить диспетчеру {DISPATCH_TEL_DISPLAY}
+                {t('verify.callDispatcher', { phone: DISPATCH_TEL_DISPLAY })}
               </a>
             </div>
           )}
 
           <p className="small muted" style={{ textAlign: 'center' }}>
-            Проверка бейджа сотрудника SOZO. Если статус недействителен — не допускайте к работам и
-            позвоните диспетчеру.
+            {t('verify.note')}
           </p>
         </div>
       </div>

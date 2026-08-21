@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { useT } from '../i18n';
 
 /**
  * Слайдер «до / после»: тянешь ручку — открывается вторая фотография.
@@ -14,7 +15,8 @@ export default function BeforeAfter(props: {
   labelBefore?: string;
   labelAfter?: string;
 }) {
-  const { before, after, alt, labelBefore = 'До', labelAfter = 'После' } = props;
+  const t = useT();
+  const { before, after, alt, labelBefore, labelAfter } = props;
   const boxRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(50);
 
@@ -48,7 +50,7 @@ export default function BeforeAfter(props: {
       style={{ ['--ba-pos' as string]: `${pos}%` }}
       role="slider"
       tabIndex={0}
-      aria-label={`${alt}: сравнение до и после`}
+      aria-label={t('components.beforeAfter.sliderAria', { alt })}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(pos)}
@@ -56,16 +58,25 @@ export default function BeforeAfter(props: {
       onPointerMove={onPointerMove}
       onKeyDown={onKeyDown}
     >
-      <img src={before} alt={`${alt} — до работы`} loading="lazy" decoding="async" />
       <img
-        className="ba-after"
-        src={after}
-        alt={`${alt} — после работы`}
+        src={before}
+        alt={t('components.beforeAfter.altBefore', { alt })}
         loading="lazy"
         decoding="async"
       />
-      <span className="ba-label ba-label--before">{labelBefore}</span>
-      <span className="ba-label ba-label--after">{labelAfter}</span>
+      <img
+        className="ba-after"
+        src={after}
+        alt={t('components.beforeAfter.altAfter', { alt })}
+        loading="lazy"
+        decoding="async"
+      />
+      <span className="ba-label ba-label--before">
+        {labelBefore ?? t('components.beforeAfter.before')}
+      </span>
+      <span className="ba-label ba-label--after">
+        {labelAfter ?? t('components.beforeAfter.after')}
+      </span>
       <div className="ba-handle" aria-hidden="true">
         <span className="ba-knob">⇆</span>
       </div>

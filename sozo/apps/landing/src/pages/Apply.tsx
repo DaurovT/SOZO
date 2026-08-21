@@ -11,25 +11,27 @@ import {
   RadioGroup,
   SubmitError,
 } from '../components/form';
-import { SKILLS, ZONES } from '../lib/catalog';
-import { formatSla } from '../lib/format';
+import { useT } from '../i18n';
+import { SKILLS, skillLabel, ZONES, zoneLabel } from '../lib/catalog';
+import { useSla } from '../lib/sla';
 import { isPhoneValid, toE164 } from '../lib/phone';
 import { useLeadSubmit } from '../lib/useLeadSubmit';
 
 type Experience = '<1' | '1-3' | '3-5' | '5+';
 type Transport = 'own_car' | 'public' | 'none';
 
-const EXPERIENCE: { value: Experience; label: string }[] = [
-  { value: '<1', label: 'Меньше 1 года' },
-  { value: '1-3', label: '1–3 года' },
-  { value: '3-5', label: '3–5 лет' },
-  { value: '5+', label: 'Больше 5 лет' },
+/** Значение уезжает в API как есть, подпись — ключ словаря. */
+const EXPERIENCE: { value: Experience; key: string }[] = [
+  { value: '<1', key: 'apply.experienceUnder1' },
+  { value: '1-3', key: 'apply.experience1to3' },
+  { value: '3-5', key: 'apply.experience3to5' },
+  { value: '5+', key: 'apply.experienceOver5' },
 ];
 
-const TRANSPORT: { value: Transport; label: string }[] = [
-  { value: 'own_car', label: 'Свой автомобиль' },
-  { value: 'public', label: 'Общественный транспорт' },
-  { value: 'none', label: 'Нет транспорта' },
+const TRANSPORT: { value: Transport; key: string }[] = [
+  { value: 'own_car', key: 'apply.transportOwnCar' },
+  { value: 'public', key: 'apply.transportPublic' },
+  { value: 'none', key: 'apply.transportNone' },
 ];
 
 function toggle(list: string[], item: string): string[] {
@@ -37,6 +39,8 @@ function toggle(list: string[], item: string): string[] {
 }
 
 export default function Apply() {
+  const t = useT();
+  const sla = useSla();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [skills, setSkills] = useState<string[]>([]);
@@ -78,13 +82,13 @@ export default function Apply() {
   if (result) {
     return (
       <Done
-        title="Анкета принята"
-        lead={`Свяжемся в течение ${formatSla(result.slaMinutes, '2 рабочих дней')}, чтобы обсудить условия и назначить практический экзамен.`}
+        title={t('apply.successTitle')}
+        lead={t('apply.successLead', { sla: sla(result.slaMinutes, 2880) })}
         ticket={result.ticket}
       >
         <div className="btn-row">
           <Link to="/masters" className="btn btn-secondary">
-            Вернуться к условиям
+            {t('apply.backToTerms')}
           </Link>
         </div>
       </Done>
@@ -97,17 +101,15 @@ export default function Apply() {
         <div className="form-layout">
           <div className="stack-lg">
             <div className="section-head">
-              <p className="eyebrow">Работа в SOZO</p>
-              <h1 className="h2">Анкета мастера</h1>
-              <p className="lead">
-                Расскажите о себе — рекрутер свяжется и назначит проверку навыков.
-              </p>
+              <p className="eyebrow">{t('apply.eyebrow')}</p>
+              <h1 className="h2">{t('apply.title')}</h1>
+              <p className="lead">{t('apply.lead')}</p>
             </div>
 
             <form className="stack-lg" onSubmit={onSubmit} noValidate>
               <Honeypot value={honeypot} onChange={setHoneypot} />
 
-              <Field id="name" label="Имя" required>
+              <Field id="name" label={t('apply.nameLabel')} required>
                 <input
                   id="name"
                   className="input"
@@ -123,14 +125,14 @@ export default function Apply() {
 
               <fieldset>
                 <legend>
-                  Что умеете <span className="field-req">*</span>
+                  {t('apply.skillsLegend')} <span className="field-req">*</span>
                 </legend>
                 <div className="check-grid">
                   {SKILLS.map((s) => (
                     <CheckItem
                       key={s}
                       name="skills"
-                      label={s}
+                      label={skillLabel(s, t)}
                       checked={skills.includes(s)}
                       onChange={() => setSkills((prev) => toggle(prev, s))}
                     />
@@ -140,28 +142,28 @@ export default function Apply() {
 
               <RadioGroup
                 name="experience"
-                legend="Опыт работы *"
+                legend={t('apply.experienceLegend')}
                 value={experience}
-                options={EXPERIENCE}
+                options={EXPERIENCE.map((o) => ({ value: o.value, label: t(o.key) }))}
                 onChange={setExperience}
               />
 
               <RadioGroup
                 name="transport"
-                legend="Транспорт *"
+                legend={t('apply.transportLegend')}
                 value={transport}
-                options={TRANSPORT}
+                options={TRANSPORT.map((o) => ({ value: o.value, label: t(o.key) }))}
                 onChange={setTransport}
               />
 
               <fieldset>
-                <legend>Районы Ташкента, где готовы работать</legend>
+                <legend>{t('apply.zonesLegend')}</legend>
                 <div className="check-grid">
                   {ZONES.map((z) => (
                     <CheckItem
                       key={z}
                       name="zones"
-                      label={z}
+                      label={zoneLabel(z, t)}
                       checked={zones.includes(z)}
                       onChange={() => setZones((prev) => toggle(prev, z))}
                     />
@@ -174,26 +176,26 @@ export default function Apply() {
               <SubmitError message={error} />
 
               <button type="submit" className="btn btn-block" disabled={!canSubmit}>
-                {pending ? 'Отправляем…' : 'Отправить анкету'}
+                {pending ? t('apply.submitting') : t('apply.submit')}
               </button>
             </form>
           </div>
 
           <aside className="form-aside">
             <div className="aside-card stack">
-              <h2 className="h3">Что будет после анкеты</h2>
+              <h2 className="h3">{t('apply.nextTitle')}</h2>
               <ol className="stack-sm">
                 <li className="tick">
-                  <span>Рекрутер позвонит за 2 рабочих дня и ответит на вопросы</span>
+                  <span>{t('apply.step1')}</span>
                 </li>
                 <li className="tick">
-                  <span>Назначим проверку навыков по вашей специальности</span>
+                  <span>{t('apply.step2')}</span>
                 </li>
                 <li className="tick">
-                  <span>Выдадим бейдж и доступ в приложение</span>
+                  <span>{t('apply.step3')}</span>
                 </li>
                 <li className="tick">
-                  <span>Выйдете на линию и начнёте брать заявки</span>
+                  <span>{t('apply.step4')}</span>
                 </li>
               </ol>
               <div className="aside-faces">
@@ -202,15 +204,15 @@ export default function Apply() {
                     <img key={m.id} src={m.photo} alt="" loading="lazy" />
                   ))}
                 </div>
-                <p className="small muted">С нами уже работают мастера по 6 специальностям</p>
+                <p className="small muted">{t('apply.mastersNote')}</p>
               </div>
             </div>
 
             <div className="aside-card aside-dark stack-sm">
-              <p className="small muted">Коротко об условиях</p>
-              <p style={{ fontWeight: 700 }}>Доля до 57% · выплаты каждую неделю · график свой</p>
+              <p className="small muted">{t('apply.termsTitle')}</p>
+              <p style={{ fontWeight: 700 }}>{t('apply.termsSummary')}</p>
               <Link to="/masters" className="link-action" style={{ color: 'var(--on-dark)' }}>
-                Подробные условия →
+                {t('apply.termsLink')}
               </Link>
             </div>
           </aside>

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'design_tokens.dart';
@@ -11,6 +13,10 @@ Future<void> main() async {
   await l10n.load();
   await session.load();
   runApp(const SozoClientApp());
+  // Догружаемый словарь мог устареть — сверяем отпечаток и обновляем в фоне.
+  // После `runApp`, а не до: запуск не должен ждать сети ради перевода,
+  // который уже лежит в кеше и работает
+  unawaited(l10n.refreshInBackground());
 }
 
 class SozoClientApp extends StatelessWidget {

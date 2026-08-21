@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { tr } from '../../common/locale';
 
 /**
@@ -122,10 +124,15 @@ export const TOOL_CHECKLIST: Record<string, string[]> = {
 export const SKILL_OPTIONS = Object.keys(TOOL_CHECKLIST);
 
 @Injectable()
-export class OnboardingService {
+export class OnboardingService implements OnModuleInit {
   readonly applications: ApplicationRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'onboarding',
       () => this.applications,
@@ -134,6 +141,122 @@ export class OnboardingService {
         this.applications.push(...((d ?? []) as ApplicationRec[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'Onboarding', {
+      load: async (tx) => {
+        const rows = await tx.masterApplication.findMany({
+          include: { documents: true, toolChecks: true, examAttempts: { orderBy: { at: 'asc' } } },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (!rows.length) return 0;
+        this.applications.length = 0;
+        this.applications.push(
+          ...rows.map((a) => ({
+            id: a.id,
+            phone: a.phone,
+            masterId: a.masterId ?? undefined,
+            fullName: a.fullName,
+            experienceYears: a.experienceYears,
+            about: a.about ?? undefined,
+            skillTags: a.skillTags,
+            zones: a.zones,
+            transport: a.transport as ApplicationRec['transport'],
+            taxMode: a.taxMode as ApplicationRec['taxMode'],
+            referralCode: a.referralCode ?? undefined,
+            facePhoto: a.facePhoto ?? undefined,
+            documents: a.documents.map((d) => ({
+              code: d.code, name: d.name,
+              status: d.status as ApplicationRec['documents'][number]['status'],
+              file: d.file ?? undefined, comment: d.comment ?? undefined,
+            })),
+            toolChecklist: a.toolChecks.map((t) => ({
+              skill: t.skill, items: t.items, confirmed: t.confirmed, photo: t.photo ?? undefined,
+            })),
+            stage: a.stage as ApplicationRec['stage'],
+            interviewAt: a.interviewAt?.toISOString(),
+            rejectionReason: a.rejectionReason ?? undefined,
+            trainingDone: a.trainingDone,
+            examAttempts: a.examAttempts.map((e) => ({
+              score: e.score, passedAt: e.passedAt?.toISOString(),
+              at: e.at.toISOString(), wrongTopics: e.wrongTopics,
+            })),
+            createdAt: a.createdAt.toISOString(),
+            updatedAt: a.updatedAt.toISOString(),
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const a of [...this.applications]) {
+          const data = {
+            phone: a.phone,
+            masterId: a.masterId ?? null,
+            fullName: a.fullName,
+            experienceYears: Math.min(60, Math.max(0, a.experienceYears)),
+            about: a.about ?? null,
+            skillTags: a.skillTags,
+            zones: a.zones,
+            transport: a.transport,
+            taxMode: a.taxMode,
+            referralCode: a.referralCode ?? null,
+            facePhoto: a.facePhoto ?? null,
+            stage: a.stage,
+            interviewAt: a.interviewAt ? new Date(a.interviewAt) : null,
+            // CHECK в m26 требует объяснения у отклонённой анкеты. Стадии
+            // «rejected» в перечне нет — отказ здесь выражается заполненной
+            // причиной на любой стадии, поэтому пустую строку не пишем: она
+            // выглядит как объяснение, не будучи им
+            rejectionReason: a.rejectionReason?.trim() ? a.rejectionReason : null,
+            trainingDone: a.trainingDone,
+          };
+          await tx.masterApplication.upsert({
+            where: { id: a.id },
+            create: { id: a.id, tenantId, createdAt: new Date(a.createdAt), ...data },
+            update: data,
+          });
+          for (const d of a.documents) {
+            const dd = { name: d.name, status: d.status, file: d.file ?? null, comment: d.comment ?? null };
+            await tx.masterApplicationDocument.upsert({
+              where: { applicationId_code: { applicationId: a.id, code: d.code } },
+              create: { id: uuidv7(), tenantId, applicationId: a.id, code: d.code, ...dd },
+              update: dd,
+            });
+          }
+          for (const t of a.toolChecklist) {
+            const td = { items: t.items, confirmed: t.confirmed, photo: t.photo ?? null };
+            await tx.masterApplicationToolCheck.upsert({
+              where: { applicationId_skill: { applicationId: a.id, skill: t.skill } },
+              create: { id: uuidv7(), tenantId, applicationId: a.id, skill: t.skill, ...td },
+              update: td,
+            });
+          }
+          // Попытки экзамена переписываются целиком: у них нет своего
+          // идентификатора в коде, а порядок и состав значимы — по ним правят
+          // обучение
+          await tx.masterApplicationExam.deleteMany({ where: { applicationId: a.id } });
+          for (const e of a.examAttempts) {
+            await tx.masterApplicationExam.create({
+              data: {
+                id: uuidv7(), tenantId, applicationId: a.id,
+                score: Math.min(100, Math.max(0, e.score)),
+                wrongTopics: e.wrongTopics,
+                passedAt: e.passedAt ? new Date(e.passedAt) : null,
+                at: new Date(e.at),
+              },
+            });
+          }
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   byPhone(phone: string): ApplicationRec | undefined {

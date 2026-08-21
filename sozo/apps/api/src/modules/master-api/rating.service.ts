@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { NotificationsService } from './notifications.service';
 import type { OrderRecord } from '../orders/order.repository';
 import { tr } from '../../common/locale';
@@ -52,13 +54,15 @@ export interface TipRec {
 }
 
 @Injectable()
-export class RatingService {
+export class RatingService implements OnModuleInit {
   readonly appeals: AppealRec[] = [];
   readonly tips: TipRec[] = [];
+  private readonly mirror: PgMirror;
 
   constructor(
     private readonly store: StateStore,
     private readonly notifications: NotificationsService,
+    prisma: PrismaService,
   ) {
     this.store.register(
       'masterRating',
@@ -71,6 +75,71 @@ export class RatingService {
         this.tips.push(...(data.tips ?? []));
       },
     );
+    this.mirror = new PgMirror(prisma, 'MasterRating', {
+      load: async (tx) => {
+        const [appeals, tips] = await Promise.all([
+          tx.masterAppeal.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.masterTip.findMany({ orderBy: { at: 'asc' } }),
+        ]);
+        if (appeals.length) {
+          this.appeals.length = 0;
+          this.appeals.push(
+            ...appeals.map((a) => ({
+              id: a.id, masterId: a.masterId, subject: a.subject as AppealRec['subject'],
+              reference: a.reference, text: a.text, status: a.status as AppealRec['status'],
+              resolution: a.resolution ?? undefined,
+              createdAt: a.createdAt.toISOString(),
+              resolvedAt: a.resolvedAt?.toISOString(),
+            })),
+          );
+        }
+        if (tips.length) {
+          this.tips.length = 0;
+          this.tips.push(
+            ...tips.map((t) => ({
+              id: t.id, masterId: t.masterId, orderId: t.orderId, orderNumber: t.orderNumber,
+              amountTiyin: Number(t.amountTiyin), at: t.at.toISOString(),
+            })),
+          );
+        }
+        return appeals.length + tips.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const a of [...this.appeals]) {
+          const data = {
+            masterId: a.masterId, subject: a.subject, reference: a.reference, text: a.text,
+            status: a.status, resolution: a.resolution ?? null,
+            resolvedAt: a.resolvedAt ? new Date(a.resolvedAt) : null,
+          };
+          await tx.masterAppeal.upsert({
+            where: { id: a.id },
+            create: { id: a.id, tenantId, createdAt: new Date(a.createdAt), ...data },
+            update: data,
+          });
+        }
+        // Чаевые не переписываются: это деньги, полученные мастером
+        for (const t of [...this.tips]) {
+          await tx.masterTip.upsert({
+            where: { id: t.id },
+            create: {
+              id: t.id, tenantId, masterId: t.masterId, orderId: t.orderId,
+              orderNumber: t.orderNumber, amountTiyin: BigInt(t.amountTiyin), at: new Date(t.at),
+            },
+            update: {},
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   /**

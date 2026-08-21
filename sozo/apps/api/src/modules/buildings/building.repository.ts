@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import { dbFailure } from '../../common/db-failure';
+import { queue } from '../../common/pg-mirror';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import type { BuildingConnectionStatus, ObservationSeverity, ObservationSource } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
@@ -256,20 +257,26 @@ export class InMemoryBuildingRepository implements OnModuleInit {
 
   private scheduleWrite(): void {
     if (!this.prisma.enabled || !this.loaded) return;
-    this.writing = this.writing
-      .then(() => this.writeAll())
-      .catch((e: unknown) => {
+    // Общая очередь на процесс: своя цепочка соблюдала порядок внутри
+    // модуля, но не между модулями — наряд успевал записаться раньше
+    // объекта, на который ссылается (см. WriteQueue)
+    // Снимок берётся в момент постановки в очередь, а не выполнения: иначе
+    // задача, поставленная раньше, захватывает записи, созданные позже, чьи
+    // зависимости стоят в очереди дальше (разобрано в permit.repository)
+    const snap = this.snapshot();
+    this.writing = queue().add(async () => {
+      try {
+        await this.writeAll(snap);
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error('[Buildings] запись в базу не удалась:', dbFailure(e));
-      });
+      }
+    });
   }
 
-  private async writeAll(): Promise<void> {
-    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
-    // Снимок до первого await: перебор живой карты внутри асинхронной записи
-    // — гонка, при которой ссылающаяся строка попадает в цикл, а строка, на
-    // которую она ссылается, уже нет (разобрано в permit.repository)
-    const snap = {
+  /** Состояние на момент постановки в очередь — см. scheduleWrite */
+  private snapshot() {
+    return {
       buildings: [...this.buildings.values()],
       units: [...this.units.values()],
       zones: [...this.zones.values()],
@@ -285,6 +292,10 @@ export class InMemoryBuildingRepository implements OnModuleInit {
       walks: [...this.walks.values()],
       maintenance: [...this.maintenance.values()],
     };
+  }
+
+  private async writeAll(snap: ReturnType<InMemoryBuildingRepository['snapshot']>): Promise<void> {
+    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
     await this.prisma.withContext(async (tx) => {
       for (const b of snap.buildings) {
         const data = {

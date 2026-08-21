@@ -2,101 +2,60 @@ import { Link } from 'react-router-dom';
 import Counter from '../components/Counter';
 import Faq from '../components/Faq';
 import { AppRow, AppTabbar, Phone } from '../components/Phone';
+import { useT, useTn } from '../i18n';
 import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
 import { PHOTO } from '../lib/photos';
 import { revealDelay } from '../lib/reveal';
 
+/** Сегменты, подходящие под обслуживание. В списках держим ключи, не текст. */
 const SEGMENTS = [
-  'Аптеки',
-  'Магазины и минимаркеты',
-  'Кафе и рестораны',
-  'Офисы',
-  'Салоны красоты',
-  'Клиники',
-  'Пункты выдачи',
-  'Мини-отели',
+  'business.segmentPharmacies',
+  'business.segmentShops',
+  'business.segmentCafes',
+  'business.segmentOffices',
+  'business.segmentSalons',
+  'business.segmentClinics',
+  'business.segmentPickup',
+  'business.segmentHotels',
 ];
 
 const PAINS = [
-  {
-    title: 'Свой техник обходится дорого',
-    text: 'Оклад, налоги, отпуск и простой. На небольшой сети он загружен наполовину, а платить приходится полностью.',
-  },
-  {
-    title: 'Разовые мастера — лотерея',
-    text: 'Каждый раз новый человек, цена «по договорённости», качество непонятное. Проверить, что реально сделано, нечем.',
-  },
-  {
-    title: 'Непонятно, куда ушли деньги',
-    text: 'Ремонт размазан по авансовым отчётам. К концу года никто не скажет, сколько стоило содержать каждую точку.',
-  },
+  { title: 'business.painStaffTitle', text: 'business.painStaffText' },
+  { title: 'business.painRandomTitle', text: 'business.painRandomText' },
+  { title: 'business.painMoneyTitle', text: 'business.painMoneyText' },
 ];
 
 const OFFER = [
-  {
-    title: 'Один договор на все точки',
-    text: 'Один подрядчик, один прайс, одни закрывающие документы — вместо десятка разовых сделок и договорённостей на словах.',
-  },
-  {
-    title: 'Аварии: 60 минут днём, 120 ночью',
-    text: 'Срок приезда записан в договоре и считается по каждой точке. Не приехали вовремя — это видно в отчёте.',
-  },
-  {
-    title: 'Фото по каждой работе',
-    text: 'Что было, что стало, что поставили. Никаких «мы там всё сделали» без подтверждения.',
-  },
-  {
-    title: 'Абонентская плата — ровный бюджет',
-    text: 'Фиксированная сумма в месяц вместо скачков. Работы списываются по факту, остаток виден онлайн.',
-  },
-  {
-    title: 'Плановые осмотры',
-    text: 'Обход по чек-листу: сантехника, электрика, климат. Предупредить аварию дешевле, чем чинить последствия.',
-  },
-  {
-    title: 'Список отложенных работ',
-    text: 'По каждой точке ведём, что стоит починить и сколько это стоит. Вы решаете, что делать сейчас, а что потом.',
-  },
+  { title: 'business.offerContractTitle', text: 'business.offerContractText' },
+  { title: 'business.offerSlaTitle', text: 'business.offerSlaText' },
+  { title: 'business.offerPhotoTitle', text: 'business.offerPhotoText' },
+  { title: 'business.offerBudgetTitle', text: 'business.offerBudgetText' },
+  { title: 'business.offerInspectionTitle', text: 'business.offerInspectionText' },
+  { title: 'business.offerBacklogTitle', text: 'business.offerBacklogText' },
+];
+
+const CABINET_POINTS = [
+  'business.cabinetPointRequest',
+  'business.cabinetPointEmergency',
+  'business.cabinetPointReport',
+  'business.cabinetPointActs',
+  'business.cabinetPointBalance',
 ];
 
 const START = [
-  { title: 'Заявка', text: 'Оставляете контакты — менеджер связывается в тот же рабочий день.' },
-  { title: 'Осмотр точек', text: 'Приезжаем, смотрим состояние и составляем паспорт объекта.' },
-  {
-    title: 'Предложение',
-    text: 'Присылаем расчёт: что входит в абонентскую плату, что оплачивается сверх.',
-  },
-  {
-    title: 'Договор и старт',
-    text: 'Подписываем, подключаем кабинет, и точки уже под обслуживанием.',
-  },
+  { title: 'business.startRequestTitle', text: 'business.startRequestText' },
+  { title: 'business.startSurveyTitle', text: 'business.startSurveyText' },
+  { title: 'business.startOfferTitle', text: 'business.startOfferText' },
+  { title: 'business.startContractTitle', text: 'business.startContractText' },
 ];
 
 const FAQ = [
-  {
-    q: 'Что входит в абонентскую плату?',
-    a: 'Плановые осмотры, дежурство по авариям с обещанным сроком приезда, диспетчерская, отчётность и кабинет. Сами работы и материалы списываются по прайсу — их видно в отчёте отдельной строкой.',
-  },
-  {
-    q: 'А если точек всего две?',
-    a: 'Тоже работаем. Абонентская плата считается от типа и площади объектов, поэтому для двух точек и сумма будет небольшой. Точную цифру называем после осмотра.',
-  },
-  {
-    q: 'Что если мастер не приехал в срок?',
-    a: 'Срок приезда фиксируется в договоре, а нарушения видны в месячном отчёте. Порядок пересчёта и компенсаций прописывается там же — это не переписка в мессенджере.',
-  },
-  {
-    q: 'Кто отвечает за материалы?',
-    a: 'Можем закупать сами и включать в отчёт по чекам, можем работать с вашими. Как удобнее — фиксируем в договоре.',
-  },
-  {
-    q: 'Работаете по договору и безналу?',
-    a: 'Да, по договору с закрывающими документами. Акты за месяц приходят пакетом, а не по каждой заявке отдельно. Форму расчётов и налоговые условия менеджер зафиксирует в договоре — под вашу бухгалтерию.',
-  },
-  {
-    q: 'Можно попробовать на одной точке?',
-    a: 'Можно. Возьмите одну точку на месяц-другой, посмотрите на отчёты и сроки — и уже потом подключайте остальные.',
-  },
+  { q: 'business.faqIncludedQ', a: 'business.faqIncludedA' },
+  { q: 'business.faqTwoSitesQ', a: 'business.faqTwoSitesA' },
+  { q: 'business.faqLateQ', a: 'business.faqLateA' },
+  { q: 'business.faqMaterialsQ', a: 'business.faqMaterialsA' },
+  { q: 'business.faqContractQ', a: 'business.faqContractA' },
+  { q: 'business.faqTrialQ', a: 'business.faqTrialA' },
 ];
 
 function Mock(props: { caption: string; children: React.ReactNode }) {
@@ -109,6 +68,9 @@ function Mock(props: { caption: string; children: React.ReactNode }) {
 }
 
 export default function Business() {
+  const t = useT();
+  const tn = useTn();
+
   return (
     <>
       {/* ===== Герой ===== */}
@@ -116,45 +78,42 @@ export default function Business() {
         <div className="wrap">
           <div className="hero-grid">
             <div className="hero-copy">
-              <span className="chip chip-dark chip-dot">SOZO для бизнеса</span>
+              <span className="chip chip-dark chip-dot">{t('business.heroChip')}</span>
               <h1 className="display">
-                Все точки <span className="mark">под присмотром</span>
+                {t('business.heroTitleLead')}{' '}
+                <span className="mark">{t('business.heroTitleMark')}</span>
               </h1>
-              <p className="lead">
-                Сантехника, электрика, климат и мелкий ремонт в ваших помещениях — по одному
-                договору. Фиксированная плата в месяц, срок приезда по авариям и фотоотчёт по каждой
-                работе.
-              </p>
+              <p className="lead">{t('business.heroLead')}</p>
               <div className="btn-row">
                 <Link to="/calculator" className="btn">
-                  Рассчитать абонентку
+                  {t('business.heroCalcCta')}
                 </Link>
                 <a href={DISPATCH_TEL_HREF} className="btn btn-ghost">
                   {DISPATCH_TEL_DISPLAY}
                 </a>
               </div>
-              <p className="hero-note">Расчёт занимает минуту и ни к чему не обязывает.</p>
+              <p className="hero-note">{t('business.heroNote')}</p>
             </div>
 
             <div className="hero-media">
               <div className="hero-photo">
                 <img
                   src={PHOTO.roofHvac}
-                  alt="Мастера SOZO обслуживают климатическое оборудование на объекте"
+                  alt={t('business.heroPhotoAlt')}
                   width={1200}
                   height={900}
                   decoding="async"
                 />
               </div>
               <div className="float-card float-card--status">
-                <p className="float-title">Аптека №7 · авария</p>
-                <p className="float-value">Мастер приедет к 11:40</p>
+                <p className="float-title">{t('business.heroCardStatusTitle')}</p>
+                <p className="float-value">{t('business.heroCardStatusValue')}</p>
                 <div className="progress" aria-hidden="true">
                   <span />
                 </div>
               </div>
               <div className="float-card float-card--price">
-                <p className="float-title">Точек на обслуживании</p>
+                <p className="float-title">{t('business.heroCardPointsTitle')}</p>
                 <p className="float-value">12</p>
               </div>
             </div>
@@ -163,23 +122,23 @@ export default function Business() {
           <div className="hero-stats">
             <div>
               <p className="stat-value">
-                <Counter to={60} suffix=" мин" />
+                <Counter to={60} suffix={` ${t('business.unitMin')}`} />
               </p>
-              <p className="stat-label">приезд по аварии днём</p>
+              <p className="stat-label">{t('business.statDaySla')}</p>
             </div>
             <div>
               <p className="stat-value">
-                <Counter to={120} suffix=" мин" />
+                <Counter to={120} suffix={` ${t('business.unitMin')}`} />
               </p>
-              <p className="stat-label">приезд по аварии ночью</p>
+              <p className="stat-label">{t('business.statNightSla')}</p>
             </div>
             <div>
               <p className="stat-value">1</p>
-              <p className="stat-label">договор на всю сеть</p>
+              <p className="stat-label">{t('business.statContract')}</p>
             </div>
             <div>
               <p className="stat-value">100%</p>
-              <p className="stat-label">работ с фотоотчётом</p>
+              <p className="stat-label">{t('business.statPhoto')}</p>
             </div>
           </div>
         </div>
@@ -189,13 +148,13 @@ export default function Business() {
       <section className="section section-alt">
         <div className="wrap stack-lg">
           <div className="section-head section-head-wide" data-reveal>
-            <p className="eyebrow">Кому подходит</p>
-            <h2 className="h2">Если у вас помещение, где нельзя закрыться на ремонт</h2>
+            <p className="eyebrow">{t('business.fitEyebrow')}</p>
+            <h2 className="h2">{t('business.fitTitle')}</h2>
           </div>
           <div className="chips" data-reveal>
-            {SEGMENTS.map((s) => (
-              <span className="chip" key={s}>
-                {s}
+            {SEGMENTS.map((key) => (
+              <span className="chip" key={key}>
+                {t(key)}
               </span>
             ))}
           </div>
@@ -206,8 +165,8 @@ export default function Business() {
       <section className="section">
         <div className="wrap">
           <div className="section-head" data-reveal>
-            <p className="eyebrow">Знакомо?</p>
-            <h2 className="h2">Три способа терять деньги на обслуживании</h2>
+            <p className="eyebrow">{t('business.painsEyebrow')}</p>
+            <h2 className="h2">{t('business.painsTitle')}</h2>
           </div>
           <div className="grid grid-3">
             {PAINS.map((p, i) => (
@@ -218,8 +177,8 @@ export default function Business() {
                 style={revealDelay(i)}
               >
                 <p className="usp-num">0{i + 1}</p>
-                <h3 className="h3">{p.title}</h3>
-                <p className="muted">{p.text}</p>
+                <h3 className="h3">{t(p.title)}</h3>
+                <p className="muted">{t(p.text)}</p>
               </article>
             ))}
           </div>
@@ -230,11 +189,9 @@ export default function Business() {
       <section className="section section-alt">
         <div className="wrap">
           <div className="section-head" data-reveal>
-            <p className="eyebrow">Что предлагаем</p>
-            <h2 className="h2">Берём на себя всю техническую часть</h2>
-            <p className="lead">
-              Вы занимаетесь своим делом, а мы следим, чтобы в помещениях всё работало.
-            </p>
+            <p className="eyebrow">{t('business.offerEyebrow')}</p>
+            <h2 className="h2">{t('business.offerTitle')}</h2>
+            <p className="lead">{t('business.offerLead')}</p>
           </div>
           <div className="grid grid-3">
             {OFFER.map((o, i) => (
@@ -245,8 +202,8 @@ export default function Business() {
                 style={revealDelay(i % 3)}
               >
                 <span className="tile-mark" />
-                <h3 className="h3">{o.title}</h3>
-                <p className="muted">{o.text}</p>
+                <h3 className="h3">{t(o.title)}</h3>
+                <p className="muted">{t(o.text)}</p>
               </article>
             ))}
           </div>
@@ -259,50 +216,43 @@ export default function Business() {
           <div className="grid-2" style={{ alignItems: 'center' }}>
             <div className="stack-lg" data-reveal>
               <div className="section-head">
-                <p className="eyebrow">Кабинет для бизнеса</p>
-                <h2 className="h2">Видно всё: кто, когда, что и за сколько</h2>
-                <p className="lead">
-                  Ответственный за точки открывает кабинет с телефона и видит текущие заявки, сроки
-                  и расходы. Ничего не нужно спрашивать в переписке.
-                </p>
+                <p className="eyebrow">{t('business.cabinetEyebrow')}</p>
+                <h2 className="h2">{t('business.cabinetTitle')}</h2>
+                <p className="lead">{t('business.cabinetLead')}</p>
               </div>
               <ul className="stack-sm">
-                <li className="tick">
-                  <span>Заявка с точки — сотрудник жмёт кнопку, диспетчер уже знает адрес</span>
-                </li>
-                <li className="tick">
-                  <span>Аварийные заявки идут отдельной очередью со своим сроком</span>
-                </li>
-                <li className="tick">
-                  <span>Месячный отчёт: расходы по каждой точке и по видам работ</span>
-                </li>
-                <li className="tick">
-                  <span>Акты с фото — пакетом за месяц, а не по одному в почте</span>
-                </li>
-                <li className="tick">
-                  <span>Баланс абонентки виден онлайн: сколько внесено и сколько списано</span>
-                </li>
+                {CABINET_POINTS.map((key) => (
+                  <li className="tick" key={key}>
+                    <span>{t(key)}</span>
+                  </li>
+                ))}
               </ul>
               <div className="btn-row">
                 <Link to="/calculator" className="btn">
-                  Получить расчёт
+                  {t('business.cabinetCta')}
                 </Link>
               </div>
             </div>
 
             <div data-reveal>
-              <Phone label="Кабинет для бизнеса">
+              <Phone label={t('business.cabinetEyebrow')}>
                 <AppRow
-                  title="Аптека №7 · Чиланзар"
-                  sub="Авария: течь в подсобке"
-                  badge="Приедем к 11:40"
+                  title={t('business.appSiteTitle')}
+                  sub={t('business.appSiteSub')}
+                  badge={t('business.appSiteBadge')}
                   badgeTone="live"
                 >
                   <div className="progress" aria-hidden="true">
                     <span />
                   </div>
                 </AppRow>
-                <AppRow title="Расходы за месяц" sub="12 точек · 48 заявок">
+                <AppRow
+                  title={t('business.appExpensesTitle')}
+                  sub={t('business.appExpensesSub', {
+                    points: tn('business.appPoints', 12),
+                    requests: tn('business.appRequests', 48),
+                  })}
+                >
                   <div className="bars" aria-hidden="true">
                     {[38, 52, 30, 64, 44, 72, 50, 58].map((h, i) => (
                       <i
@@ -314,9 +264,9 @@ export default function Business() {
                   </div>
                 </AppRow>
                 <AppRow
-                  title="Акт по заявке №2210"
-                  sub="Замена сифона · 240 000 сум"
-                  badge="Готов"
+                  title={t('business.appActTitle')}
+                  sub={t('business.appActSub', { unit: t('unit.sum') })}
+                  badge={t('business.appActBadge')}
                   badgeTone="ok"
                 >
                   <div className="app-photos">
@@ -324,7 +274,7 @@ export default function Business() {
                     <img className="app-photo" src={PHOTO.afterShot} alt="" loading="lazy" />
                   </div>
                 </AppRow>
-                <div className="app-cta">Оставить заявку</div>
+                <div className="app-cta">{t('business.appCta')}</div>
                 <AppTabbar active={2} />
               </Phone>
             </div>
@@ -336,30 +286,30 @@ export default function Business() {
       <section className="section section-alt">
         <div className="wrap">
           <div className="section-head" data-reveal>
-            <p className="eyebrow">Отчётность</p>
-            <h2 className="h2">Три документа, которые закрывают вопросы бухгалтерии</h2>
+            <p className="eyebrow">{t('business.reportsEyebrow')}</p>
+            <h2 className="h2">{t('business.reportsTitle')}</h2>
           </div>
           <div className="grid grid-3">
             <div data-reveal>
-              <Mock caption="Месячный отчёт по точкам">
+              <Mock caption={t('business.mockMonthlyCaption')}>
                 <div className="bars" aria-hidden="true">
                   {[40, 62, 35, 70, 48, 84, 52].map((h, i) => (
                     <i key={i} className={i === 5 ? 'on' : ''} style={{ height: `${h}%` }} />
                   ))}
                 </div>
                 <div className="rowline">
-                  <span>Аптека №7</span>
+                  <span>{t('business.mockSiteFirst')}</span>
                   <strong>3 120 000</strong>
                 </div>
                 <div className="rowline">
-                  <span>Аптека №3</span>
+                  <span>{t('business.mockSiteSecond')}</span>
                   <strong>1 480 000</strong>
                 </div>
               </Mock>
             </div>
 
             <div data-reveal style={revealDelay(1)}>
-              <Mock caption="Акт с фото до и после">
+              <Mock caption={t('business.mockActCaption')}>
                 <div className="mock-line accent" style={{ width: '45%' }} />
                 <div className="app-photos" style={{ flex: 1 }}>
                   <img className="mock-photo" src={PHOTO.beforeShot} alt="" loading="lazy" />
@@ -369,25 +319,25 @@ export default function Business() {
             </div>
 
             <div data-reveal style={revealDelay(2)}>
-              <Mock caption="Баланс абонентки">
+              <Mock caption={t('business.mockBalanceCaption')}>
                 <div className="mock-line accent" style={{ width: '60%' }} />
                 <div className="rowline">
-                  <span>Внесено</span>
+                  <span>{t('business.mockBalanceIn')}</span>
                   <strong>6 000 000</strong>
                 </div>
                 <div className="rowline">
-                  <span>Списано за месяц</span>
+                  <span>{t('business.mockBalanceOut')}</span>
                   <strong>4 200 000</strong>
                 </div>
                 <div className="rowline">
-                  <span>Остаток</span>
+                  <span>{t('business.mockBalanceRest')}</span>
                   <strong>1 800 000</strong>
                 </div>
               </Mock>
             </div>
           </div>
           <p className="small muted" style={{ marginTop: 'var(--s16)' }}>
-            Примеры интерфейса. Цифры условные.
+            {t('business.mockNote')}
           </p>
         </div>
       </section>
@@ -398,16 +348,13 @@ export default function Business() {
           <div className="grid-2">
             <div className="sticky-col" data-reveal>
               <div className="section-head">
-                <p className="eyebrow">Как начинаем</p>
-                <h2 className="h2">От звонка до обслуживания — четыре шага</h2>
-                <p className="lead">
-                  Обычно проходит от нескольких дней до недели — в зависимости от того, сколько у
-                  вас точек.
-                </p>
+                <p className="eyebrow">{t('business.startEyebrow')}</p>
+                <h2 className="h2">{t('business.startTitle')}</h2>
+                <p className="lead">{t('business.startLead')}</p>
               </div>
               <div className="btn-row">
                 <Link to="/calculator" className="btn">
-                  Начать с расчёта
+                  {t('business.startCta')}
                 </Link>
               </div>
             </div>
@@ -416,9 +363,9 @@ export default function Business() {
                 <li className="flow-item" key={s.title} data-reveal style={revealDelay(i)}>
                   <div className="flow-head">
                     <span className="num">{i + 1}</span>
-                    <h3 className="h3">{s.title}</h3>
+                    <h3 className="h3">{t(s.title)}</h3>
                   </div>
-                  <p className="muted">{s.text}</p>
+                  <p className="muted">{t(s.text)}</p>
                 </li>
               ))}
             </ol>
@@ -430,11 +377,11 @@ export default function Business() {
       <section className="section section-alt">
         <div className="wrap">
           <div className="section-head" data-reveal>
-            <p className="eyebrow">Вопросы</p>
-            <h2 className="h2">Что обычно спрашивают</h2>
+            <p className="eyebrow">{t('business.faqEyebrow')}</p>
+            <h2 className="h2">{t('business.faqTitle')}</h2>
           </div>
           <div data-reveal>
-            <Faq items={FAQ} />
+            <Faq items={FAQ.map((item) => ({ q: t(item.q), a: t(item.a) }))} />
           </div>
         </div>
       </section>
@@ -443,17 +390,14 @@ export default function Business() {
       <section className="section-lg section-dark">
         <div className="wrap">
           <div className="stack-lg" style={{ maxWidth: '58ch' }} data-reveal>
-            <h2 className="h1">Посчитаем стоимость для вашей сети</h2>
-            <p className="lead">
-              Калькулятор даёт вилку за минуту. Точную сумму назовём в предложении — после того, как
-              посмотрим объекты.
-            </p>
+            <h2 className="h1">{t('business.ctaTitle')}</h2>
+            <p className="lead">{t('business.ctaLead')}</p>
             <div className="btn-row">
               <Link to="/calculator" className="btn">
-                Рассчитать абонентку
+                {t('business.ctaCalc')}
               </Link>
               <a href={DISPATCH_TEL_HREF} className="btn btn-ghost">
-                Позвонить {DISPATCH_TEL_DISPLAY}
+                {t('business.ctaCall', { tel: DISPATCH_TEL_DISPLAY })}
               </a>
             </div>
           </div>

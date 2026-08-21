@@ -491,10 +491,7 @@ export const UZ: Record<string, string> = {
   'доля принятых офферов × 100': 'qabul qilingan takliflar ulushi × 100',
   'доля фото-пакетов, принятых с первой попытки × 100': 'birinchi urinishda qabul qilingan surat paketlari ulushi × 100',
   'кг': 'kg',
-  'компл': 'komplekt',
-  'м': 'm',
   'туба': 'tuba',
-  'шт': 'dona',
   'клиент недоступен: фото двери': 'mijoz bilan bog‘lanib bo‘lmadi: eshik surati',
   'консервация': 'konservatsiya',
   'накладная по коду закупки': 'xarid kodi bo‘yicha yuk xati',
@@ -595,6 +592,10 @@ export const UZ: Record<string, string> = {
   'Этого района нет в списке обслуживаемых': 'Bu tuman xizmat ko‘rsatiladiganlar ro‘yxatida yo‘q',
   'Здесь появится техника после первого визита мастера': 'Ustaning birinchi tashrifidan so‘ng bu yerda texnika paydo bo‘ladi',
   'Оплат пока не было': 'Hozircha to‘lovlar bo‘lmagan',
+  'Действие недоступно': 'Amal mavjud emas',
+  'Заявка изменилась — обновите экран': 'Buyurtma o‘zgardi — ekranni yangilang',
+  'Код не найден — проверьте написание': 'Kod topilmadi — yozilishini tekshiring',
+  'Не найдено': 'Topilmadi',
 };
 
 /**
@@ -674,4 +675,10 @@ export const VALUES: Record<string, string> = {
   'час': 'soat',
   'точка': 'nuqta',
   'выезд': 'chiqish',
+  'Кондиционеры': 'Konditsionerlar',
+  'Окна и двери': 'Deraza va eshiklar',
+  'Отделка': 'Pardozlash',
+  'Отопление': 'Isitish',
+  'Сварка': 'Payvandlash',
+  'Слаботочка': 'Past kuchlanishli tizimlar',
 };

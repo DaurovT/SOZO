@@ -3268,3 +3268,83 @@ model ServiceZone {
   @@index([tenantId, active])
   @@map("service_zone")
 }
+
+/**
+ * Залог мастера (M-38).
+ *
+ * Деньги, внесённые под выданное оборудование и возвращаемые при увольнении.
+ * Не проводка биллинга: залог не выручка и не расход, он лежит и ждёт. В
+ * журнал двойной записи попадает только его удержание.
+ */
+model MasterDeposit {
+  id          String   @id @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  masterId    String   @map("master_id")
+  amountTiyin BigInt   @map("amount_tiyin")
+  status      String   @default("pending") // pending | settled
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, masterId, status])
+  @@map("master_deposit")
+}
+
+/**
+ * Отпуск или больничный мастера (M-40).
+ *
+ * Даты календарные, а не моменты: отпуск берут днями, и «с 14:32» здесь не
+ * значит ничего. Планировщик по ним не ставит смены — поэтому отказ обязан
+ * нести причину, иначе мастер не знает, подавать ли заново.
+ */
+model MasterTimeOff {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  masterId  String   @map("master_id")
+  fromDate  DateTime @map("from_date") @db.Date
+  toDate    DateTime @map("to_date") @db.Date
+  kind      String // vacation | sick
+  comment   String?
+  status    String   @default("pending") // pending | approved | rejected
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, masterId, status])
+  @@map("master_time_off")
+}
+
+/**
+ * Проверка инструмента у мастера на линии (M-39).
+ *
+ * Отдельно от проверки при найме: та однократная и решает, брать ли
+ * человека, а эта повторяется и решает, выпускать ли его в смену. Чего не
+ * хватает — строкой, потому что по ней снабжение и докупает.
+ */
+model MasterToolCheck {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  masterId String   @map("master_id")
+  skill    String
+  complete Boolean  @default(true)
+  missing  String?
+  at       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, masterId, at(sort: Desc)])
+  @@map("master_tool_check")
+}
+
+/**
+ * Квартальный NPS мастера (M-39).
+ *
+ * Оценка 0–10 с CHECK: шкала NPS фиксированная, и одиннадцать баллов — это
+ * не восторг, а ошибка ввода, которая ломает расчёт индекса.
+ */
+model MasterNps {
+  id       String   @id @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  masterId String   @map("master_id")
+  score    Int
+  comment  String?
+  at       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([tenantId, at(sort: Desc)])
+  @@map("master_nps")
+}

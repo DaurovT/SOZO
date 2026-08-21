@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { tr, trValue } from '../../common/locale';
 
 /**
@@ -83,7 +85,12 @@ export const NOTIFICATION_GROUPS: Record<NotificationKind, { icon: string; group
 export class NotificationsService {
   readonly items: NotificationRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'masterNotifications',
       () => this.items.slice(-2000),
@@ -92,6 +99,54 @@ export class NotificationsService {
         this.items.push(...((d ?? []) as NotificationRec[]));
       },
     );
+    this.mirror = new PgMirror(prisma, 'MasterNotifications', {
+      load: async (tx) => {
+        const rows = await tx.masterNotification.findMany({ orderBy: { createdAt: 'desc' }, take: 2000 });
+        if (!rows.length) return 0;
+        this.items.length = 0;
+        this.items.push(
+          ...rows.reverse().map((r) => ({
+            id: r.id,
+            masterId: r.masterId,
+            kind: r.kind as NotificationRec['kind'],
+            title: r.title,
+            body: r.body,
+            bodyArgs: (r.bodyArgs as (string | number)[]) ?? undefined,
+            priority: r.priority as NotificationRec['priority'],
+            deepLink: r.deepLink ?? undefined,
+            orderId: r.orderId ?? undefined,
+            read: r.read,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        );
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const n of [...this.items]) {
+          const data = {
+            masterId: n.masterId, kind: n.kind, title: n.title, body: n.body,
+            bodyArgs: (n.bodyArgs ?? []) as object,
+            priority: n.priority, deepLink: n.deepLink ?? null,
+            orderId: n.orderId ?? null, read: n.read,
+          };
+          await tx.masterNotification.upsert({
+            where: { id: n.id },
+            create: { id: n.id, tenantId, createdAt: new Date(n.createdAt), ...data },
+            update: { read: n.read },
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   push(data: {

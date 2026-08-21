@@ -3,6 +3,7 @@ import type { OrderStatus } from '@sozo/contracts';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import { dbFailure } from '../../common/db-failure';
+import { queue } from '../../common/pg-mirror';
 import { currentDbContext, systemContext } from '../../common/db-context';
 import type { OrderRecord, OrderRepository } from './order.repository';
 
@@ -127,15 +128,23 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
     if (!this.loaded) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
-      void this.flush().catch((e: unknown) => {
-        // eslint-disable-next-line no-console
-        console.error('[Orders] отложенная запись не удалась:', dbFailure(e));
+      // Через общую очередь: на заявку ссылаются проводки и брони, и запись
+      // из другого модуля не должна обгонять эту (см. WriteQueue)
+      void queue().add(async () => {
+        try {
+          await this.flush();
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[Orders] отложенная запись не удалась:', dbFailure(e));
+        }
       });
     }, 500);
   }
 
   private async flush(): Promise<void> {
-    for (const o of this.orders.values()) await this.writeOne(o);
+    // Снимок до первого await: заявка, добавленная по ходу записи, попадёт
+    // в следующий проход, а не сломает текущий
+    for (const o of [...this.orders.values()]) await this.writeOne(o);
   }
 
   /** Заявка целиком: коллекции переписываются, разницу не вычисляем */

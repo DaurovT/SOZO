@@ -1,6 +1,7 @@
 import { PrismaService } from './prisma.service';
 import { currentDbContext, systemContext } from './db-context';
 import { dbFailure } from './db-failure';
+import { WriteQueue } from './write-queue';
 
 type Tx = Parameters<Parameters<PrismaService['withContext']>[0]>[0];
 
@@ -80,15 +81,15 @@ export class PgMirror {
   schedule(): void {
     if (!this.prisma.enabled || !this.loaded || this.pending) return;
     this.pending = true;
-    this.writing = this.writing
-      .then(() => {
-        this.pending = false;
-        return this.prisma.withContext((tx) => this.io.save(tx, tenantOf()));
-      })
-      .catch((e: unknown) => {
+    this.writing = queue().add(async () => {
+      this.pending = false;
+      try {
+        await this.prisma.withContext((tx) => this.io.save(tx, tenantOf()));
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[${this.label}] запись в базу не удалась:`, dbFailure(e));
-      });
+      }
+    });
   }
 
   /**
@@ -102,6 +103,17 @@ export class PgMirror {
     this.schedule();
     await this.writing;
   }
+}
+
+/**
+ * Очередь одна на процесс. Синглтон, а не провайдер Nest: её же используют
+ * репозитории, созданные фабриками, и таскать её через шесть конструкторов
+ * ради одного вызова — больше кода, чем смысла.
+ */
+let shared: WriteQueue | null = null;
+export function queue(): WriteQueue {
+  if (!shared) shared = new WriteQueue();
+  return shared;
 }
 
 function tenantOf(): string {

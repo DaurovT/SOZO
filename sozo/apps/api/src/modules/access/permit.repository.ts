@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { PermitStatus, PermitApprovalKind, PassType, ShutdownStatus, ResourceType } from '@sozo/contracts';
 import { StateStore } from '../../common/state-store';
 import { dbFailure } from '../../common/db-failure';
+import { queue } from '../../common/pg-mirror';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
@@ -111,31 +112,43 @@ export class InMemoryPermitRepository implements OnModuleInit {
 
   private scheduleWrite(): void {
     if (!this.prisma.enabled || !this.loaded) return;
-    this.writing = this.writing
-      .then(() => this.writeAll())
-      .catch((e: unknown) => {
+    // Общая очередь на процесс: своя цепочка соблюдала порядок внутри
+    // модуля, но не между модулями — наряд успевал записаться раньше
+    // объекта, на который ссылается (см. WriteQueue)
+    // Снимок берётся здесь, в момент постановки в очередь, а не в момент
+    // выполнения.
+    //
+    // Это не мелочь, а вторая половина того же порядка. Задача, поставленная
+    // раньше, выполняется позже — и если она снимает состояние при
+    // выполнении, то захватывает наряд, созданный уже после её постановки.
+    // Объект этого наряда стоит в очереди ПОЗЖЕ, и запись падает на внешнем
+    // ключе. Снимок при постановке означает: задача пишет ровно то, что
+    // существовало, когда её назначили, а всё более позднее уедет следующей.
+    const snap = this.snapshot();
+    this.writing = queue().add(async () => {
+      try {
+        await this.writeAll(snap);
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error('[Access] запись в базу не удалась:', dbFailure(e));
-      });
+      }
+    });
   }
 
-  private async writeAll(): Promise<void> {
+  /** Состояние на момент постановки в очередь — см. scheduleWrite */
+  private snapshot() {
+    return {
+      permits: [...this.permits.values()],
+      passes: [...this.passes.values()],
+      shutdowns: [...this.shutdowns.values()],
+      unitAccess: [...this.unitAccess.values()],
+      ops: [...this.ops],
+    };
+  }
+
+  private async writeAll(snap: ReturnType<InMemoryPermitRepository['snapshot']>): Promise<void> {
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
-    /**
-     * Снимок наборов до первого await.
-     *
-     * Перебор живой карты внутри асинхронной записи — гонка, которая
-     * проявляется редко и потому дорого: между записью нарядов и записью
-     * запросов доступа успевает прийти запрос, добавляющий и наряд, и
-     * ссылку на него. Наряд в цикл уже не попадает, а запрос попадает — и
-     * запись падает на внешнем ключе. В прогоне это выглядело как
-     * «иногда одна потерянная запись».
-     */
-    const permits = [...this.permits.values()];
-    const passes = [...this.passes.values()];
-    const shutdowns = [...this.shutdowns.values()];
-    const unitAccess = [...this.unitAccess.values()];
-    const ops = [...this.ops];
+    const { permits, passes, shutdowns, unitAccess, ops } = snap;
     await this.prisma.withContext(async (tx) => {
       for (const p of permits) {
         const data = {

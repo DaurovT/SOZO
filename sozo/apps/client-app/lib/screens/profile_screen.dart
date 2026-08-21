@@ -5,6 +5,7 @@ import '../format.dart';
 import '../i18n.dart';
 import '../store/session.dart';
 import '../widgets/blocks.dart';
+import '../widgets/language_sheet.dart';
 import '../widgets/brand.dart';
 import '../widgets/figma_icon.dart';
 import 'addresses_screen.dart';
@@ -106,7 +107,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               NavRow(
                 icon: 'globe',
                 title: t('c30.language'),
-                value: _languageName(l10n.code),
+                value: L10n.names[l10n.code] ?? l10n.code,
                 onTap: _pickLanguage,
               ),
               const SozoDivider(),
@@ -337,40 +338,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _ => t('c05.roleStaff'),
       };
 
-  /// Название языка — на нём самом: человек, ищущий английский, узнаёт слово
-  /// «English», а не «Английский». Список ведёт `L10n.names`, иначе при
-  /// добавлении языка switch здесь молча отдавал бы русское название.
-  static String _languageName(String code) => L10n.names[code] ?? code;
-
   Future<void> _pickLanguage() async {
-    await showSozoSheet<void>(
+    await showLanguageSheet(
       context,
-      title: t('c30.language'),
-      // Языков десять — в лист они на маленьком экране не помещаются,
-      // поэтому список прокручивается, а не обрезается снизу.
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final code in L10n.codes)
-              Padding(
-                padding: const EdgeInsets.only(bottom: SozoSpace.s8),
-                child: SecondaryButton(
-                  _languageName(code),
-                  icon: code == l10n.code ? 'check' : null,
-                  onTap: () async {
-                    await l10n.set(code);
-                    // Язык уходит и в профиль: на нём же приходят SMS и документы
-                    await session.api.saveConsents({'locale': code});
-                    if (!mounted) return;
-                    Navigator.of(context).pop();
-                  },
-                ),
-              ),
-          ],
-        ),
-      ),
+      // Язык уходит и в профиль: на нём же приходят SMS и документы
+      onChanged: (code) => session.api.saveConsents({'locale': code}),
     );
     if (mounted) setState(() {});
   }

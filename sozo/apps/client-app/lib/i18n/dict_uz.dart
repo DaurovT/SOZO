@@ -557,6 +557,9 @@ const uzDict = <String, String>{
   // ---------- C-30 ----------
   'c30.noName': 'Ismsiz',
   'c30.settings': 'Sozlamalar',
+  'c30.langLoading': "Til yuklanmoqda…",
+  'c30.langNeedsNetwork': "Internet kerak — bir marta",
+  'c30.langFailed': "Tilni yuklab bo‘lmadi. Aloqani tekshiring va qayta urinib ko‘ring.",
   'c30.language': 'Til',
   'c30.context': 'Kontekst',
   'c30.myData': 'Mening maʼlumotlarim',

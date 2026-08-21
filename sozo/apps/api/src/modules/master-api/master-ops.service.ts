@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { NotificationsService } from './notifications.service';
 import { tr } from '../../common/locale';
 
@@ -158,7 +160,7 @@ export interface StagePlanRec {
 }
 
 @Injectable()
-export class MasterOpsService {
+export class MasterOpsService implements OnModuleInit {
   readonly branches: BranchRec[] = [];
   readonly spareTiers: SpareTierRec[] = [];
   readonly addworks: AddworkRec[] = [];
@@ -173,9 +175,12 @@ export class MasterOpsService {
   readonly toolChecks: Array<{ id: string; masterId: string; skill: string; complete: boolean; missing?: string; at: string }> = [];
   readonly npsAnswers: Array<{ id: string; masterId: string; score: number; comment?: string; at: string }> = [];
 
+  private readonly mirror: PgMirror;
+
   constructor(
     private readonly store: StateStore,
     private readonly notifications: NotificationsService,
+    prisma: PrismaService,
   ) {
     this.store.register(
       'masterOps',
@@ -209,6 +214,278 @@ export class MasterOpsService {
         fill(this.npsAnswers, data.npsAnswers);
       },
     );
+    this.mirror = new PgMirror(prisma, 'MasterOps', {
+      load: async (tx) => {
+        const [branches, tiers, addworks, recos, assets, plans, deposits, timeOff, toolChecks, nps] = await Promise.all([
+          tx.orderBranch.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.spareTierOffer.findMany({ include: { variants: true }, orderBy: { createdAt: 'asc' } }),
+          tx.addworkOffer.findMany({ include: { variants: { include: { lines: true } }, escalation: true }, orderBy: { createdAt: 'asc' } }),
+          tx.recommendation.findMany({ include: { lines: true }, orderBy: { createdAt: 'asc' } }),
+          tx.clientAsset.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.stagePlan.findMany({ include: { stages: { orderBy: { index: 'asc' } } } }),
+          tx.masterDeposit.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.masterTimeOff.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.masterToolCheck.findMany({ orderBy: { at: 'asc' } }),
+          tx.masterNps.findMany({ orderBy: { at: 'asc' } }),
+        ]);
+        const fill = <T>(target: T[], src: T[]) => {
+          if (!src.length) return;
+          target.length = 0;
+          target.push(...src);
+        };
+        fill(this.branches, branches.map((b) => ({
+          id: b.id, orderId: b.orderId, masterId: b.masterId, kind: b.kind as BranchRec['kind'],
+          reasonCode: b.reasonCode ?? undefined, comment: b.comment ?? undefined,
+          payload: (b.payload as Record<string, unknown>) ?? undefined,
+          status: b.status as BranchRec['status'], resolution: b.resolution ?? undefined,
+          createdAt: b.createdAt.toISOString(), resolvedAt: b.resolvedAt?.toISOString(),
+        })));
+        fill(this.spareTiers, tiers.map((t) => ({
+          id: t.id, orderId: t.orderId, masterId: t.masterId, partName: t.partName,
+          mode: t.mode as SpareTierRec['mode'],
+          variants: t.variants.map((v) => ({
+            tier: v.tier as 'economy' | 'standard' | 'premium',
+            title: v.title, amountTiyin: Number(v.amountTiyin), note: v.note ?? undefined,
+          })),
+          chosenTier: (t.chosenTier ?? undefined) as SpareTierRec['chosenTier'],
+          status: t.status as SpareTierRec['status'],
+          createdAt: t.createdAt.toISOString(), chosenAt: t.chosenAt?.toISOString(),
+          procuredAt: t.procuredAt?.toISOString(), procuredNote: t.procuredNote ?? undefined,
+        })));
+        fill(this.addworks, addworks.map((a) => ({
+          id: a.id, orderId: a.orderId, masterId: a.masterId, photoCount: a.photoCount,
+          variants: a.variants.map((v) => ({
+            kind: v.kind as 'minimal' | 'full', title: v.title,
+            lines: v.lines.map((l) => ({ name: l.name, amountTiyin: Number(l.amountTiyin), qty: l.qty })),
+            totalTiyin: Number(v.totalTiyin),
+          })),
+          status: a.status as AddworkRec['status'],
+          chosenVariant: (a.chosenVariant ?? undefined) as AddworkRec['chosenVariant'],
+          escalation: a.escalation.map((e) => ({ step: e.step, at: e.at.toISOString(), done: e.done })),
+          createdAt: a.createdAt.toISOString(), resolvedAt: a.resolvedAt?.toISOString(),
+        })));
+        fill(this.recommendations, recos.map((r) => ({
+          id: r.id, orderId: r.orderId, masterId: r.masterId,
+          lines: r.lines.map((l) => ({ name: l.name, amountTiyin: Number(l.amountTiyin), qty: l.qty })),
+          comment: r.comment ?? undefined, status: r.status as RecommendationRec['status'],
+          createdAt: r.createdAt.toISOString(),
+        })));
+        fill(this.assets, assets.map((a) => ({
+          id: a.id, orderId: a.orderId, clientPhone: a.clientPhone, type: a.type,
+          brand: a.brand ?? undefined, model: a.model ?? undefined, year: a.year ?? undefined,
+          plateUnreadable: a.plateUnreadable, linkedWork: a.linkedWork,
+          createdAt: a.createdAt.toISOString(),
+        })));
+        fill(this.stagePlans, plans.map((p) => ({
+          orderId: p.orderId,
+          allSlotsConfirmed: p.allSlotsConfirmed,
+          stages: p.stages.map((st) => ({
+            index: st.index, title: st.title, normHours: Number(st.normHours),
+            pauseMinHours: st.pauseMinHours, pauseMaxHours: st.pauseMaxHours,
+            slotAt: st.slotAt?.toISOString(),
+            status: st.status as 'planned' | 'booked' | 'done',
+          })),
+        })));
+        fill(this.deposits, deposits.map((d) => ({
+          id: d.id, masterId: d.masterId, amountTiyin: Number(d.amountTiyin),
+          status: d.status as 'pending' | 'settled', createdAt: d.createdAt.toISOString(),
+        })));
+        fill(this.timeOff, timeOff.map((t) => ({
+          id: t.id, masterId: t.masterId,
+          from: t.fromDate.toISOString().slice(0, 10),
+          to: t.toDate.toISOString().slice(0, 10),
+          kind: t.kind as 'vacation' | 'sick', comment: t.comment ?? undefined,
+          status: t.status as 'pending' | 'approved' | 'rejected', reason: t.reason ?? undefined,
+          createdAt: t.createdAt.toISOString(),
+        })));
+        fill(this.toolChecks, toolChecks.map((c) => ({
+          id: c.id, masterId: c.masterId, skill: c.skill, complete: c.complete,
+          missing: c.missing ?? undefined, at: c.at.toISOString(),
+        })));
+        fill(this.npsAnswers, nps.map((n) => ({
+          id: n.id, masterId: n.masterId, score: n.score, comment: n.comment ?? undefined,
+          at: n.at.toISOString(),
+        })));
+        return branches.length + tiers.length + addworks.length + recos.length + assets.length + plans.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const b of [...this.branches]) {
+          const data = {
+            orderId: b.orderId, masterId: b.masterId, kind: b.kind,
+            reasonCode: b.reasonCode ?? null, comment: b.comment ?? null,
+            payload: (b.payload ?? {}) as object,
+            status: b.status, resolution: b.resolution ?? null,
+            // CHECK в m27: закрытая развилка знает, когда закрыта
+            resolvedAt: b.status === 'resolved' ? new Date(b.resolvedAt ?? b.createdAt) : null,
+          };
+          await tx.orderBranch.upsert({
+            where: { id: b.id },
+            create: { id: b.id, tenantId, createdAt: new Date(b.createdAt), ...data },
+            update: data,
+          });
+        }
+        for (const t of [...this.spareTiers]) {
+          const data = {
+            orderId: t.orderId, masterId: t.masterId, partName: t.partName, mode: t.mode,
+            chosenTier: t.chosenTier ?? null, status: t.status,
+            // CHECK в m27: выбранный уровень знает, когда выбран
+            chosenAt: t.chosenTier ? new Date(t.chosenAt ?? t.createdAt) : null,
+            procuredAt: t.procuredAt ? new Date(t.procuredAt) : null,
+            procuredNote: t.procuredNote ?? null,
+          };
+          await tx.spareTierOffer.upsert({
+            where: { id: t.id },
+            create: { id: t.id, tenantId, createdAt: new Date(t.createdAt), ...data },
+            update: data,
+          });
+          for (const v of t.variants) {
+            const vd = { title: v.title, amountTiyin: BigInt(Math.max(0, v.amountTiyin)), note: v.note ?? null };
+            await tx.spareTierVariant.upsert({
+              where: { offerId_tier: { offerId: t.id, tier: v.tier } },
+              create: { id: uuidv7(), offerId: t.id, tier: v.tier, ...vd },
+              update: vd,
+            });
+          }
+        }
+        for (const a of [...this.addworks]) {
+          const data = {
+            orderId: a.orderId, masterId: a.masterId, photoCount: a.photoCount,
+            status: a.status, chosenVariant: a.chosenVariant ?? null,
+            resolvedAt: a.resolvedAt ? new Date(a.resolvedAt) : null,
+          };
+          await tx.addworkOffer.upsert({
+            where: { id: a.id },
+            create: { id: a.id, tenantId, createdAt: new Date(a.createdAt), ...data },
+            update: data,
+          });
+          for (const v of a.variants) {
+            const vd = { title: v.title, totalTiyin: BigInt(Math.max(0, v.totalTiyin)) };
+            const variant = await tx.addworkVariant.upsert({
+              where: { offerId_kind: { offerId: a.id, kind: v.kind } },
+              create: { id: uuidv7(), offerId: a.id, kind: v.kind, ...vd },
+              update: vd,
+            });
+            // Строки сметы переписываются целиком: их единицы, а разницу
+            // считать здесь — лишний код там, где ошибка меняет сумму клиенту
+            await tx.addworkLine.deleteMany({ where: { variantId: variant.id } });
+            for (const l of v.lines) {
+              await tx.addworkLine.create({
+                data: {
+                  id: uuidv7(), variantId: variant.id, name: l.name,
+                  amountTiyin: BigInt(Math.max(0, l.amountTiyin)), qty: Math.max(1, l.qty),
+                },
+              });
+            }
+          }
+          await tx.addworkEscalation.deleteMany({ where: { offerId: a.id } });
+          for (const e of a.escalation) {
+            await tx.addworkEscalation.create({
+              data: { id: uuidv7(), offerId: a.id, step: e.step, at: new Date(e.at), done: e.done },
+            });
+          }
+        }
+        for (const r of [...this.recommendations]) {
+          const data = { orderId: r.orderId, masterId: r.masterId, comment: r.comment ?? null, status: r.status };
+          await tx.recommendation.upsert({
+            where: { id: r.id },
+            create: { id: r.id, tenantId, createdAt: new Date(r.createdAt), ...data },
+            update: data,
+          });
+          await tx.recommendationLine.deleteMany({ where: { recommendationId: r.id } });
+          for (const l of r.lines) {
+            await tx.recommendationLine.create({
+              data: {
+                id: uuidv7(), recommendationId: r.id, name: l.name,
+                amountTiyin: BigInt(Math.max(0, l.amountTiyin)), qty: Math.max(1, l.qty),
+              },
+            });
+          }
+        }
+        for (const a of [...this.assets]) {
+          const data = {
+            orderId: a.orderId, clientPhone: a.clientPhone, type: a.type,
+            brand: a.brand ?? null, model: a.model ?? null, year: a.year ?? null,
+            plateUnreadable: a.plateUnreadable, linkedWork: a.linkedWork,
+          };
+          await tx.clientAsset.upsert({
+            where: { id: a.id },
+            create: { id: a.id, tenantId, createdAt: new Date(a.createdAt), ...data },
+            update: data,
+          });
+        }
+        for (const p of [...this.stagePlans]) {
+          await tx.stagePlan.upsert({
+            where: { tenantId_orderId: { tenantId, orderId: p.orderId } },
+            create: { tenantId, orderId: p.orderId, allSlotsConfirmed: p.allSlotsConfirmed },
+            update: { allSlotsConfirmed: p.allSlotsConfirmed },
+          });
+          for (const st of p.stages) {
+            const sd = {
+              title: st.title, normHours: st.normHours,
+              pauseMinHours: Math.max(0, st.pauseMinHours),
+              pauseMaxHours: Math.max(st.pauseMinHours, st.pauseMaxHours),
+              slotAt: st.slotAt ? new Date(st.slotAt) : null,
+              status: st.status,
+            };
+            await tx.stagePlanStage.upsert({
+              where: { tenantId_orderId_index: { tenantId, orderId: p.orderId, index: st.index } },
+              create: { id: uuidv7(), tenantId, orderId: p.orderId, index: st.index, ...sd },
+              update: sd,
+            });
+          }
+        }
+        for (const d of [...this.deposits]) {
+          const data = { masterId: d.masterId, amountTiyin: BigInt(Math.max(1, d.amountTiyin)), status: d.status };
+          await tx.masterDeposit.upsert({
+            where: { id: d.id },
+            create: { id: d.id, tenantId, createdAt: new Date(d.createdAt), ...data },
+            update: data,
+          });
+        }
+        for (const t of [...this.timeOff]) {
+          const data = {
+            masterId: t.masterId,
+            fromDate: new Date(`${t.from.slice(0, 10)}T00:00:00Z`),
+            toDate: new Date(`${(t.to > t.from ? t.to : t.from).slice(0, 10)}T00:00:00Z`),
+            kind: t.kind, comment: t.comment ?? null, status: t.status,
+            // CHECK в m38: отказ обязан нести причину
+            reason: t.status === 'rejected' ? (t.reason?.trim() || 'без объяснения') : (t.reason ?? null),
+          };
+          await tx.masterTimeOff.upsert({
+            where: { id: t.id },
+            create: { id: t.id, tenantId, createdAt: new Date(t.createdAt), ...data },
+            update: data,
+          });
+        }
+        for (const c of [...this.toolChecks]) {
+          const data = {
+            masterId: c.masterId, skill: c.skill, complete: c.complete,
+            missing: c.complete ? (c.missing ?? null) : (c.missing?.trim() || 'не указано'),
+            at: new Date(c.at),
+          };
+          await tx.masterToolCheck.upsert({ where: { id: c.id }, create: { id: c.id, tenantId, ...data }, update: data });
+        }
+        for (const n of [...this.npsAnswers]) {
+          const data = {
+            masterId: n.masterId,
+            score: Math.min(10, Math.max(0, n.score)),
+            comment: n.comment ?? null,
+            at: new Date(n.at),
+          };
+          await tx.masterNps.upsert({ where: { id: n.id }, create: { id: n.id, tenantId, ...data }, update: data });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   private persist<T>(list: T[], rec: T, cap = 1000): T {

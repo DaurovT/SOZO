@@ -9,6 +9,7 @@ import { LeadsService } from '../leads/leads.module';
 import { AuditService } from '../platform/audit.service';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
+import { clientLocale, clientLocaleIndex } from '../../i18n/client-locales';
 import { PgMirror } from '../../common/pg-mirror';
 import { Injectable } from '@nestjs/common';
 
@@ -181,6 +182,27 @@ export class PublicApiController {
   }
 
   /** L-07: верификация бейджа мастера. Несуществующий код — тот же ответ «недействителен» */
+  /**
+   * Словарь приложения «Клиент» для догружаемого языка.
+   *
+   * Без авторизации намеренно: язык выбирают на экране входа, до того как
+   * появится токен. Отдавать нечего, кроме перевода собственного интерфейса,
+   * — секрета здесь нет.
+   */
+  @Get('app-locale')
+  localeIndex() {
+    return clientLocaleIndex();
+  }
+
+  @Get('app-locale/:code')
+  appLocale(@Param('code') code: string) {
+    const dict = clientLocale(code);
+    // Языки ru/uz/en сюда не попадают — они собраны внутрь приложения, и
+    // запрос за ними означает ошибку в клиенте, а не отсутствие перевода
+    if (!dict) throw new BadRequestException({ code: 'LOCALE_UNKNOWN', message: `Язык ${code} не догружается` });
+    return dict;
+  }
+
   @Get('master-verify/:code')
   verify(@Param('code') code: string) {
     const m = this.masters.list().find((x) => x.qrBadgeCode === code);

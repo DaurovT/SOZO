@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import { tr } from '../../common/locale';
 
 /**
@@ -96,7 +98,7 @@ export interface EquipmentActRec {
 }
 
 @Injectable()
-export class ResourcesService {
+export class ResourcesService implements OnModuleInit {
   readonly stock: StockItemRec[] = [];
   readonly refills: StockRefillRec[] = [];
   readonly purchaseCodes: PurchaseCodeRec[] = [];
@@ -107,7 +109,12 @@ export class ResourcesService {
   ];
   readonly acts: EquipmentActRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'masterResources',
       () => ({
@@ -131,6 +138,158 @@ export class ResourcesService {
         fill(this.acts, data.acts);
       },
     );
+    this.mirror = new PgMirror(prisma, 'MasterResources', {
+      load: async (tx) => {
+        const [stock, refills, codes, equipment, acts] = await Promise.all([
+          tx.masterStock.findMany(),
+          tx.masterStockRefill.findMany({ include: { items: true }, orderBy: { at: 'asc' } }),
+          tx.purchaseCode.findMany({ include: { invoiceItems: true }, orderBy: { createdAt: 'asc' } }),
+          tx.equipmentUnit.findMany(),
+          tx.equipmentAct.findMany({ include: { completeness: true }, orderBy: { at: 'asc' } }),
+        ]);
+        const fill = <T>(t: T[], src: T[]) => {
+          if (!src.length) return;
+          t.length = 0;
+          t.push(...src);
+        };
+        fill(this.stock, stock.map((x) => ({
+          masterId: x.masterId, catalogId: x.catalogId, qty: x.qty, updatedAt: x.updatedAt.toISOString(),
+        })));
+        fill(this.refills, refills.map((r) => ({
+          id: r.id, masterId: r.masterId,
+          items: r.items.map((i) => ({ catalogId: i.catalogId, qty: i.qty, costTiyin: Number(i.costTiyin) })),
+          receiptFile: r.receiptFile ?? undefined,
+          totalTiyin: Number(r.totalTiyin), at: r.at.toISOString(),
+        })));
+        fill(this.purchaseCodes, codes.map((c) => ({
+          id: c.id, code: c.code, orderId: c.orderId, masterId: c.masterId,
+          limitTiyin: Number(c.limitTiyin), status: c.status as PurchaseCodeRec['status'],
+          invoice: c.invoiceFile
+            ? {
+                file: c.invoiceFile,
+                items: c.invoiceItems.map((i) => ({ name: i.name, amountTiyin: Number(i.amountTiyin) })),
+                totalTiyin: Number(c.invoiceTotalTiyin ?? 0),
+                at: (c.invoiceAt ?? c.createdAt).toISOString(),
+              }
+            : undefined,
+          createdAt: c.createdAt.toISOString(), expiresAt: c.expiresAt.toISOString(),
+        })));
+        // Оборудование — общая таблица с реестром платформы (DEV-19 §3.1)
+        fill(this.equipment, equipment.map((e) => ({
+          id: e.id, inventoryNo: e.inventoryNo, name: e.name, category: e.category,
+          requiredSkill: e.requiredSkill ?? undefined,
+          status: (e.status === 'maintenance' ? 'repair' : e.status) as EquipmentRec['status'],
+          holderMasterId: e.holderMasterId ?? undefined,
+          issuedAt: e.issuedAt?.toISOString(),
+          photoFile: e.photoFile ?? undefined,
+        })));
+        fill(this.acts, acts.map((a) => ({
+          id: a.id, equipmentId: a.equipmentId, masterId: a.masterId,
+          kind: a.kind as EquipmentActRec['kind'], photos: a.photos,
+          completeness: a.completeness.map((c) => ({ item: c.item, ok: c.ok })),
+          discrepancy: a.discrepancy ?? undefined,
+          confirmCode: a.confirmCode, confirmed: a.confirmed, at: a.at.toISOString(),
+        })));
+        return stock.length + refills.length + codes.length + equipment.length + acts.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const x of [...this.stock]) {
+          await tx.masterStock.upsert({
+            where: { tenantId_masterId_catalogId: { tenantId, masterId: x.masterId, catalogId: x.catalogId } },
+            create: { tenantId, masterId: x.masterId, catalogId: x.catalogId, qty: Math.max(0, x.qty) },
+            update: { qty: Math.max(0, x.qty) },
+          });
+        }
+        for (const r of [...this.refills]) {
+          await tx.masterStockRefill.upsert({
+            where: { id: r.id },
+            create: {
+              id: r.id, tenantId, masterId: r.masterId, receiptFile: r.receiptFile ?? null,
+              totalTiyin: BigInt(Math.max(0, r.totalTiyin)), at: new Date(r.at),
+            },
+            update: {},
+          });
+          await tx.masterStockRefillItem.deleteMany({ where: { refillId: r.id } });
+          for (const i of r.items) {
+            await tx.masterStockRefillItem.create({
+              data: {
+                id: uuidv7(), refillId: r.id, catalogId: i.catalogId,
+                qty: Math.max(1, i.qty), costTiyin: BigInt(Math.max(0, i.costTiyin)),
+              },
+            });
+          }
+        }
+        for (const c of [...this.purchaseCodes]) {
+          const data = {
+            code: c.code, orderId: c.orderId, masterId: c.masterId,
+            limitTiyin: BigInt(Math.max(1, c.limitTiyin)), status: c.status,
+            // CHECK в m26: накладная либо есть целиком, либо её нет
+            invoiceFile: c.invoice?.file ?? null,
+            invoiceTotalTiyin: c.invoice ? BigInt(Math.max(0, c.invoice.totalTiyin)) : null,
+            invoiceAt: c.invoice ? new Date(c.invoice.at) : null,
+            expiresAt: new Date(c.expiresAt),
+          };
+          await tx.purchaseCode.upsert({
+            where: { id: c.id },
+            create: { id: c.id, tenantId, createdAt: new Date(c.createdAt), ...data },
+            update: data,
+          });
+          await tx.purchaseInvoiceItem.deleteMany({ where: { purchaseCodeId: c.id } });
+          for (const i of c.invoice?.items ?? []) {
+            await tx.purchaseInvoiceItem.create({
+              data: { id: uuidv7(), purchaseCodeId: c.id, name: i.name, amountTiyin: BigInt(Math.max(0, i.amountTiyin)) },
+            });
+          }
+        }
+        for (const e of [...this.equipment]) {
+          const data = {
+            inventoryNo: e.inventoryNo, name: e.name, category: e.category,
+            requiredSkill: e.requiredSkill ?? null,
+            // Состояния сведены при проектировании: repair и maintenance —
+            // одно и то же (DEV-19 §3.1)
+            status: e.status === 'repair' ? 'maintenance' : e.status,
+            holderMasterId: e.holderMasterId ?? null,
+            // CHECK в m29: выданное оборудование знает, у кого и с какого дня
+            issuedAt: e.holderMasterId ? new Date(e.issuedAt ?? new Date().toISOString()) : null,
+            photoFile: e.photoFile ?? null,
+          };
+          // Ключ — инвентарный номер, а не идентификатор строки.
+          //
+          // Таблица одна на два модуля (DEV-19 §3.1), и у каждого свой набор
+          // в памяти со своими uuid. Upsert по id заводил бы вторую строку на
+          // тот же перфоратор и падал на уникальности инвентарного номера —
+          // что и происходило: 62 неудачные записи за прогон. Номер и есть
+          // то, чем эта вещь опознаётся в жизни.
+          await tx.equipmentUnit.upsert({
+            where: { tenantId_inventoryNo: { tenantId, inventoryNo: data.inventoryNo } },
+            create: { id: e.id, tenantId, ...data },
+            update: data,
+          });
+        }
+        for (const a of [...this.acts]) {
+          const data = {
+            equipmentId: a.equipmentId, masterId: a.masterId, kind: a.kind, photos: a.photos,
+            discrepancy: a.discrepancy ?? null, confirmCode: a.confirmCode,
+            confirmed: a.confirmed, at: new Date(a.at),
+          };
+          await tx.equipmentAct.upsert({ where: { id: a.id }, create: { id: a.id, tenantId, ...data }, update: data });
+          await tx.equipmentActItem.deleteMany({ where: { actId: a.id } });
+          for (const c of a.completeness) {
+            await tx.equipmentActItem.create({ data: { id: uuidv7(), actId: a.id, item: c.item, ok: c.ok } });
+          }
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   // ---------- M-36 Сумка ----------

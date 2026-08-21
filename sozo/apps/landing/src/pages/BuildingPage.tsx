@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
+import { useT } from '../i18n';
 import { fetchBuilding, submitDemand, type PublicBuilding } from '../api';
 
 /**
@@ -16,6 +17,7 @@ import { fetchBuilding, submitDemand, type PublicBuilding } from '../api';
  */
 
 export default function BuildingPage() {
+  const t = useT();
   const { code } = useParams<{ code: string }>();
   const [data, setData] = useState<PublicBuilding | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,12 +28,12 @@ export default function BuildingPage() {
   useEffect(() => {
     // Страница неподключённого объекта не должна попадать в поиск:
     // иначе мы засорим выдачу пустыми карточками чужих домов
-    document.title = 'Дом — SOZO';
+    document.title = t('building.metaTitle');
     fetchBuilding(code ?? '')
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [code]);
+  }, [code, t]);
 
   // Имя обработчика намеренно отличается от submitDemand из api: одноимённая
   // локальная функция перекрывала импорт и вызывала саму себя — форма уходила
@@ -44,7 +46,7 @@ export default function BuildingPage() {
     setSent(true);
   }
 
-  if (loading) return <section className="section"><div className="wrap"><p className="muted">Загружаем…</p></div></section>;
+  if (loading) return <section className="section"><div className="wrap"><p className="muted">{t('building.loading')}</p></div></section>;
 
   const connected = data?.connectionStatus === 'active';
 
@@ -55,7 +57,7 @@ export default function BuildingPage() {
           <div className="stack">
             {/* Первым экраном — звонок: пришедший по QR хочет вызвать мастера */}
             <a className="btn" href={DISPATCH_TEL_HREF} style={{ fontSize: 20, padding: '18px 28px' }}>
-              Вызвать мастера · {DISPATCH_TEL_DISPLAY}
+              {t('building.callMaster', { phone: DISPATCH_TEL_DISPLAY })}
             </a>
             {data && (
               <>
@@ -72,9 +74,13 @@ export default function BuildingPage() {
           {data.emergencyPhone && (
             <section className="section section-alt">
               <div className="wrap stack">
-                <h2 className="h3">Аварийная служба дома</h2>
+                <h2 className="h3">{t('building.emergencyTitle')}</h2>
                 <a className="btn btn-secondary" href={`tel:${data.emergencyPhone}`}>{data.emergencyPhone}</a>
-                {data.operatorName && <p className="small muted">Обслуживает {data.operatorName}</p>}
+                {data.operatorName && (
+                  <p className="small muted">
+                    {t('building.operator', { operator: data.operatorName })}
+                  </p>
+                )}
               </div>
             </section>
           )}
@@ -82,7 +88,7 @@ export default function BuildingPage() {
           {data.shutdowns.length > 0 && (
             <section className="section">
               <div className="wrap stack">
-                <h2 className="h3">Ближайшие отключения</h2>
+                <h2 className="h3">{t('building.shutdownsTitle')}</h2>
                 {data.shutdowns.map((s, i) => (
                   <article className="card stack-sm" key={i}>
                     <b>{s.resourceLabel}</b>
@@ -96,11 +102,9 @@ export default function BuildingPage() {
 
           <section className="section section-alt">
             <div className="wrap stack">
-              <h2 className="h3">В приложении удобнее</h2>
-              <p className="lead">
-                Заявка в два тапа, статус мастера, оповещения об отключениях и пропуск гостю.
-              </p>
-              <Link className="btn" to="/">Скачать приложение</Link>
+              <h2 className="h3">{t('building.appTitle')}</h2>
+              <p className="lead">{t('building.appLead')}</p>
+              <Link className="btn" to="/">{t('building.appCta')}</Link>
             </div>
           </section>
         </>
@@ -109,33 +113,29 @@ export default function BuildingPage() {
       {!connected && (
         <section className="section section-alt">
           <div className="wrap stack">
-            <h2 className="h3">Этот дом ещё не подключён</h2>
-            <p className="lead">
-              Жители подключённых домов подают заявки из приложения, заранее узнают об
-              отключениях и выписывают пропуска гостям. Оставьте адрес — мы покажем вашей
-              управляющей компании, сколько людей этого ждёт.
-            </p>
+            <h2 className="h3">{t('building.demandTitle')}</h2>
+            <p className="lead">{t('building.demandLead')}</p>
 
             {sent ? (
               <div className="card">
-                <b>Спасибо.</b>
-                <p className="muted">Мы посчитаем ваше обращение и свяжемся с управляющей компанией дома.</p>
+                <b>{t('building.demandSentTitle')}</b>
+                <p className="muted">{t('building.demandSentLead')}</p>
               </div>
             ) : (
               <form className="stack" onSubmit={onDemandSubmit}>
                 <div className="field">
-                  <label className="field-label" htmlFor="addr">Адрес дома</label>
+                  <label className="field-label" htmlFor="addr">{t('building.demandAddressLabel')}</label>
                   <input
                     id="addr"
                     className="input"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="улица, номер дома"
+                    placeholder={t('building.demandAddressPlaceholder')}
                     required
                   />
                 </div>
                 <div className="field">
-                  <label className="field-label" htmlFor="ph">Телефон, необязательно</label>
+                  <label className="field-label" htmlFor="ph">{t('building.demandPhoneLabel')}</label>
                   <input
                     id="ph"
                     className="input"
@@ -144,7 +144,7 @@ export default function BuildingPage() {
                     placeholder="+998"
                   />
                 </div>
-                <button className="btn" type="submit">Моего дома здесь нет</button>
+                <button className="btn" type="submit">{t('building.demandSubmit')}</button>
               </form>
             )}
           </div>

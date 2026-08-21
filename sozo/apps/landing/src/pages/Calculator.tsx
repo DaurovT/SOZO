@@ -10,14 +10,22 @@ import {
   Stepper,
   SubmitError,
 } from '../components/form';
-import { FALLBACK_OBJECT_TYPES } from '../lib/catalog';
-import { formatSla, formatSum, formatTiyin, plural } from '../lib/format';
+import { useLocale, useT, useTn } from '../i18n';
+import { FALLBACK_OBJECT_TYPES, objectTypeLabel } from '../lib/catalog';
+import { formatSum, formatTiyin } from '../lib/format';
 import { isPhoneValid, toE164 } from '../lib/phone';
+import { useSla } from '../lib/sla';
 import { useLeadSubmit } from '../lib/useLeadSubmit';
 import { useResource } from '../lib/useResource';
 
 /** Итог округляем вверх до 100 000 сум = 10 000 000 тийин. */
 const ROUND_STEP_TIYIN = 100_000 * 100;
+
+/** Запас, если бэкенд не прислал свой срок: 4 рабочих часа. */
+const SLA_FALLBACK_MINUTES = 240;
+
+/** Адрес справочника ставок — часть API, не текст: не переводится. */
+const RATES_API = '/v1/public/object-type-rates';
 
 function monthlyTiyin(rate: ObjectTypeRate, points: number): number {
   const raw = rate.ratePerM2Tiyin * rate.typicalAreaM2 * points;
@@ -25,6 +33,10 @@ function monthlyTiyin(rate: ObjectTypeRate, points: number): number {
 }
 
 export default function Calculator() {
+  const t = useT();
+  const tn = useTn();
+  const locale = useLocale();
+  const sla = useSla();
   const rates = useResource(fetchObjectTypeRates, []);
 
   const [points, setPoints] = useState(1);
@@ -69,50 +81,52 @@ export default function Calculator() {
   if (result) {
     return (
       <Done
-        title="Заявка на КП принята"
-        lead={`Свяжемся в течение ${formatSla(result.slaMinutes, '4 рабочих часов')}, чтобы согласовать аудит объектов и подготовить коммерческое предложение.`}
+        title={t('calculator.doneTitle')}
+        lead={t('calculator.doneLead', { sla: sla(result.slaMinutes, SLA_FALLBACK_MINUTES) })}
         ticket={result.ticket}
       >
         <div className="btn-row">
           <Link to="/business" className="btn btn-secondary">
-            Вернуться к описанию
+            {t('calculator.doneBack')}
           </Link>
         </div>
       </Done>
     );
   }
 
+  // Адрес API стоит внутри фразы: во фрагменте она целая, с подстановкой
+  // {api}, а здесь разрезается по ней, чтобы адрес остался в <code>.
+  const [sourceBefore, sourceAfter] = t('calculator.ratesSource').split('{api}');
+
   return (
     <section className="section-lg">
       <div className="wrap-narrow stack-lg">
         <div className="section-head">
-          <h1 className="h2">Калькулятор абонентки</h1>
-          <p className="lead">
-            Прикиньте ежемесячный бюджет на обслуживание сети. Расчёт ориентировочный.
-          </p>
+          <h1 className="h2">{t('calculator.title')}</h1>
+          <p className="lead">{t('calculator.lead')}</p>
         </div>
 
         <div className="card stack-lg">
           <Stepper
-            label="Число точек"
+            label={t('calculator.pointsLabel')}
             value={points}
             min={1}
             max={50}
             onChange={setPoints}
-            suffix={plural(points, 'точка', 'точки', 'точек')}
+            suffix={tn('calculator.points', points)}
           />
 
-          <Field id="objectType" label="Тип объекта">
+          <Field id="objectType" label={t('calculator.objectType')}>
             <select
               id="objectType"
               className="select"
               value={objectType}
               onChange={(e) => setObjectType(e.target.value)}
             >
-              <option value="">Выберите тип объекта</option>
-              {typeNames.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              <option value="">{t('calculator.objectTypePlaceholder')}</option>
+              {typeNames.map((type) => (
+                <option key={type} value={type}>
+                  {objectTypeLabel(type, t)}
                 </option>
               ))}
             </select>
@@ -122,50 +136,54 @@ export default function Calculator() {
         {total !== null && selected && (
           <div className="result stack">
             <div className="stack-sm">
-              <p className="muted">Ориентировочно</p>
-              <p className="result-value">{formatTiyin(total)}/мес</p>
+              <p className="muted">{t('calculator.approx')}</p>
+              <p className="result-value">
+                {formatTiyin(total, locale.tag, t('unit.sum'))}
+                {t('unit.perMonth')}
+              </p>
             </div>
             <dl className="result-rows">
               <div className="result-row">
-                <span>Ставка</span>
-                <span>{formatSum(selected.ratePerM2Tiyin / 100)} сум/м²</span>
+                <span>{t('calculator.rateRow')}</span>
+                <span>
+                  {t('calculator.rateValue', {
+                    value: formatSum(selected.ratePerM2Tiyin / 100, locale.tag),
+                    unit: t('unit.sum'),
+                  })}
+                </span>
               </div>
               <div className="result-row">
-                <span>Типовая площадь</span>
-                <span>{selected.typicalAreaM2} м²</span>
+                <span>{t('calculator.areaRow')}</span>
+                <span>{t('calculator.areaValue', { value: selected.typicalAreaM2 })}</span>
               </div>
               <div className="result-row">
-                <span>Точек</span>
+                <span>{t('calculator.pointsRow')}</span>
                 <span>{points}</span>
               </div>
             </dl>
-            <p className="small muted">Точный расчёт — в КП после аудита объекта.</p>
+            <p className="small muted">{t('calculator.exactNote')}</p>
           </div>
         )}
 
-        {rates.status === 'error' && (
-          <p className="stub-note">
-            Справочник ставок сейчас недоступен, поэтому сумма не рассчитывается. Оставьте заявку —
-            посчитаем вручную и пришлём КП.
-          </p>
-        )}
+        {rates.status === 'error' && <p className="stub-note">{t('calculator.ratesUnavailable')}</p>}
 
         {rates.status === 'ready' && (
           <p className="small muted">
-            Ставки и типовые площади — из справочника ставок A-29 (публичный API
-            <code> /v1/public/object-type-rates</code>). Итог округляется вверх до 100 000 сум.
+            {sourceBefore}
+            <code>{RATES_API}</code>
+            {sourceAfter}
           </p>
         )}
 
         <div className="section-head">
-          <h2 className="h2">Получить коммерческое предложение</h2>
-          <p className="lead">Подготовим КП по вашим объектам после короткого аудита.</p>
+          <h2 className="h2">{t('calculator.formTitle')}</h2>
+          <p className="lead">{t('calculator.formLead')}</p>
         </div>
 
         <form className="stack-lg" onSubmit={onSubmit} noValidate>
           <Honeypot value={honeypot} onChange={setHoneypot} />
 
-          <Field id="company" label="Компания" required>
+          <Field id="company" label={t('calculator.company')} required>
             <input
               id="company"
               className="input"
@@ -177,7 +195,7 @@ export default function Calculator() {
             />
           </Field>
 
-          <Field id="name" label="Имя" required>
+          <Field id="name" label={t('calculator.name')} required>
             <input
               id="name"
               className="input"
@@ -191,7 +209,7 @@ export default function Calculator() {
 
           <PhoneField digits={phone} onChange={setPhone} />
 
-          <Field id="email" label="Email" hint="Необязательно. Пришлём КП на почту.">
+          <Field id="email" label={t('calculator.email')} hint={t('calculator.emailHint')}>
             <input
               id="email"
               className="input"
@@ -208,7 +226,7 @@ export default function Calculator() {
           <SubmitError message={error} />
 
           <button type="submit" className="btn btn-block" disabled={!canSubmit}>
-            {pending ? 'Отправляем…' : 'Получить КП'}
+            {pending ? t('calculator.submitting') : t('calculator.submit')}
           </button>
         </form>
       </div>

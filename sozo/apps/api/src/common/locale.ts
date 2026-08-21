@@ -1,14 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UZ, VALUES } from './locale-uz';
 import { EN, VALUES_EN } from './locale-en';
+import { AR, VALUES_AR } from './locale-ar';
+import { DE, VALUES_DE } from './locale-de';
+import { FR, VALUES_FR } from './locale-fr';
+import { KO, VALUES_KO } from './locale-ko';
+import { TG, VALUES_TG } from './locale-tg';
+import { TR, VALUES_TR } from './locale-tr';
+import { ZH, VALUES_ZH } from './locale-zh';
 
 /**
  * Язык ответа сервера.
  *
- * Интерфейс приложения мастера переведён на узбекский полностью, но половина
- * того, что он показывает, приходит с сервера: причины отказа, вопросы
- * экзамена, сообщения об ошибках, уведомления. Без этого узбекский мастер
- * видит узбекские кнопки и русские тексты между ними.
+ * Интерфейс приложений переведён целиком, но половина того, что они
+ * показывают, приходит с сервера: причины отказа, вопросы экзамена,
+ * сообщения об ошибках, уведомления. Без этого корейский клиент видит
+ * корейские кнопки и русские тексты между ними.
  *
  * Ключ словаря — сам русский текст, а не выдуманный идентификатор. Так:
  *  - в коде остаётся читаемая русская строка, и её видно при чтении логики;
@@ -21,7 +28,31 @@ import { EN, VALUES_EN } from './locale-en';
  * — дороже, чем хранить её в контексте запроса.
  */
 
-const storage = new AsyncLocalStorage<'ru' | 'uz' | 'en'>();
+export type Locale = 'ru' | 'uz' | 'en' | 'tr' | 'tg' | 'ar' | 'fr' | 'de' | 'zh' | 'ko';
+
+const storage = new AsyncLocalStorage<Locale>();
+
+/**
+ * Словари по языкам. Русского здесь нет намеренно: ключ словаря — сама
+ * русская строка, поэтому «перевод на русский» — это возврат ключа.
+ *
+ * Пара «текст + справочник» лежит вместе, потому что расходится только
+ * применением: `text` подставляется во фразы, `values` переводит слова,
+ * которые приложение отправит обратно (см. `trValue`).
+ */
+const DICTS: Record<Exclude<Locale, 'ru'>, { text: Record<string, string>; values: Record<string, string> }> = {
+  uz: { text: UZ, values: VALUES },
+  en: { text: EN, values: VALUES_EN },
+  tr: { text: TR, values: VALUES_TR },
+  tg: { text: TG, values: VALUES_TG },
+  ar: { text: AR, values: VALUES_AR },
+  fr: { text: FR, values: VALUES_FR },
+  de: { text: DE, values: VALUES_DE },
+  zh: { text: ZH, values: VALUES_ZH },
+  ko: { text: KO, values: VALUES_KO },
+};
+
+const CODES = Object.keys(DICTS) as Exclude<Locale, 'ru'>[];
 
 /**
  * Строки, которые ведёт админ, а не разработчик: названия позиций прайса.
@@ -38,15 +69,16 @@ export function registerCatalogNames(pairs: Iterable<[string, string]>): void {
   for (const [ru, uz] of pairs) if (ru && uz) catalog.set(ru, uz);
 }
 
-export type Locale = 'ru' | 'uz' | 'en';
-
-/** Разбор Accept-Language. Русский — язык по умолчанию и запасной вариант */
+/**
+ * Разбор Accept-Language. Русский — язык по умолчанию и запасной вариант.
+ *
+ * Сравниваем по началу строки, а не по точному совпадению: браузер шлёт
+ * «fr-CA», «zh-Hans-CN», «ar-AE» — регион нам безразличен, словарь один.
+ */
 export function localeOf(header: string | undefined): Locale {
   if (!header) return 'ru';
   const first = header.split(',')[0]?.trim().toLowerCase() ?? '';
-  if (first.startsWith('uz')) return 'uz';
-  if (first.startsWith('en')) return 'en';
-  return 'ru';
+  return CODES.find((c) => first.startsWith(c)) ?? 'ru';
 }
 
 export function runWithLocale<T>(locale: Locale, fn: () => T): T {
@@ -66,10 +98,10 @@ export function currentLocale(): Locale {
  */
 export function tr(ru: string, ...args: (string | number)[]): string {
   const locale = currentLocale();
-  const dict = locale === 'uz' ? UZ : locale === 'en' ? EN : null;
+  const dict = locale === 'ru' ? null : DICTS[locale].text;
   // Каталог позиций прайса ведёт админ, и узбекская колонка у него есть.
-  // Английской колонки в прайсе пока нет — на английском названия работ
-  // остаются русскими, и это видно, а не спрятано под пустой строкой
+  // Колонок под остальные языки в прайсе нет — там названия работ остаются
+  // русскими, и это видно, а не спрятано под пустой строкой
   const base = dict ? (dict[ru] ?? (locale === 'uz' ? catalog.get(ru) : undefined) ?? ru) : ru;
   return args.length === 0 ? base : base.replace(/\{(\d+)\}/g, (m, i) => String(args[Number(i)] ?? m));
 }
@@ -85,9 +117,8 @@ export function tr(ru: string, ...args: (string | number)[]): string {
  */
 export function trValue(v: string): string {
   const locale = currentLocale();
-  if (locale === 'uz') return VALUES[v] ?? v;
-  if (locale === 'en') return VALUES_EN[v] ?? v;
-  return v;
+  if (locale === 'ru') return v;
+  return DICTS[locale].values[v] ?? v;
 }
 
 /** Перевести массив объектов по одному текстовому полю: причины, документы, модули */

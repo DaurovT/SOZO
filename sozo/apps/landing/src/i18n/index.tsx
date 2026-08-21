@@ -50,10 +50,14 @@ export type Dict = Record<string, string>;
 /** Словари, кроме русского, грузятся отдельным файлом — по одному на язык.
  *
  * Русский подключён статически: он и язык большинства визитов, и запасной
- * вариант для пропущенного ключа. Остальные девять в главный бандл не
- * кладём — иначе каждый посетитель тянул бы девять чужих словарей, а
- * PRD-06 §5.2 требует LCP меньше 2.5 s на мобильном. */
-const loaders = import.meta.glob<{ default: Dict }>('./dict.*.ts');
+ * вариант для пропущенного ключа. Остальные девять лежат в `locales/` и в
+ * главный бандл не попадают — иначе каждый посетитель тянул бы девять чужих
+ * словарей, а PRD-06 §5.2 требует LCP меньше 2.5 s на мобильном.
+ *
+ * Отдельная папка, а не `./dict.*.ts` рядом: под такой шаблон подпадал и
+ * русский словарь, и сборщик предупреждал, что модуль импортирован и
+ * статически, и динамически — то есть в отдельный чанк он не уедет. */
+const loaders = import.meta.glob<{ default: Dict }>('./locales/*.ts');
 
 /** Код языка из адреса. `/fr/order` → `fr`, `/order` → null (русский) */
 export function localeFromPath(pathname: string): string | null {
@@ -95,7 +99,7 @@ export function pathForLocale(code: string, pathname = window.location.pathname)
 /** Загрузка словаря языка. Русский уже в бандле, остальные — отдельным чанком */
 export async function loadDict(code: string): Promise<Dict> {
   if (code === DEFAULT_LOCALE) return ruDict;
-  const load = loaders[`./dict.${code}.ts`];
+  const load = loaders[`./locales/${code}.ts`];
   if (!load) return ruDict;
   try {
     const mod = await load();

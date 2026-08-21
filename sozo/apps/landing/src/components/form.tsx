@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useT } from '../i18n';
 import { extractDigits, formatPhone } from '../lib/phone';
 
 /* ---------- Обёртка поля ---------- */
@@ -36,9 +37,10 @@ export function Field(props: {
  * если бот заполнил — форма показывает «успех», но лид не отправляется.
  */
 export function Honeypot(props: { value: string; onChange: (v: string) => void }) {
+  const t = useT();
   return (
     <div className="hp" aria-hidden="true">
-      <label htmlFor="company_website">Не заполняйте это поле</label>
+      <label htmlFor="company_website">{t('components.form.honeypot')}</label>
       <input
         id="company_website"
         name="company_website"
@@ -60,9 +62,16 @@ export function PhoneField(props: {
   onChange: (digits: string) => void;
   error?: string | null;
 }) {
+  const t = useT();
   const id = props.id ?? 'phone';
   return (
-    <Field id={id} label="Телефон" required error={props.error} hint="Например, +998 90 123-45-67">
+    <Field
+      id={id}
+      label={t('components.form.phoneLabel')}
+      required
+      error={props.error}
+      hint={t('components.form.phoneHint')}
+    >
       <input
         id={id}
         name="phone"
@@ -80,6 +89,7 @@ export function PhoneField(props: {
 /* ---------- Согласие ЗРУ-547 ---------- */
 
 export function ConsentCheckbox(props: { checked: boolean; onChange: (v: boolean) => void }) {
+  const t = useT();
   return (
     <label className="check check-box">
       <input
@@ -89,7 +99,7 @@ export function ConsentCheckbox(props: { checked: boolean; onChange: (v: boolean
         onChange={(e) => props.onChange(e.target.checked)}
       />
       <span>
-        Согласен на обработку персональных данных (ЗРУ-547)
+        {t('components.form.consent')}
         <span className="field-req"> *</span>
       </span>
     </label>
@@ -156,6 +166,7 @@ export function Stepper(props: {
   onChange: (value: number) => void;
   suffix?: string;
 }) {
+  const t = useT();
   const { label, value, min, max, onChange, suffix } = props;
   return (
     <div className="field">
@@ -168,7 +179,7 @@ export function Stepper(props: {
           className="stepper-btn"
           onClick={() => onChange(Math.max(min, value - 1))}
           disabled={value <= min}
-          aria-label="Уменьшить"
+          aria-label={t('components.form.stepperDecrease')}
         >
           −
         </button>
@@ -181,7 +192,7 @@ export function Stepper(props: {
           className="stepper-btn"
           onClick={() => onChange(Math.min(max, value + 1))}
           disabled={value >= max}
-          aria-label="Увеличить"
+          aria-label={t('components.form.stepperIncrease')}
         >
           +
         </button>
@@ -209,6 +220,7 @@ export function Done(props: {
   ticket?: string;
   children?: ReactNode;
 }) {
+  const t = useT();
   return (
     <section className="section-lg">
       <div className="wrap-narrow">
@@ -218,7 +230,7 @@ export function Done(props: {
           <p className="lead">{props.lead}</p>
           {props.ticket && (
             <div className="stack-sm">
-              <p className="small muted">Номер обращения</p>
+              <p className="small muted">{t('components.form.ticketLabel')}</p>
               <div className="ticket">{props.ticket}</div>
             </div>
           )}

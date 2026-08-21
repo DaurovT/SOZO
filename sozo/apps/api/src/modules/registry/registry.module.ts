@@ -200,7 +200,18 @@ export class RegistryService implements OnModuleInit {
             issuedAt: e.issuedToMasterId ? new Date() : null,
             nextMaintenanceAt: e.nextMaintenanceAt ? new Date(e.nextMaintenanceAt) : null,
           };
-          await tx.equipmentUnit.upsert({ where: { id: e.id }, create: { id: e.id, tenantId, ...data }, update: data });
+          // Ключ — инвентарный номер, а не идентификатор строки.
+          //
+          // Таблица одна на два модуля (DEV-19 §3.1), и у каждого свой набор
+          // в памяти со своими uuid. Upsert по id заводил бы вторую строку на
+          // тот же перфоратор и падал на уникальности инвентарного номера —
+          // что и происходило: 62 неудачные записи за прогон. Номер и есть
+          // то, чем эта вещь опознаётся в жизни.
+          await tx.equipmentUnit.upsert({
+            where: { tenantId_inventoryNo: { tenantId, inventoryNo: data.inventoryNo } },
+            create: { id: e.id, tenantId, ...data },
+            update: data,
+          });
         }
         for (const x of this.stores) {
           const data = {

@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
+import { useT } from '../i18n';
 
 /** Рамка телефона. Внутри — обычная вёрстка на тех же токенах, что и приложение. */
 export function Phone(props: { children: ReactNode; label?: string }) {
+  const t = useT();
   return (
-    <div className="phone" role="img" aria-label={props.label ?? 'Экран приложения SOZO'}>
+    <div className="phone" role="img" aria-label={props.label ?? t('components.phone.screenAria')}>
       <div className="phone-notch" aria-hidden="true" />
       <div className="phone-screen">{props.children}</div>
     </div>

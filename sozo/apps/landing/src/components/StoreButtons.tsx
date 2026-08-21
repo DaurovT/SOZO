@@ -1,3 +1,5 @@
+import { useT } from '../i18n';
+
 /**
  * Кнопки магазинов. Ссылок пока нет — приложение готовится к публикации,
  * поэтому кнопки намеренно неактивны (disabled), а не ведут в никуда.
@@ -20,24 +22,35 @@ function PlayGlyph() {
 }
 
 export default function StoreButtons() {
+  const t = useT();
   return (
     <div className="btn-row">
-      <button type="button" className="store-btn" disabled>
+      <button
+        type="button"
+        className="store-btn"
+        disabled
+        aria-label={t('components.store.appStoreAria')}
+      >
         <span className="store-mark" aria-hidden="true">
           <AppleGlyph />
         </span>
         <span className="store-copy">
           <strong>App Store</strong>
-          <small>скоро</small>
+          <small>{t('components.store.soon')}</small>
         </span>
       </button>
-      <button type="button" className="store-btn" disabled>
+      <button
+        type="button"
+        className="store-btn"
+        disabled
+        aria-label={t('components.store.googlePlayAria')}
+      >
         <span className="store-mark" aria-hidden="true">
           <PlayGlyph />
         </span>
         <span className="store-copy">
           <strong>Google Play</strong>
-          <small>скоро</small>
+          <small>{t('components.store.soon')}</small>
         </span>
       </button>
     </div>

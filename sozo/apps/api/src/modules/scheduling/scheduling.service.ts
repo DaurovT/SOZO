@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
 import { dbFailure } from '../../common/db-failure';
+import { queue } from '../../common/pg-mirror';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
 
@@ -186,12 +187,17 @@ export class SchedulingService implements OnModuleInit {
 
   private scheduleWrite(): void {
     if (!this.prisma.enabled || !this.loaded) return;
-    this.writing = this.writing
-      .then(() => this.writeAll())
-      .catch((e: unknown) => {
+    // Общая очередь на процесс: своя цепочка соблюдала порядок внутри
+    // модуля, но не между модулями — наряд успевал записаться раньше
+    // объекта, на который ссылается (см. WriteQueue)
+    this.writing = queue().add(async () => {
+      try {
+        await this.writeAll();
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error('[Scheduling] запись в базу не удалась:', dbFailure(e));
-      });
+      }
+    });
   }
 
   private async writeAll(): Promise<void> {

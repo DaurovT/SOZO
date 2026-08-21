@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { masterShare, roundTo100Soums, uuidv7, serviceFee, SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
 import { dbFailure } from '../../common/db-failure';
+import { queue } from '../../common/pg-mirror';
 import { StateStore } from '../../common/state-store';
 import { CrmService } from '../crm/crm.service';
 import { ParametersService } from '../platform/parameters.service';
@@ -230,12 +231,16 @@ export class BillingService implements OnModuleInit {
   private enqueue(work: (tx: Parameters<Parameters<PrismaService['withContext']>[0]>[0], tenantId: string) => Promise<void>): void {
     if (!this.prisma.enabled || !this.loaded) return;
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
-    this.writing = this.writing
-      .then(() => this.prisma.withContext((tx) => work(tx, tenantId)))
-      .catch((e: unknown) => {
+    // Общая очередь на процесс: проводка ссылается на заявку, а пишутся они
+    // разными модулями — своя цепочка порядок между ними не держит
+    this.writing = queue().add(async () => {
+      try {
+        await this.prisma.withContext((tx) => work(tx, tenantId));
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error('[Billing] запись в базу не удалась:', dbFailure(e));
-      });
+      }
+    });
   }
 
   /**

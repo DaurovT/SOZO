@@ -1061,13 +1061,13 @@ code {
 }
 
 .float-card--status {
-  left: -8px;
+  inset-inline-start: -8px;
   bottom: 12%;
   max-width: 250px;
 }
 
 .float-card--price {
-  right: -8px;
+  inset-inline-end: -8px;
   top: 10%;
   animation-delay: -3s;
 }
@@ -2277,7 +2277,7 @@ legend {
 .result-row span:last-child {
   color: var(--on-dark);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
 }
 
 /* Страница с формой: слева форма, справа — что будет дальше и телефон.
@@ -2342,7 +2342,7 @@ legend {
 }
 
 .faces img:first-child {
-  margin-left: 0;
+  margin-inline-start: 0;
 }
 
 @media (min-width: 900px) {
@@ -2510,7 +2510,7 @@ legend {
 .kv dd {
   margin: 0;
   font-weight: 700;
-  text-align: right;
+  text-align: end;
 }
 
 .done {
@@ -2562,7 +2562,7 @@ legend {
 }
 
 .stub-note {
-  border-left: 3px solid var(--accent);
+  border-inline-start: 3px solid var(--accent);
   background: var(--surface);
   padding: var(--s12) var(--s16);
   font-size: 14px;
@@ -2746,11 +2746,11 @@ legend {
   }
 
   .float-card--status {
-    left: -40px;
+    inset-inline-start: -40px;
   }
 
   .float-card--price {
-    right: -32px;
+    inset-inline-end: -32px;
   }
 }
 
