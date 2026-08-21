@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /**
  * Профиль клиента B2C: согласия, язык, сохранённые адреса, жалобы.
@@ -79,10 +81,15 @@ export interface ClientProfileRec {
 }
 
 @Injectable()
-export class ClientProfilesService {
+export class ClientProfilesService implements OnModuleInit {
   private readonly profiles = new Map<string, ClientProfileRec>();
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'clientProfiles',
       () => [...this.profiles.values()],
@@ -91,6 +98,144 @@ export class ClientProfilesService {
         for (const p of (d ?? []) as ClientProfileRec[]) this.profiles.set(p.phone, p);
       },
     );
+    this.mirror = new PgMirror(prisma, 'ClientProfiles', {
+      load: async (tx) => {
+        const rows = await tx.clientProfile.findMany({
+          include: { addresses: true, complaints: true, promoWallet: true, readNotifications: true },
+        });
+        if (!rows.length) return 0;
+        this.profiles.clear();
+        for (const r of rows) {
+          this.profiles.set(r.phone, {
+            phone: r.phone,
+            fullName: r.fullName,
+            locale: r.locale as ClientProfileRec['locale'],
+            consents: {
+              personalData: r.consentPersonalData,
+              marketing: r.consentMarketing,
+              at: r.consentAt?.toISOString(),
+            },
+            addresses: r.addresses.map((a) => ({
+              id: a.id,
+              label: a.label ?? undefined,
+              street: a.street,
+              apartment: a.apartment ?? undefined,
+              entrance: a.entrance ?? undefined,
+              floor: a.floor ?? undefined,
+              intercom: a.intercom ?? undefined,
+              hasLift: a.hasLift,
+              comment: a.comment ?? undefined,
+              lat: a.geoLat ?? undefined,
+              lng: a.geoLng ?? undefined,
+              primary: a.isPrimary,
+            })),
+            complaints: r.complaints.map((c) => ({
+              id: c.id,
+              type: c.type,
+              text: c.text,
+              orderId: c.orderId ?? undefined,
+              orderNumber: c.orderNumber ?? undefined,
+              photos: c.photoIds,
+              status: c.status as ClientComplaintRec['status'],
+              resolution: c.resolution ?? undefined,
+              createdAt: c.createdAt.toISOString(),
+              qualityId: c.qualityId ?? undefined,
+            })),
+            readNotifications: r.readNotifications.map((n) => n.notificationId),
+            favoriteMasterId: r.favoriteMasterId ?? undefined,
+            favoriteMasterName: r.favoriteMasterName ?? undefined,
+            preferredPaymentProvider: (r.preferredPaymentProvider ?? undefined) as ClientProfileRec['preferredPaymentProvider'],
+            promoWallet: r.promoWallet.map((w) => ({
+              code: w.code,
+              addedAt: w.addedAt.toISOString(),
+              usedAt: w.usedAt?.toISOString(),
+              orderNumber: w.orderNumber ?? undefined,
+            })),
+          });
+        }
+        return rows.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const p of this.profiles.values()) {
+          const data = {
+            fullName: p.fullName,
+            locale: p.locale,
+            consentPersonalData: p.consents.personalData,
+            consentMarketing: p.consents.marketing,
+            // CHECK в m25: согласие без даты в споре с регулятором стоит
+            // столько же, сколько его отсутствие
+            consentAt:
+              p.consents.personalData || p.consents.marketing
+                ? new Date(p.consents.at ?? new Date().toISOString())
+                : null,
+            favoriteMasterId: p.favoriteMasterId ?? null,
+            favoriteMasterName: p.favoriteMasterName ?? null,
+            preferredPaymentProvider: p.preferredPaymentProvider ?? null,
+          };
+          await tx.clientProfile.upsert({
+            where: { tenantId_phone: { tenantId, phone: p.phone } },
+            create: { tenantId, phone: p.phone, ...data },
+            update: data,
+          });
+
+          // Дочерние наборы переписываются целиком: адресов у человека
+          // единицы, а вычислять разницу здесь — лишний код там, где ошибка
+          // означает потерянный адрес
+          await tx.clientAddress.deleteMany({ where: { tenantId, clientPhone: p.phone } });
+          for (const a of p.addresses) {
+            await tx.clientAddress.create({
+              data: {
+                id: a.id, tenantId, clientPhone: p.phone, label: a.label ?? null, street: a.street,
+                apartment: a.apartment ?? null, entrance: a.entrance ?? null, floor: a.floor ?? null,
+                intercom: a.intercom ?? null, hasLift: Boolean(a.hasLift), comment: a.comment ?? null,
+                geoLat: a.lat ?? null, geoLng: a.lng ?? null, isPrimary: a.primary,
+              },
+            });
+          }
+          for (const c of p.complaints) {
+            const cd = {
+              type: c.type, text: c.text, orderId: c.orderId ?? null, orderNumber: c.orderNumber ?? null,
+              photoIds: c.photos, status: c.status, resolution: c.resolution ?? null,
+              qualityId: c.qualityId ?? null,
+            };
+            await tx.clientComplaint.upsert({
+              where: { id: c.id },
+              create: { id: c.id, tenantId, clientPhone: p.phone, createdAt: new Date(c.createdAt), ...cd },
+              update: cd,
+            });
+          }
+          for (const w of p.promoWallet ?? []) {
+            const wd = {
+              addedAt: new Date(w.addedAt),
+              usedAt: w.usedAt ? new Date(w.usedAt) : null,
+              orderNumber: w.orderNumber ?? null,
+            };
+            await tx.clientPromoWallet.upsert({
+              where: { tenantId_clientPhone_code: { tenantId, clientPhone: p.phone, code: w.code } },
+              create: { id: uuidv7(), tenantId, clientPhone: p.phone, code: w.code, ...wd },
+              update: wd,
+            });
+          }
+          for (const id of p.readNotifications ?? []) {
+            await tx.clientReadNotification.upsert({
+              where: { tenantId_clientPhone_notificationId: { tenantId, clientPhone: p.phone, notificationId: id } },
+              create: { tenantId, clientPhone: p.phone, notificationId: id },
+              update: {},
+            });
+          }
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   /** Все профили — для админского реестра; порядок не важен, ключ у всех разный */

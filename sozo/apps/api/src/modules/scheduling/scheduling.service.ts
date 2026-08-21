@@ -196,12 +196,17 @@ export class SchedulingService implements OnModuleInit {
 
   private async writeAll(): Promise<void> {
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    // Снимок до первого await: бронь ссылается на смену, и добавленная по
+    // ходу записи бронь упёрлась бы во внешний ключ (см. permit.repository)
+    const shifts = [...this.shifts];
+    const bookings = [...this.bookings];
+    const waitlist = [...this.waitlist];
     await this.prisma.withContext(async (tx) => {
       // Порядок обязателен: бронь ссылается на смену
       await tx.booking.deleteMany({});
       await tx.waitlistEntry.deleteMany({});
       await tx.shift.deleteMany({});
-      for (const x of this.shifts) {
+      for (const x of shifts) {
         await tx.shift.create({
           data: {
             id: x.id, tenantId, masterId: x.masterId, masterName: x.masterName,
@@ -210,7 +215,7 @@ export class SchedulingService implements OnModuleInit {
           },
         });
       }
-      for (const x of this.bookings) {
+      for (const x of bookings) {
         await tx.booking.create({
           data: {
             id: x.id, tenantId, shiftId: x.shiftId, masterId: x.masterId, orderId: x.orderId,
@@ -221,7 +226,7 @@ export class SchedulingService implements OnModuleInit {
           },
         });
       }
-      for (const x of this.waitlist) {
+      for (const x of waitlist) {
         await tx.waitlistEntry.create({
           data: {
             tenantId, orderId: x.orderId, orderNumber: x.orderNumber,

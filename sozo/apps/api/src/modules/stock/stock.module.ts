@@ -1,9 +1,11 @@
-import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Req, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { AuditService } from '../platform/audit.service';
 import { EventBus } from '../../common/event-bus';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 import type { JwtClaims } from '../../common/jwt';
 
 /**
@@ -35,14 +37,19 @@ export interface StockMovementRec {
 }
 
 @Injectable()
-export class StockService {
+export class StockService implements OnModuleInit {
   readonly items: StockItemRec[] = [
     { id: uuidv7(), category: 'uniform_merch', name: 'Футболка SOZO с логотипом', unit: 'шт', qtyOnHand: 40, minQty: 10, costTiyin: 8_000_000 },
     { id: uuidv7(), category: 'consumable', name: 'Перчатки рабочие', unit: 'пара', qtyOnHand: 100, minQty: 20, costTiyin: 1_200_000 },
   ];
   readonly movements: StockMovementRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'stock',
       () => ({ items: this.items, movements: this.movements }),
@@ -54,6 +61,79 @@ export class StockService {
         this.movements.push(...data.movements);
       },
     );
+    this.mirror = new PgMirror(prisma, 'Stock', {
+      load: async (tx) => {
+        const [items, movements] = await Promise.all([
+          tx.stockItem.findMany(),
+          tx.stockMovement.findMany({ orderBy: { createdAt: 'asc' } }),
+        ]);
+        if (items.length) {
+          this.items.length = 0;
+          this.items.push(
+            ...items.map((x) => ({
+              id: x.id,
+              category: x.category as StockItemRec['category'],
+              name: x.name,
+              unit: x.unit,
+              qtyOnHand: x.qtyOnHand,
+              minQty: x.minQty,
+              costTiyin: Number(x.costTiyin),
+            })),
+          );
+        }
+        if (movements.length) {
+          this.movements.length = 0;
+          this.movements.push(
+            ...movements.map((m) => ({
+              id: m.id,
+              stockItemId: m.stockItemId,
+              itemName: m.itemName,
+              type: m.type as StockMovementRec['type'],
+              qty: m.qty,
+              masterId: m.masterId ?? undefined,
+              masterName: m.masterName ?? undefined,
+              priceTiyin: m.priceTiyin === null ? undefined : Number(m.priceTiyin),
+              comment: m.comment ?? undefined,
+              createdAt: m.createdAt.toISOString(),
+            })),
+          );
+        }
+        return items.length + movements.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const x of this.items) {
+          const data = {
+            category: x.category, name: x.name, unit: x.unit,
+            qtyOnHand: x.qtyOnHand, minQty: x.minQty, costTiyin: BigInt(x.costTiyin),
+          };
+          await tx.stockItem.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+        // Движения append-only: остаток считается из них, и правка задним
+        // числом означала бы, что склад сходится только на бумаге
+        for (const m of this.movements) {
+          await tx.stockMovement.upsert({
+            where: { id: m.id },
+            create: {
+              id: m.id, tenantId, stockItemId: m.stockItemId, itemName: m.itemName,
+              type: m.type, qty: m.qty, masterId: m.masterId ?? null, masterName: m.masterName ?? null,
+              priceTiyin: m.priceTiyin === undefined ? null : BigInt(m.priceTiyin),
+              comment: m.comment ?? null, createdAt: new Date(m.createdAt),
+            },
+            update: {},
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   touch(): void {

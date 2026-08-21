@@ -658,12 +658,8 @@ code {
   color: var(--on-dark);
 }
 
-.header.is-over-dark:not(.is-scrolled) .lang {
+.header.is-over-dark:not(.is-scrolled) .lang-current {
   border-color: rgb(255 255 255 / 22%);
-}
-
-.header.is-over-dark:not(.is-scrolled) .lang button {
-  background: transparent;
   color: var(--on-dark-secondary);
 }
 
@@ -743,17 +739,20 @@ code {
   display: none;
 }
 
+/* Выбор языка. Языков десять — в строку они не помещаются, поэтому
+   пилюля показывает текущий, а список раскрывается вниз. */
 .lang {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
+  position: relative;
   flex: none;
 }
 
-.lang button {
+.lang-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   appearance: none;
-  border: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
   font-size: 12.5px;
@@ -762,17 +761,44 @@ code {
   cursor: pointer;
 }
 
-.lang button[aria-pressed='true'] {
-  background: var(--accent);
-  color: var(--on-accent);
+.lang-caret {
+  opacity: 0.6;
 }
 
-.lang-note {
-  background: var(--accent-soft);
+.lang-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  min-width: 168px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 14%);
+}
+
+.lang-menu a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius-button);
   color: var(--text);
-  font-size: 13px;
-  text-align: center;
-  padding: var(--s8) var(--s16);
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lang-menu a:hover {
+  background: var(--bg-soft);
+}
+
+.lang-menu a.is-current {
+  background: var(--accent-soft);
+  font-weight: 700;
 }
 
 /* Бургер и мобильное меню */
@@ -2733,4 +2759,28 @@ legend {
   .wrap {
     padding: 0 var(--s32);
   }
+}
+
+
+/* ---------- Письмо справа налево (арабская версия) ----------
+   Направление ставит провайдер локали на <html dir>. Логические свойства
+   (inline-start/end) разворачиваются сами; здесь — то, что задано жёстко
+   и на арабской странице смотрело бы не в ту сторону. */
+[dir='rtl'] .marquee-track {
+  animation-direction: reverse;
+}
+
+[dir='rtl'] .before-after,
+[dir='rtl'] .ba-handle {
+  /* Сравнение «до/после» читается как раньше: слева — «до». Переворачивать
+     его вслед за текстом нельзя, порядок задаёт не язык, а сама картинка. */
+  direction: ltr;
+}
+
+[dir='rtl'] .tel,
+[dir='rtl'] .header-tel,
+[dir='rtl'] input[type='tel'] {
+  /* Номер телефона всегда пишется слева направо, в любом языке */
+  direction: ltr;
+  text-align: start;
 }

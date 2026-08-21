@@ -2,6 +2,7 @@ import Operators from './pages/Operators';
 import BuildingPage from './pages/BuildingPage';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
+import { localeBasename } from './i18n';
 import Apply from './pages/Apply';
 import Business from './pages/Business';
 import Calculator from './pages/Calculator';
@@ -14,7 +15,11 @@ import Verify from './pages/Verify';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    // Языковой префикс снимает роутер: внутри приложения ссылки пишутся
+    // без него — `<Link to="/order">` на французской версии сам ведёт на
+    // /fr/order. Basename считается один раз при загрузке, поэтому смена
+    // языка — переход по адресу, а не смена состояния (см. src/i18n).
+    <BrowserRouter basename={localeBasename()}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} /> {/* L-01 */}

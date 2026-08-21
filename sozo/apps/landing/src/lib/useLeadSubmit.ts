@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { submitLead, type LeadInput, type LeadPayload, type LeadResponse } from '../api';
+import { apiErrorText, submitLead, type LeadInput, type LeadPayload, type LeadResponse } from '../api';
+import { useLocale, useT } from '../i18n';
 import { getUtm } from './utm';
 
 function fakeTicket(): string {
@@ -12,9 +13,12 @@ function fakeTicket(): string {
  * Общая отправка лида для всех трёх форм:
  *  - honeypot заполнен → тихий «успех» без обращения к сети;
  *  - повторный сабмит блокируется, пока летит запрос (guard + disabled на кнопке);
- *  - UTM-метки первого касания подмешиваются автоматически.
+ *  - UTM-метки первого касания подмешиваются автоматически;
+ *  - язык страницы уходит вместе с лидом: на нём перезвонят и пришлют SMS.
  */
 export function useLeadSubmit() {
+  const t = useT();
+  const locale = useLocale();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<LeadResponse | null>(null);
@@ -34,15 +38,19 @@ export function useLeadSubmit() {
     setError(null);
     try {
       const utm = getUtm();
-      const res = await submitLead({ ...payload, ...(utm ? { utm } : {}) } as LeadPayload);
+      const res = await submitLead({
+        ...payload,
+        lang: locale.code,
+        ...(utm ? { utm } : {}),
+      } as LeadPayload);
       setResult(res);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Не удалось отправить заявку. Попробуйте ещё раз.');
+      setError(apiErrorText(e, t));
     } finally {
       inFlight.current = false;
       setPending(false);
     }
-  }, []);
+  }, [locale.code, t]);
 
   return { pending, error, result, submit };
 }

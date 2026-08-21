@@ -121,8 +121,23 @@ export class InMemoryPermitRepository implements OnModuleInit {
 
   private async writeAll(): Promise<void> {
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    /**
+     * Снимок наборов до первого await.
+     *
+     * Перебор живой карты внутри асинхронной записи — гонка, которая
+     * проявляется редко и потому дорого: между записью нарядов и записью
+     * запросов доступа успевает прийти запрос, добавляющий и наряд, и
+     * ссылку на него. Наряд в цикл уже не попадает, а запрос попадает — и
+     * запись падает на внешнем ключе. В прогоне это выглядело как
+     * «иногда одна потерянная запись».
+     */
+    const permits = [...this.permits.values()];
+    const passes = [...this.passes.values()];
+    const shutdowns = [...this.shutdowns.values()];
+    const unitAccess = [...this.unitAccess.values()];
+    const ops = [...this.ops];
     await this.prisma.withContext(async (tx) => {
-      for (const p of this.permits.values()) {
+      for (const p of permits) {
         const data = {
           orderId: p.orderId,
           buildingId: p.buildingId,
@@ -158,7 +173,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
           update: data,
         });
       }
-      for (const x of this.passes.values()) {
+      for (const x of passes) {
         const data = {
           buildingId: x.buildingId,
           orderId: x.orderId,
@@ -176,7 +191,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
         };
         await tx.visitPass.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
       }
-      for (const x of this.shutdowns.values()) {
+      for (const x of shutdowns) {
         const data = {
           buildingId: x.buildingId,
           resourceType: x.resourceType,
@@ -197,7 +212,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
         };
         await tx.resourceShutdown.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
       }
-      for (const x of this.unitAccess.values()) {
+      for (const x of unitAccess) {
         const data = {
           buildingId: x.buildingId,
           unitId: x.unitId,
@@ -222,7 +237,7 @@ export class InMemoryPermitRepository implements OnModuleInit {
         };
         await tx.unitAccessRequest.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
       }
-      for (const [key, permitId] of this.ops) {
+      for (const [key, permitId] of ops) {
         await tx.permitSyncOp.upsert({
           where: { clientOpUuid: key },
           create: { clientOpUuid: key, tenantId, permitId },

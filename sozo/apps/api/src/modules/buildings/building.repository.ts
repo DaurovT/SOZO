@@ -266,8 +266,27 @@ export class InMemoryBuildingRepository implements OnModuleInit {
 
   private async writeAll(): Promise<void> {
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    // Снимок до первого await: перебор живой карты внутри асинхронной записи
+    // — гонка, при которой ссылающаяся строка попадает в цикл, а строка, на
+    // которую она ссылается, уже нет (разобрано в permit.repository)
+    const snap = {
+      buildings: [...this.buildings.values()],
+      units: [...this.units.values()],
+      zones: [...this.zones.values()],
+      staff: [...this.staff.values()],
+      observations: [...this.observations.values()],
+      equipment: [...this.equipment.values()],
+      defects: [...this.defects.values()],
+      opPrices: [...this.opPrices.values()],
+      claims: [...this.claims.values()],
+      demand: [...this.demand.values()],
+      residents: [...this.residents.values()],
+      routes: [...this.routes.values()],
+      walks: [...this.walks.values()],
+      maintenance: [...this.maintenance.values()],
+    };
     await this.prisma.withContext(async (tx) => {
-      for (const b of this.buildings.values()) {
+      for (const b of snap.buildings) {
         const data = {
           name: b.name,
           address: b.address,
@@ -287,7 +306,7 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         await tx.building.upsert({ where: { id: b.id }, create: { id: b.id, tenantId, ...data }, update: data });
       }
       await tx.operatorPriceItem.deleteMany({});
-      for (const x of this.opPrices.values()) {
+      for (const x of snap.opPrices) {
         await tx.operatorPriceItem.create({
           data: {
             id: x.id, tenantId, operatorOrgId: x.operatorOrgId, buildingId: x.buildingId,
@@ -297,7 +316,7 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         });
       }
       await tx.buildingClaim.deleteMany({});
-      for (const x of this.claims.values()) {
+      for (const x of snap.claims) {
         await tx.buildingClaim.create({
           data: {
             id: x.id, tenantId, buildingId: x.buildingId, operatorOrgId: x.operatorOrgId,
@@ -309,11 +328,11 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         });
       }
       await tx.demandSignal.deleteMany({});
-      for (const x of this.demand.values()) {
+      for (const x of snap.demand) {
         await tx.demandSignal.create({ data: { id: x.id, tenantId, address: x.address, phone: x.phone, createdAt: new Date(x.createdAt) } });
       }
       await tx.walkthroughRoute.deleteMany({});
-      for (const x of this.routes.values()) {
+      for (const x of snap.routes) {
         await tx.walkthroughRoute.create({
           data: {
             id: x.id, tenantId, buildingId: x.buildingId, name: x.name, intervalDays: x.intervalDays,
@@ -322,7 +341,7 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         });
       }
       await tx.walkthrough.deleteMany({});
-      for (const x of this.walks.values()) {
+      for (const x of snap.walks) {
         await tx.walkthrough.create({
           data: {
             id: x.id, tenantId, buildingId: x.buildingId, routeId: x.routeId, routeName: x.routeName,
@@ -333,7 +352,7 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         });
       }
       await tx.maintenanceSession.deleteMany({});
-      for (const x of this.maintenance.values()) {
+      for (const x of snap.maintenance) {
         await tx.maintenanceSession.create({
           data: {
             id: x.id, tenantId, buildingId: x.buildingId, equipmentId: x.equipmentId,

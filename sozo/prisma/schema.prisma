@@ -3228,3 +3228,43 @@ model TimerDone {
   @@id([tenantId, key])
   @@map("timer_done")
 }
+
+/**
+ * Запчасть в каталоге с тремя уровнями цены (A-24, ТЗ 8.4.3).
+ *
+ * Три цены колонками, а не тремя строками с меткой уровня: это один товар в
+ * трёх исполнениях, и вопрос «покажи вилку по смесителю» должен быть одной
+ * строкой, а не группировкой. Порядок уровней держит CHECK — «эконом» дороже
+ * «премиума» это не редкая цена, а опечатка.
+ */
+model SparePartCatalog {
+  id             String @id @db.Uuid
+  tenantId       String @map("tenant_id") @db.Uuid
+  name           String
+  unit           String @default("шт")
+  economTiyin    BigInt @map("econom_tiyin")
+  standardTiyin  BigInt @map("standard_tiyin")
+  premiumTiyin   BigInt @map("premium_tiyin")
+
+  @@unique([tenantId, name])
+  @@map("spare_part_catalog")
+}
+
+/**
+ * Зона обслуживания (A-29, ТЗ 17.4).
+ *
+ * Город отдельной колонкой с первого дня: районы с одинаковыми названиями
+ * есть в разных городах, и «Чиланзар» без города — это адрес, по которому
+ * никто не приедет.
+ */
+model ServiceZone {
+  id       String  @id @db.Uuid
+  tenantId String  @map("tenant_id") @db.Uuid
+  city     String
+  name     String
+  active   Boolean @default(true)
+
+  @@unique([tenantId, city, name])
+  @@index([tenantId, active])
+  @@map("service_zone")
+}

@@ -10,60 +10,68 @@
  * Оценки из системы можно будет вывести, когда они появятся (фаза 2).
  */
 
+/**
+ * Имя, специальность и район — подписи, и потому лежат ключами словаря, а не
+ * строками. Имя тоже: «Ильхом» на французской странице пишется «Ilhom», а на
+ * корейской — «일홈». Кириллица посреди корейской витрины читается как сбой.
+ */
 export type Master = {
   id: string;
-  name: string;
-  role: string;
+  /** Ключ словаря: masters.<id>.name */
+  nameKey: string;
+  /** Ключ словаря: masters.<id>.role */
+  roleKey: string;
   photo: string;
   years: number;
+  /** Русское название района — подпись берётся через `zoneLabel` */
   zone: string;
 };
 
 export const MASTERS: Master[] = [
   {
     id: 'ilhom',
-    name: 'Ильхом',
-    role: 'Сантехник',
+    nameKey: 'masters.ilhom.name',
+    roleKey: 'masters.ilhom.role',
     photo: '/photos/masters/ilhom.webp',
     years: 12,
     zone: 'Юнусабад',
   },
   {
     id: 'bekzod',
-    name: 'Бекзод',
-    role: 'Электрик',
+    nameKey: 'masters.bekzod.name',
+    roleKey: 'masters.bekzod.role',
     photo: '/photos/masters/bekzod.webp',
     years: 9,
     zone: 'Мирабад',
   },
   {
     id: 'rustam',
-    name: 'Рустам',
-    role: 'Кондиционеры',
+    nameKey: 'masters.rustam.name',
+    roleKey: 'masters.rustam.role',
     photo: '/photos/masters/rustam.webp',
     years: 7,
     zone: 'Чиланзар',
   },
   {
     id: 'otabek',
-    name: 'Отабек',
-    role: 'Муж на час',
+    nameKey: 'masters.otabek.name',
+    roleKey: 'masters.otabek.role',
     photo: '/photos/masters/otabek.webp',
     years: 6,
     zone: 'Сергели',
   },
   {
     id: 'sardor',
-    name: 'Сардор',
-    role: 'Слаботочка',
+    nameKey: 'masters.sardor.name',
+    roleKey: 'masters.sardor.role',
     photo: '/photos/masters/sardor.webp',
     years: 4,
     zone: 'Яккасарай',
   },
   {
     id: 'shuhrat',
-    name: 'Шухрат',
-    role: 'Отделка и мебель',
+    nameKey: 'masters.shuhrat.name',
+    roleKey: 'masters.shuhrat.role',
     photo: '/photos/masters/shuhrat.webp',
     years: 18,
     zone: 'Мирзо-Улугбек',

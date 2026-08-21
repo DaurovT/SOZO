@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { COMPANY, COMPANY_YEAR, DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
+import { useHreflang, useT } from '../i18n';
 import { useReveal } from '../lib/reveal';
 import { captureUtm } from '../lib/utm';
+import { LanguageSwitcher } from './LanguageSwitcher';
 import { SozoLogo, SozoMark } from './Logo';
 
+/** Разделы шапки. Подпись — ключ словаря: она переводится, адрес нет. */
 const NAV = [
-  { to: '/', label: 'Частным', end: true },
-  { to: '/business', label: 'Бизнесу', end: false },
-  { to: '/operators', label: 'Домам', end: false },
-  { to: '/masters', label: 'Мастерам', end: false },
+  { to: '/', key: 'nav.private', end: true },
+  { to: '/business', key: 'nav.business', end: false },
+  { to: '/operators', key: 'nav.operators', end: false },
+  { to: '/masters', key: 'nav.masters', end: false },
 ];
 
 /** Страницы с тёмным героем — шапка на них стартует прозрачной. */
@@ -20,8 +23,7 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 function Header(props: { overDark: boolean }) {
-  // Переключатель RU/UZ — заглушка: полного перевода нет, показываем уведомление.
-  const [lang, setLang] = useState<'ru' | 'uz'>('ru');
+  const t = useT();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname } = useLocation();
@@ -52,17 +54,17 @@ function Header(props: { overDark: boolean }) {
       <header className={cls}>
         <div className="wrap">
           <div className="header-bar">
-            <Link to="/" className="logo" aria-label="SOZO — на главную">
+            <Link to="/" className="logo" aria-label={t('nav.home')}>
               <SozoMark size={32} />
               <SozoLogo height={20} />
             </Link>
 
             <div className="header-spacer" />
 
-            <nav className="header-nav" aria-label="Разделы">
+            <nav className="header-nav" aria-label={t('nav.sections')}>
               {NAV.map((item) => (
                 <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
-                  {item.label}
+                  {t(item.key)}
                 </NavLink>
               ))}
             </nav>
@@ -74,22 +76,15 @@ function Header(props: { overDark: boolean }) {
             </a>
 
             <Link to="/order" className="btn btn-sm btn-auto header-cta">
-              Вызвать мастера
+              {t('nav.callMaster')}
             </Link>
 
-            <div className="lang" role="group" aria-label="Язык">
-              <button type="button" aria-pressed={lang === 'ru'} onClick={() => setLang('ru')}>
-                RU
-              </button>
-              <button type="button" aria-pressed={lang === 'uz'} onClick={() => setLang('uz')}>
-                UZ
-              </button>
-            </div>
+            <LanguageSwitcher />
 
             <button
               type="button"
               className="burger"
-              aria-label="Меню"
+              aria-label={t('nav.menu')}
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen(true)}
             >
@@ -98,16 +93,10 @@ function Header(props: { overDark: boolean }) {
             </button>
           </div>
         </div>
-
-        {lang === 'uz' && (
-          <p className="lang-note" role="status">
-            UZ-версия готовится. Пока доступна русская версия сайта.
-          </p>
-        )}
       </header>
 
       {menuOpen && (
-        <div className="menu" role="dialog" aria-modal="true" aria-label="Меню">
+        <div className="menu" role="dialog" aria-modal="true" aria-label={t('nav.menu')}>
           <div className="menu-top">
             <Link to="/" className="logo" style={{ color: 'var(--on-dark)' }}>
               <SozoMark size={32} />
@@ -116,24 +105,24 @@ function Header(props: { overDark: boolean }) {
             <button
               type="button"
               className="menu-close"
-              aria-label="Закрыть"
+              aria-label={t('nav.close')}
               onClick={() => setMenuOpen(false)}
             >
               ×
             </button>
           </div>
 
-          <nav className="menu-links" aria-label="Разделы">
+          <nav className="menu-links" aria-label={t('nav.sections')}>
             {NAV.map((item) => (
               <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
-                {item.label}
+                {t(item.key)}
               </NavLink>
             ))}
           </nav>
 
           <div className="menu-foot">
             <Link to="/order" className="btn">
-              Вызвать мастера
+              {t('nav.callMaster')}
             </Link>
             <a href={DISPATCH_TEL_HREF} className="btn btn-ghost">
               {DISPATCH_TEL_DISPLAY}
@@ -146,6 +135,7 @@ function Header(props: { overDark: boolean }) {
 }
 
 function Footer() {
+  const t = useT();
   return (
     <footer className="footer">
       <div className="wrap">
@@ -156,8 +146,7 @@ function Footer() {
               <SozoLogo height={20} />
             </div>
             <p className="small" style={{ color: 'var(--on-dark-secondary)', maxWidth: '34ch' }}>
-              Технический сервис для дома и бизнеса в Ташкенте. Сантехника, электрика, кондиционеры,
-              мелкий ремонт.
+              {t('footer.about')}
             </p>
             <a
               href={DISPATCH_TEL_HREF}
@@ -165,45 +154,43 @@ function Footer() {
             >
               {DISPATCH_TEL_DISPLAY}
             </a>
-            <p className="tiny">Аварийные заявки принимаем круглосуточно.</p>
+            <p className="tiny">{t('footer.emergency')}</p>
           </div>
 
           <div>
-            <p className="footer-col-title">Частным</p>
-            <nav className="footer-links" aria-label="Частным клиентам">
-              <Link to="/">Как это работает</Link>
-              <Link to="/order">Вызвать мастера</Link>
-              <Link to="/#services">Что чиним</Link>
-              <Link to="/#app">Приложение</Link>
+            <p className="footer-col-title">{t('footer.privateTitle')}</p>
+            <nav className="footer-links" aria-label={t('footer.privateAria')}>
+              <Link to="/">{t('footer.howItWorks')}</Link>
+              <Link to="/order">{t('nav.callMaster')}</Link>
+              <Link to="/#services">{t('footer.whatWeFix')}</Link>
+              <Link to="/#app">{t('footer.app')}</Link>
             </nav>
           </div>
 
           <div>
-            <p className="footer-col-title">Бизнесу и мастерам</p>
-            <nav className="footer-links" aria-label="Бизнесу и мастерам">
-              <Link to="/business">Обслуживание точек</Link>
-              <Link to="/operators">Управляющим компаниям</Link>
-              <Link to="/calculator">Рассчитать абонентку</Link>
-              <Link to="/masters">Работа мастером</Link>
-              <Link to="/apply">Анкета мастера</Link>
+            <p className="footer-col-title">{t('footer.businessTitle')}</p>
+            <nav className="footer-links" aria-label={t('footer.businessAria')}>
+              <Link to="/business">{t('footer.sitesService')}</Link>
+              <Link to="/operators">{t('footer.managingCompanies')}</Link>
+              <Link to="/calculator">{t('footer.calcSubscription')}</Link>
+              <Link to="/masters">{t('footer.masterWork')}</Link>
+              <Link to="/apply">{t('footer.masterForm')}</Link>
             </nav>
           </div>
 
           <div>
-            <p className="footer-col-title">Документы</p>
-            <nav className="footer-links" aria-label="Служебные страницы">
-              <Link to="/legal#offer">Публичная оферта</Link>
-              <Link to="/legal#privacy">Обработка персональных данных</Link>
-              <Link to="/legal#contacts">Контакты</Link>
+            <p className="footer-col-title">{t('footer.docsTitle')}</p>
+            <nav className="footer-links" aria-label={t('footer.docsAria')}>
+              <Link to="/legal#offer">{t('footer.offer')}</Link>
+              <Link to="/legal#privacy">{t('footer.privacy')}</Link>
+              <Link to="/legal#contacts">{t('footer.contacts')}</Link>
             </nav>
           </div>
         </div>
 
         <div className="footer-bottom">
-          <p>
-            © {COMPANY_YEAR} {COMPANY}. Ташкент.
-          </p>
-          <p>Цены на сайте — ориентир, не оферта. Точную сумму называем до начала работ.</p>
+          <p>{t('footer.copyright', { year: COMPANY_YEAR, company: COMPANY })}</p>
+          <p>{t('footer.priceNote')}</p>
         </div>
       </div>
     </footer>
@@ -221,6 +208,9 @@ export default function Layout() {
   useEffect(() => {
     if (!hash) window.scrollTo(0, 0);
   }, [pathname, hash]);
+
+  // Ссылки на языковые версии этой же страницы — переписываются на переходе
+  useHreflang(pathname);
 
   // Появление блоков при скролле — пересобираем наблюдение на каждой странице.
   useReveal([pathname]);

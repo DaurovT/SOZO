@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Put, UseGuards, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /** registry: активы и справочники — A-13 оборудование, A-14 магазины, A-23 расходники, A-30 причины */
 
@@ -34,7 +36,7 @@ export interface ConsumableRec {
 }
 
 @Injectable()
-export class RegistryService {
+export class RegistryService implements OnModuleInit {
   readonly equipment: EquipmentRec[] = [
     { id: uuidv7(), inventoryNumber: 'EQ-0001', name: 'Перфоратор Bosch GBH 2-26', costTiyin: 250_000_000, status: 'in_stock' },
     { id: uuidv7(), inventoryNumber: 'EQ-0002', name: 'Течеискатель', costTiyin: 180_000_000, status: 'in_stock' },
@@ -111,7 +113,12 @@ export class RegistryService {
     },
   ];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'registry',
       () => ({ equipment: this.equipment, stores: this.stores, consumables: this.consumables, spareParts: this.spareParts, zones: this.zones }),
@@ -129,6 +136,111 @@ export class RegistryService {
         apply(this.zones, data.zones);
       },
     );
+    this.mirror = new PgMirror(prisma, 'Registry', {
+      load: async (tx) => {
+        const [equipment, stores, consumables, spares, zones] = await Promise.all([
+          tx.equipmentUnit.findMany(),
+          tx.partnerStore.findMany(),
+          tx.consumableCatalog.findMany(),
+          tx.sparePartCatalog.findMany(),
+          tx.serviceZone.findMany(),
+        ]);
+        const apply = <T>(target: T[], src: T[]) => {
+          if (!src.length) return;
+          target.length = 0;
+          target.push(...src);
+        };
+        apply(this.equipment, equipment.map((e) => ({
+          id: e.id,
+          inventoryNumber: e.inventoryNo,
+          name: e.name,
+          costTiyin: Number(e.costTiyin),
+          status: e.status as EquipmentRec['status'],
+          issuedToMasterId: e.holderMasterId ?? undefined,
+          issuedToMasterName: e.holderMasterName ?? undefined,
+          nextMaintenanceAt: e.nextMaintenanceAt?.toISOString(),
+        })));
+        apply(this.stores, stores.map((x) => ({
+          id: x.id,
+          name: x.name,
+          categories: x.categories,
+          creditLimitTiyin: Number(x.creditLimitTiyin),
+          payableTiyin: Number(x.payableTiyin),
+          status: x.status as PartnerStoreRec['status'],
+        })));
+        apply(this.consumables, consumables.map((x) => ({
+          id: x.id,
+          name: x.name,
+          unit: x.unit,
+          fixPriceTiyin: Number(x.fixPriceTiyin),
+          normPerOrder: x.normPerOrder ?? undefined,
+        })));
+        apply(this.spareParts, spares.map((x) => ({
+          id: x.id,
+          name: x.name,
+          unit: x.unit,
+          economTiyin: Number(x.economTiyin),
+          standardTiyin: Number(x.standardTiyin),
+          premiumTiyin: Number(x.premiumTiyin),
+        })));
+        apply(this.zones, zones.map((x) => ({ id: x.id, city: x.city, name: x.name, active: x.active })));
+        return equipment.length + stores.length + consumables.length + spares.length + zones.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const e of this.equipment) {
+          const data = {
+            inventoryNo: e.inventoryNumber,
+            name: e.name,
+            costTiyin: BigInt(e.costTiyin),
+            // Состояния сведены при проектировании: repair и maintenance —
+            // одно и то же (DEV-19 §3.1)
+            status: e.status === 'written_off' ? 'written_off' : e.status,
+            holderMasterId: e.issuedToMasterId ?? null,
+            holderMasterName: e.issuedToMasterName ?? null,
+            issuedAt: e.issuedToMasterId ? new Date() : null,
+            nextMaintenanceAt: e.nextMaintenanceAt ? new Date(e.nextMaintenanceAt) : null,
+          };
+          await tx.equipmentUnit.upsert({ where: { id: e.id }, create: { id: e.id, tenantId, ...data }, update: data });
+        }
+        for (const x of this.stores) {
+          const data = {
+            name: x.name,
+            categories: x.categories,
+            creditLimitTiyin: BigInt(x.creditLimitTiyin),
+            payableTiyin: BigInt(x.payableTiyin),
+            status: x.status,
+          };
+          await tx.partnerStore.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+        for (const x of this.consumables) {
+          const data = { name: x.name, unit: x.unit, fixPriceTiyin: BigInt(x.fixPriceTiyin), normPerOrder: x.normPerOrder ?? null };
+          await tx.consumableCatalog.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+        for (const x of this.spareParts) {
+          const data = {
+            name: x.name, unit: x.unit,
+            economTiyin: BigInt(x.economTiyin),
+            standardTiyin: BigInt(x.standardTiyin),
+            premiumTiyin: BigInt(x.premiumTiyin),
+          };
+          await tx.sparePartCatalog.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+        for (const x of this.zones) {
+          const data = { city: x.city, name: x.name, active: x.active };
+          await tx.serviceZone.upsert({ where: { id: x.id }, create: { id: x.id, tenantId, ...data }, update: data });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   touch(): void {

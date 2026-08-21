@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /**
  * Качество: жалобы (D-10, ТЗ 17.10) и споры (D-11, ТЗ 4.2).
@@ -71,11 +73,16 @@ export interface DisputeRec {
 const HOUR = 3_600_000;
 
 @Injectable()
-export class QualityService {
+export class QualityService implements OnModuleInit {
   readonly complaints: ComplaintRec[] = [];
   readonly disputes: DisputeRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'quality',
       () => ({ complaints: this.complaints, disputes: this.disputes }),
@@ -87,6 +94,127 @@ export class QualityService {
         this.disputes.push(...(data.disputes ?? []));
       },
     );
+    this.mirror = new PgMirror(prisma, 'Quality', {
+      load: async (tx) => {
+        const [complaints, disputes] = await Promise.all([
+          tx.qualityComplaint.findMany({ orderBy: { createdAt: 'asc' } }),
+          tx.dispute.findMany({ orderBy: { createdAt: 'asc' } }),
+        ]);
+        if (complaints.length) {
+          this.complaints.length = 0;
+          this.complaints.push(
+            ...complaints.map((c) => ({
+              id: c.id,
+              orderId: c.orderId ?? undefined,
+              orderNumber: c.orderNumber ?? undefined,
+              complainantPhone: c.complainantPhone,
+              complainantName: c.complainantName ?? undefined,
+              isOrgManager: c.isOrgManager,
+              type: c.type as ComplaintRec['type'],
+              text: c.text,
+              masterId: c.masterId ?? undefined,
+              masterName: c.masterName ?? undefined,
+              status: c.status as ComplaintRec['status'],
+              slaFirstResponseAt: c.slaFirstResponseAt.toISOString(),
+              slaResolutionAt: c.slaResolutionAt.toISOString(),
+              firstResponseAt: c.firstResponseAt?.toISOString(),
+              resolvedAt: c.resolvedAt?.toISOString(),
+              playbookCode: c.playbookCode ?? undefined,
+              resolution: c.resolution ?? undefined,
+              confirmed: c.confirmed ?? undefined,
+              createdAt: c.createdAt.toISOString(),
+            })),
+          );
+        }
+        if (disputes.length) {
+          this.disputes.length = 0;
+          this.disputes.push(
+            ...disputes.map((d) => ({
+              id: d.id,
+              orderId: d.orderId,
+              orderNumber: d.orderNumber,
+              openedByPhone: d.openedByPhone,
+              openedByRole: d.openedByRole as DisputeRec['openedByRole'],
+              reason: d.reason,
+              amountTiyin: Number(d.amountTiyin),
+              status: d.status as DisputeRec['status'],
+              resolution: (d.resolution ?? undefined) as DisputeRec['resolution'],
+              refundTiyin: d.refundTiyin === null ? undefined : Number(d.refundTiyin),
+              masterShareBlocked: d.masterShareBlocked,
+              handledByPhone: d.handledByPhone ?? undefined,
+              comment: d.comment ?? undefined,
+              escalationReason: d.escalationReason ?? undefined,
+              createdAt: d.createdAt.toISOString(),
+              resolvedAt: d.resolvedAt?.toISOString(),
+            })),
+          );
+        }
+        return complaints.length + disputes.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const c of this.complaints) {
+          const data = {
+            orderId: c.orderId ?? null,
+            orderNumber: c.orderNumber ?? null,
+            complainantPhone: c.complainantPhone,
+            complainantName: c.complainantName ?? null,
+            isOrgManager: c.isOrgManager,
+            type: c.type,
+            text: c.text,
+            masterId: c.masterId ?? null,
+            masterName: c.masterName ?? null,
+            status: c.status,
+            slaFirstResponseAt: new Date(c.slaFirstResponseAt),
+            slaResolutionAt: new Date(c.slaResolutionAt),
+            firstResponseAt: c.firstResponseAt ? new Date(c.firstResponseAt) : null,
+            resolvedAt: c.resolvedAt ? new Date(c.resolvedAt) : null,
+            playbookCode: c.playbookCode ?? null,
+            // Пустая резолюция — не резолюция: CHECK в m28 требует текст у
+            // закрытой жалобы
+            resolution: c.resolution?.trim() ? c.resolution : null,
+            confirmed: c.confirmed ?? null,
+          };
+          await tx.qualityComplaint.upsert({
+            where: { id: c.id },
+            create: { id: c.id, tenantId, createdAt: new Date(c.createdAt), ...data },
+            update: data,
+          });
+        }
+        for (const d of this.disputes) {
+          const data = {
+            orderId: d.orderId,
+            orderNumber: d.orderNumber,
+            openedByPhone: d.openedByPhone,
+            openedByRole: d.openedByRole,
+            reason: d.reason,
+            amountTiyin: BigInt(d.amountTiyin),
+            status: d.status,
+            resolution: d.resolution ?? null,
+            refundTiyin: d.refundTiyin === undefined ? null : BigInt(d.refundTiyin),
+            masterShareBlocked: d.masterShareBlocked,
+            handledByPhone: d.handledByPhone ?? null,
+            comment: d.comment ?? null,
+            escalationReason: d.escalationReason ?? null,
+            resolvedAt: d.resolvedAt ? new Date(d.resolvedAt) : null,
+          };
+          await tx.dispute.upsert({
+            where: { id: d.id },
+            create: { id: d.id, tenantId, createdAt: new Date(d.createdAt), ...data },
+            update: data,
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   // ---------- Жалобы ----------

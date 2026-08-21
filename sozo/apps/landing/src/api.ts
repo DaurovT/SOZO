@@ -18,12 +18,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Язык страницы уезжает в заголовке: половина того, что видит посетитель,
+ * приходит отсюда — названия позиций прайса, тексты ошибок. Без заголовка
+ * французская страница показала бы французские кнопки и русские ошибки
+ * между ними. Читаем его из адреса, а не из контекста React: сюда, в
+ * обычные функции, контекст не дотягивается, а язык всё равно задан URL-ом.
+ */
+function acceptLanguage(): string {
+  const first = window.location.pathname.split('/')[1] ?? '';
+  return /^[a-z]{2}$/.test(first) ? first : 'ru';
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Language': acceptLanguage(),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     throw new ApiError('NETWORK', 'Сервис временно недоступен. Попробуйте позже.');
@@ -37,6 +53,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return body as T;
+}
+
+/**
+ * Текст ошибки на языке страницы.
+ *
+ * Сначала свой словарь по коду: коды у нас конечны и заведены заранее, а
+ * перевод в них точнее серверного — на лендинге ошибка стоит рядом с формой
+ * и должна говорить, что делать. Незнакомый код показывает сообщение
+ * сервера: оно уже пришло на нужном языке (см. `Accept-Language`), а
+ * молчание в этом месте хуже чужой формулировки.
+ */
+export function apiErrorText(
+  e: unknown,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  if (!(e instanceof ApiError)) return t('error.unknown');
+  const key = `error.${e.code}`;
+  const translated = t(key);
+  return translated === key ? e.message : translated;
 }
 
 /* ---------- Цены ---------- */
@@ -96,6 +131,13 @@ interface LeadBase {
   /** ЗРУ-547 — без true бэкенд вернёт CONSENT_REQUIRED. */
   consent: true;
   utm?: Utm;
+  /**
+   * Язык, на котором заполнена форма (PRD-06 §5.3, F-16).
+   *
+   * Не косметика: на нём же диспетчер перезвонит и на нём уйдёт SMS. Человек,
+   * заполнивший корейскую форму, ждёт корейского сообщения, а не русского.
+   */
+  lang?: string;
 }
 
 export type LeadPayload =

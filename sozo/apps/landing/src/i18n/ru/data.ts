@@ -1,0 +1,94 @@
+/**
+ * Справочники и общие подписи: категории прайса, районы, навыки, витрина
+ * мастеров, единицы, ошибки сети.
+ *
+ * Отдельно от страниц, потому что встречаются больше чем на одной: категория
+ * видна и на главной, и в форме заказа, и в калькуляторе.
+ */
+export const data = {
+  // Категории прайса. Значение, уезжающее в API, остаётся русским —
+  // переводится только подпись (см. lib/catalog.ts)
+  'catalog.visit': 'Выезд и диагностика',
+  'catalog.plumbing': 'Сантехника',
+  'catalog.electric': 'Электрика',
+  'catalog.demolition': 'Демонтаж, бурение, штробление',
+  'catalog.welding': 'Сварочные работы',
+  'catalog.climate': 'Кондиционеры и вентиляция',
+  'catalog.appliances': 'Бытовая техника (мелкий ремонт)',
+  'catalog.painting': 'Малярные и отделочные работы',
+  'catalog.floors': 'Полы и потолки',
+  'catalog.windows': 'Окна, двери, балконы',
+  'catalog.lowvoltage': 'Слаботочка, интернет, безопасность',
+  'catalog.handyman': 'Универсальные работы (муж на час)',
+  'catalog.service': 'Сервисные услуги',
+
+  // Грейд мастера на карточке проверки по QR (L-07)
+  'grade.bronze': 'Бронза',
+  'grade.silver': 'Серебро',
+  'grade.gold': 'Золото',
+  'grade.platinum': 'Платина',
+
+  // Типы объектов в калькуляторе абонентки
+  'objectType.office': 'Офис',
+  'objectType.shop': 'Аптека / магазин',
+  'objectType.cafe': 'Кафе / салон',
+  'objectType.hotel': 'Ресторан / гостиница',
+
+  // Районы Ташкента — имена собственные, на каждом языке своей графикой
+  'zone.chilanzar': 'Чиланзар',
+  'zone.yunusabad': 'Юнусабад',
+  'zone.mirabad': 'Мирабад',
+  'zone.yakkasaray': 'Яккасарай',
+  'zone.sergeli': 'Сергели',
+  'zone.mirzoUlugbek': 'Мирзо-Улугбек',
+
+  // Навыки кандидата в анкете мастера (L-06)
+  'skill.plumbing': 'Сантехника',
+  'skill.electric': 'Электрика',
+  'skill.climate': 'Кондиционеры',
+  'skill.furniture': 'Мебель',
+  'skill.finishing': 'Отделка',
+  'skill.lowvoltage': 'Слаботочка',
+
+  // Витрина мастеров. Имена — демо-состав, перед запуском маркетинг заменит
+  // их на реальных мастеров; ключи при этом останутся теми же
+  'masters.ilhom.name': 'Ильхом',
+  'masters.ilhom.role': 'Сантехник',
+  'masters.bekzod.name': 'Бекзод',
+  'masters.bekzod.role': 'Электрик',
+  'masters.rustam.name': 'Рустам',
+  'masters.rustam.role': 'Кондиционеры',
+  'masters.otabek.name': 'Отабек',
+  'masters.otabek.role': 'Муж на час',
+  'masters.sardor.name': 'Сардор',
+  'masters.sardor.role': 'Слаботочка',
+  'masters.shuhrat.name': 'Шухрат',
+  'masters.shuhrat.role': 'Отделка и мебель',
+
+  // Единицы
+  'unit.sum': 'сум',
+  'unit.perMonth': '/мес',
+  'unit.years': 'лет опыта',
+
+  // Ошибки. Ключ — код из тела ответа; незнакомый код показывает сообщение
+  // сервера, оно уже приходит на языке страницы (см. api.ts)
+  'error.NETWORK': 'Сервис временно недоступен. Попробуйте позже.',
+  'error.CONSENT_REQUIRED': 'Без согласия на обработку персональных данных заявку принять нельзя.',
+  'error.PHONE_INVALID': 'Проверьте номер: он должен быть в формате +998 XX XXX-XX-XX.',
+  'error.unknown': 'Не удалось отправить заявку. Попробуйте ещё раз.',
+
+  // Срок обратного звонка словами. Формы по числу — ключ на категорию
+  // Intl.PluralRules; `.other` обязателен, остальные — по грамматике языка
+  'sla.minutes.one': '{n} минуты',
+  'sla.minutes.few': '{n} минут',
+  'sla.minutes.many': '{n} минут',
+  'sla.minutes.other': '{n} минут',
+  'sla.hours.one': '{n} рабочего часа',
+  'sla.hours.few': '{n} рабочих часов',
+  'sla.hours.many': '{n} рабочих часов',
+  'sla.hours.other': '{n} рабочих часов',
+  'sla.days.one': '{n} рабочего дня',
+  'sla.days.few': '{n} рабочих дней',
+  'sla.days.many': '{n} рабочих дней',
+  'sla.days.other': '{n} рабочих дней',
+};

@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
+import { PrismaService } from '../../common/prisma.service';
+import { PgMirror } from '../../common/pg-mirror';
 
 /**
  * Операционные протоколы диспетчерской (PRD-03):
@@ -89,13 +91,18 @@ export interface ClientRequestRec {
 }
 
 @Injectable()
-export class DispatchOpsService {
+export class DispatchOpsService implements OnModuleInit {
   readonly replacements: ReplacementRec[] = [];
   readonly incidents: IncidentRec[] = [];
   readonly handovers: HandoverRec[] = [];
   readonly clientRequests: ClientRequestRec[] = [];
 
-  constructor(private readonly store: StateStore) {
+  private readonly mirror: PgMirror;
+
+  constructor(
+    private readonly store: StateStore,
+    prisma: PrismaService,
+  ) {
     this.store.register(
       'dispatchOps',
       () => ({
@@ -121,6 +128,166 @@ export class DispatchOpsService {
         this.clientRequests.push(...(data.clientRequests ?? []));
       },
     );
+    this.mirror = new PgMirror(prisma, 'DispatchOps', {
+      load: async (tx) => {
+        const [reps, incidents, handovers, requests] = await Promise.all([
+          tx.masterReplacement.findMany({ orderBy: { detectedAt: 'asc' } }),
+          tx.dispatchIncident.findMany({ include: { orders: true }, orderBy: { openedAt: 'asc' } }),
+          tx.shiftHandover.findMany({ include: { items: true }, orderBy: { startedAt: 'asc' } }),
+          tx.clientRequest.findMany({ orderBy: { createdAt: 'asc' } }),
+        ]);
+        const fill = <T>(target: T[], src: T[]) => {
+          if (!src.length) return;
+          target.length = 0;
+          target.push(...src);
+        };
+        fill(this.replacements, reps.map((r) => ({
+          id: r.id,
+          orderId: r.orderId,
+          orderNumber: r.orderNumber,
+          reason: r.reason as ReplacementRec['reason'],
+          detectedAt: r.detectedAt.toISOString(),
+          fromMasterId: r.fromMasterId ?? undefined,
+          fromMasterName: r.fromMasterName ?? undefined,
+          stage: r.stage as ReplacementRec['stage'],
+          broadcastStartedAt: r.broadcastStartedAt?.toISOString(),
+          broadcastSeconds: r.broadcastSeconds,
+          toMasterId: r.toMasterId ?? undefined,
+          toMasterName: r.toMasterName ?? undefined,
+          resolvedAt: r.resolvedAt?.toISOString(),
+          clientNotified: r.clientNotified,
+          sanction: r.sanction as ReplacementRec['sanction'],
+          note: r.note ?? undefined,
+        })));
+        fill(this.incidents, incidents.map((i) => ({
+          id: i.id,
+          title: i.title,
+          zone: i.zone,
+          category: i.category,
+          openedAt: i.openedAt.toISOString(),
+          closedAt: i.closedAt?.toISOString(),
+          orderIds: i.orders.map((o) => o.orderId),
+          note: i.note ?? undefined,
+          openedBy: i.openedBy,
+        })));
+        fill(this.handovers, handovers.map((h) => ({
+          id: h.id,
+          fromPhone: h.fromPhone,
+          toPhone: h.toPhone ?? undefined,
+          startedAt: h.startedAt.toISOString(),
+          acceptedAt: h.acceptedAt?.toISOString(),
+          items: h.items.map((it) => ({
+            id: it.id,
+            kind: it.kind,
+            title: it.title,
+            detail: it.detail,
+            accepted: it.accepted,
+            acceptedBy: it.acceptedBy ?? undefined,
+            acceptedAt: it.acceptedAt?.toISOString(),
+          })),
+        })));
+        fill(this.clientRequests, requests.map((r) => ({
+          id: r.id,
+          kind: r.kind as ClientRequestRec['kind'],
+          orderId: r.orderId,
+          orderNumber: r.orderNumber,
+          clientPhone: r.clientPhone,
+          clientName: r.clientName ?? undefined,
+          masterId: r.masterId ?? undefined,
+          masterName: r.masterName ?? undefined,
+          title: r.title,
+          detail: r.detail,
+          dueAt: r.dueAt?.toISOString(),
+          status: r.status as ClientRequestRec['status'],
+          takenByPhone: r.takenByPhone ?? undefined,
+          resolution: r.resolution ?? undefined,
+          createdAt: r.createdAt.toISOString(),
+          closedAt: r.closedAt?.toISOString(),
+        })));
+        return reps.length + incidents.length + handovers.length + requests.length;
+      },
+      save: async (tx, tenantId) => {
+        for (const r of this.replacements) {
+          const data = {
+            orderId: r.orderId, orderNumber: r.orderNumber, reason: r.reason, stage: r.stage,
+            fromMasterId: r.fromMasterId ?? null, fromMasterName: r.fromMasterName ?? null,
+            toMasterId: r.toMasterId ?? null, toMasterName: r.toMasterName ?? null,
+            detectedAt: new Date(r.detectedAt),
+            broadcastStartedAt: r.broadcastStartedAt ? new Date(r.broadcastStartedAt) : null,
+            broadcastSeconds: r.broadcastSeconds || 120,
+            resolvedAt: r.resolvedAt ? new Date(r.resolvedAt) : null,
+            clientNotified: r.clientNotified,
+            sanction: r.sanction ?? 'none',
+            note: r.note ?? null,
+          };
+          await tx.masterReplacement.upsert({ where: { id: r.id }, create: { id: r.id, tenantId, ...data }, update: data });
+        }
+        for (const i of this.incidents) {
+          const data = {
+            title: i.title, zone: i.zone, category: i.category,
+            openedAt: new Date(i.openedAt),
+            closedAt: i.closedAt ? new Date(i.closedAt) : null,
+            openedBy: i.openedBy, note: i.note ?? null,
+          };
+          await tx.dispatchIncident.upsert({ where: { id: i.id }, create: { id: i.id, tenantId, ...data }, update: data });
+          // Связь с заявками переписывается целиком: их единицы, а разницу
+          // считать здесь — лишний код там, где ошибка теряет заявку
+          await tx.dispatchIncidentOrder.deleteMany({ where: { incidentId: i.id } });
+          for (const orderId of i.orderIds) {
+            await tx.dispatchIncidentOrder.create({ data: { incidentId: i.id, orderId } });
+          }
+        }
+        for (const h of this.handovers) {
+          const data = {
+            fromPhone: h.fromPhone,
+            toPhone: h.toPhone ?? null,
+            startedAt: new Date(h.startedAt),
+            acceptedAt: h.acceptedAt ? new Date(h.acceptedAt) : null,
+          };
+          await tx.shiftHandover.upsert({ where: { id: h.id }, create: { id: h.id, tenantId, ...data }, update: data });
+          for (const it of h.items) {
+            const idata = {
+              kind: it.kind, title: it.title, detail: it.detail, accepted: it.accepted,
+              // CHECK в m28: принятый пункт знает, кем и когда принят
+              acceptedBy: it.accepted ? (it.acceptedBy ?? h.toPhone ?? h.fromPhone) : null,
+              acceptedAt: it.accepted ? new Date(it.acceptedAt ?? new Date().toISOString()) : null,
+            };
+            await tx.shiftHandoverItem.upsert({
+              where: { id: it.id },
+              create: { id: it.id, handoverId: h.id, ...idata },
+              update: idata,
+            });
+          }
+        }
+        for (const r of this.clientRequests) {
+          const data = {
+            kind: r.kind, orderId: r.orderId, orderNumber: r.orderNumber,
+            clientPhone: r.clientPhone, clientName: r.clientName ?? null,
+            masterId: r.masterId ?? null, masterName: r.masterName ?? null,
+            title: r.title, detail: r.detail,
+            dueAt: r.dueAt ? new Date(r.dueAt) : null,
+            status: r.status, takenByPhone: r.takenByPhone ?? null,
+            resolution: r.resolution ?? null,
+            closedAt: r.closedAt ? new Date(r.closedAt) : null,
+          };
+          await tx.clientRequest.upsert({
+            where: { id: r.id },
+            create: { id: r.id, tenantId, createdAt: new Date(r.createdAt), ...data },
+            update: data,
+          });
+        }
+      },
+    });
+    this.store.registerMirror(this.mirror);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.mirror.init();
+  }
+
+  /** Разовый перенос state.json (deploy/import-state) */
+  flushToDb(): Promise<void> {
+    return this.mirror.flush();
   }
 
   // ---------- Очередь обращений клиента ----------
