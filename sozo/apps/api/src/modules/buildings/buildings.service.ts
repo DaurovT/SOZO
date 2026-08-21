@@ -590,6 +590,28 @@ export class BuildingsService {
     return rec;
   }
 
+  /**
+   * Оператор, у которого этот человек в штате.
+   *
+   * Нужно контексту RLS: политики контура «Дом» умеют сужать доступ до
+   * оператора, но приложение никогда не говорило им, какой это оператор, —
+   * в `main.ts` стояло `null`, и сужение не действовало ни на кого.
+   *
+   * Возвращает оператора только когда он единственный. Человек в штате двух
+   * операторов сразу существует (управляющая компания и подрядчик), и
+   * выбрать за него один из двух значит закрыть ему половину работы молча.
+   * В таком случае сужение не применяется — изоляцию держит арендатор, а
+   * доступ ограничивает приложение по объекту и заявке.
+   */
+  operatorOfPhone(tenantId: string, phone: string): string | null {
+    const orgs = new Set<string>();
+    for (const b of this.repo.listBuildings(tenantId)) {
+      if (!b.operatorOrgId) continue;
+      if (this.repo.listStaff(tenantId, b.id).some((s) => s.userPhone === phone)) orgs.add(b.operatorOrgId);
+    }
+    return orgs.size === 1 ? [...orgs][0] : null;
+  }
+
   listStaff(tenantId: string, buildingId: string) {
     return this.repo.listStaff(tenantId, buildingId);
   }

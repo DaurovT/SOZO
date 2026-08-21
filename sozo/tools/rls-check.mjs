@@ -134,6 +134,55 @@ for (const [, tenant] of [['a', TENANT], ['b', OTHER]]) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// 5. Сужение до оператора.
+//
+// Политики контура «Дом» умеют ограничивать доступ оператором, но приложение
+// годами не заполняло его в контексте — и правило не действовало ни на кого.
+// Проверка через HTTP этого не покажет: приложение фильтрует само, и результат
+// будет верным независимо от того, работает ли RLS.
+// ---------------------------------------------------------------------------
+
+async function asOperator(operator, fn) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL app.tenant_id = '${TENANT}'`);
+    await tx.$executeRawUnsafe(`SET LOCAL app.role = 'resident'`);
+    await tx.$executeRawUnsafe(`SET LOCAL app.operator_org_id = '${operator}'`);
+    return fn(tx);
+  });
+}
+
+const b1 = uuid();
+const b2 = uuid();
+await asTenant(TENANT, async (tx) => {
+  for (const [id, op] of [[b1, 'rls-op-a'], [b2, 'rls-op-b']]) {
+    await tx.$executeRawUnsafe(
+      // connection_status намеренно не 'active': активный объект обязан
+      // иметь аварийный телефон (CHECK в m7), а проверке нужен не рабочий
+      // объект, а строка с оператором
+      `INSERT INTO building (id, tenant_id, name, address, connection_status, operator_org_id, created_at, updated_at)
+       VALUES ('${id}', '${TENANT}', 'проверка оператора', 'проверка', 'unmanaged', '${op}', now(), now())`,
+    );
+  }
+});
+
+const seenA = await asOperator('rls-op-a', (tx) =>
+  tx.$queryRawUnsafe(`SELECT id FROM building WHERE id IN ('${b1}', '${b2}')`),
+);
+check('оператор видит свой объект', seenA.some((r) => r.id === b1));
+check('чужой объект оператору не виден', !seenA.some((r) => r.id === b2), 'виден чужой объект');
+
+// Без оператора в контексте сужение не применяется — так и задумано (m34):
+// у жителя и мастера оператора нет, а доступ им ограничивает приложение
+const seenNone = await asTenant(TENANT, (tx) =>
+  tx.$queryRawUnsafe(`SELECT id FROM building WHERE id IN ('${b1}', '${b2}')`),
+);
+check('без оператора в контексте видны оба — сужение не применяется', seenNone.length === 2, String(seenNone.length));
+
+await asTenant(TENANT, async (tx) => {
+  await tx.$executeRawUnsafe(`DELETE FROM building WHERE name = 'проверка оператора'`);
+});
+
 // Проверка охвата: таблица без политики — это не «пока не дошли руки», а
 // дыра, которая не проявляет себя, пока арендатор один
 const uncovered = await prisma.$queryRawUnsafe(`

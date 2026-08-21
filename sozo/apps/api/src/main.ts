@@ -5,6 +5,7 @@ import { AppModule } from './app.module';
 import { localeOf, runWithLocale } from './common/locale';
 import { I18nExceptionFilter, I18nInterceptor } from './common/i18n.interceptor';
 import { DEFAULT_TENANT, runWithDbContext, type DbContext } from './common/db-context';
+import { BuildingsService } from './modules/buildings/buildings.service';
 
 /**
  * Роль запроса в терминах политик базы.
@@ -23,12 +24,12 @@ function dbRoleOf(roles: string[]): DbContext['role'] {
 }
 
 /** Состав токена без проверки подписи: её делает AuthGuard */
-function readClaims(header: string | undefined): { sub?: string; roles?: string[] } | null {
+function readClaims(header: string | undefined): { sub?: string; roles?: string[]; phone?: string } | null {
   const raw = header?.startsWith('Bearer ') ? header.slice(7) : null;
   const payload = raw?.split('.')[1];
   if (!payload) return null;
   try {
-    return JSON.parse(Buffer.from(payload, 'base64url').toString()) as { sub?: string; roles?: string[] };
+    return JSON.parse(Buffer.from(payload, 'base64url').toString()) as { sub?: string; roles?: string[]; phone?: string };
   } catch {
     return null;
   }
@@ -71,6 +72,9 @@ async function bootstrap() {
   // Язык ответа: приложение мастера присылает Accept-Language, и с ним из
   // сервера уходят узбекские причины отказа, вопросы экзамена и ошибки.
   // Админка и диспетчерская заголовок не шлют и получают русский.
+  // Модуль объектов нужен посреднику: по телефону из токена он говорит, у
+  // какого оператора человек в штате
+  const buildings = app.get(BuildingsService);
   app.use((req: { headers: Record<string, string | undefined> }, _res: unknown, next: () => void) => {
     // Контекст RLS ставится здесь же, одним проходом с языком: политики базы
     // читают его из переменных сессии, а собрать их можно только из токена.
@@ -78,11 +82,31 @@ async function bootstrap() {
     // нужен лишь состав контекста; неподписанный токен всё равно не пройдёт
     // дальше guard'а, а до базы запрос без guard'а не доходит
     const claims = readClaims(req.headers['authorization']);
+    /**
+     * Оператор в контексте — вторая половина изоляции.
+     *
+     * Политики контура «Дом» умеют сужать доступ до оператора, но здесь
+     * годами стояло `null`, и сужение не действовало ни на кого: изоляцию
+     * держал только арендатор. Обнаружилось это, когда RLS впервые
+     * заработала по-настоящему.
+     *
+     * Поиск идёт по памяти модуля объектов — это перебор десятков строк, а
+     * не запрос в базу: контекст ставится на каждом запросе, и поход в базу
+     * ради него удвоил бы их число.
+     *
+     * У платформенных ролей оператора нет и быть не должно: диспетчер и
+     * админ видят все объекты, и сужение сделало бы их слепыми.
+     */
+    const role = dbRoleOf(claims?.roles ?? []);
+    const operatorOrgId =
+      role.startsWith('platform_') || !claims?.phone
+        ? null
+        : buildings.operatorOfPhone(DEFAULT_TENANT, claims.phone);
     runWithDbContext(
       {
         tenantId: DEFAULT_TENANT,
-        role: dbRoleOf(claims?.roles ?? []),
-        operatorOrgId: null,
+        role,
+        operatorOrgId,
         userId: claims?.sub ?? null,
       },
       () => runWithLocale(localeOf(req.headers['accept-language']), next),
