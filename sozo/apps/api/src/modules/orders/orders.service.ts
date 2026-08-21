@@ -8,6 +8,7 @@ import { AccessService } from '../access/access.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { SlaService } from '../sla/sla.service';
 import { CrmService } from '../crm/crm.service';
+import { AffiliationService } from '../masters/affiliation.service';
 import { PromoService } from '../promo/promo.module';
 import { ParametersService } from '../platform/parameters.service';
 
@@ -76,6 +77,7 @@ export class OrdersService {
     private readonly promo: PromoService,
     private readonly params: ParametersService,
     private readonly crm: CrmService,
+    private readonly affiliation: AffiliationService,
   ) {}
 
   /**
@@ -467,12 +469,29 @@ export class OrdersService {
     // Общее имущество никогда не уходит мастерам платформы (ТЗ §19.3 п.5).
     // Правило абсолютное: ни по просрочке, ни при деградации объекта, ни в аварии.
     if (req.action === 'assign' && order.orderScope === 'common_area' && order.buildingId) {
-      throw new ConflictException({
-        code: 'CommonAreaIsOperatorOnly',
-        message:
-          'Работы по общему имуществу выполняет только служба эксплуатирующей организации. ' +
-          'Если у неё нет компетенции, она размещает заказ у платформы отдельной B2B-заявкой',
-      });
+      /**
+       * Раньше здесь стоял запрет на любое назначение, и он был грубее
+       * правила: работы по общему имуществу выполняет служба оператора, а
+       * запрет закрывал и её тоже — заявку нельзя было отдать никому, включая
+       * собственного слесаря управляющей компании.
+       *
+       * Так вышло потому, что выразить «свой мастер» было нечем: связи
+       * мастера с оператором в коде не существовало (появилась в U-05).
+       * Теперь правило звучит ровно так, как в ТЗ §19.3 п.5: свой — можно,
+       * мастеру платформы — никогда.
+       */
+      const operatorOrgId = this.buildings.get(tenantId, order.buildingId).operatorOrgId;
+      const own = operatorOrgId
+        ? this.affiliation.isActive(tenantId, extra?.masterId ?? '', operatorOrgId)
+        : false;
+      if (!own) {
+        throw new ConflictException({
+          code: 'CommonAreaIsOperatorOnly',
+          message:
+            'Работы по общему имуществу выполняет только служба эксплуатирующей организации. ' +
+            'Если у неё нет компетенции, она размещает заказ у платформы отдельной B2B-заявкой',
+        });
+      }
     }
 
     // Право первой руки (DEV-15 §7.5): пока окно не истекло и служба оператора

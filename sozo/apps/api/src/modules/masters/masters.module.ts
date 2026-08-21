@@ -3,6 +3,7 @@ import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
 import { IdentityService } from '../identity/identity.service';
 import { StateStore } from '../../common/state-store';
+import { AffiliationService } from './affiliation.service';
 import { dbFailure } from '../../common/db-failure';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
@@ -376,7 +377,7 @@ export class MastersController {
 
 @Module({
   controllers: [MastersController],
-  providers: [MastersService],
-  exports: [MastersService],
+  providers: [MastersService, AffiliationService],
+  exports: [MastersService, AffiliationService],
 })
 export class MastersModule {}

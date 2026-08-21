@@ -1,9 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../identity/auth.guard';
+import type { JwtClaims } from '../../common/jwt';
 import { BuildingsService } from '../buildings/buildings.service';
 import { AccessService } from '../access/access.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { OrdersService } from '../orders/orders.service';
+import { MastersService } from '../masters/masters.module';
+import { AffiliationService } from '../masters/affiliation.service';
+import { SchedulingService } from '../scheduling/scheduling.service';
 
 /**
  * Кабинет эксплуатирующей организации (PRD-07). Модуль агрегирует данные доменных
@@ -18,6 +22,9 @@ export class OperatorApiController {
     private readonly access: AccessService,
     private readonly subs: SubscriptionsService,
     private readonly orders: OrdersService,
+    private readonly masters: MastersService,
+    private readonly affiliation: AffiliationService,
+    private readonly scheduling: SchedulingService,
   ) {}
 
   /**
@@ -179,6 +186,189 @@ export class OperatorApiController {
         .map((b) => ({ id: b.id, name: b.name })),
       people,
     };
+  }
+
+  /**
+   * U-05: свои мастера — реестр, загрузка, ленты.
+   *
+   * Оператор видит только своих: чужой мастер для него не существует, и
+   * показать его значит дать возможность поставить на свою заявку человека,
+   * с которым у оператора нет договора.
+   *
+   * Загрузка берётся из планировщика на сегодня — это то, ради чего экран
+   * открывают: кого ещё можно нагрузить, а кто уже не тянет.
+   */
+  @Get(':orgId/masters')
+  operatorMasters(@Param('orgId') orgId: string, @Query('date') date?: string) {
+    const day = date ?? new Date().toISOString().slice(0, 10);
+    const affiliations = this.affiliation.listByOrg('t0', orgId);
+    const all = this.masters.list();
+    const rows = affiliations.map((a) => {
+      const m = all.find((x) => x.id === a.masterId);
+      const lane = this.scheduling.lane(a.masterId, day);
+      return {
+        masterId: a.masterId,
+        fullName: m?.fullName ?? 'мастер не найден',
+        phone: m?.phone ?? null,
+        // Статус в платформе и статус у оператора — разные вещи: мастер может
+        // быть активен у нас и приостановлен оператором, и наоборот
+        platformStatus: m?.status ?? null,
+        status: a.status,
+        suspendReason: a.suspendReason,
+        since: a.since,
+        until: a.until,
+        skillTags: a.skillTags.length ? a.skillTags : (m?.skillTags ?? []),
+        hourlyCostTiyin: a.hourlyCostTiyin,
+        objectIds: a.objectIds,
+        load: {
+          date: day,
+          hasShift: Boolean(lane.shift),
+          bookings: lane.bookings.length,
+          busyMin: lane.busyMin,
+          loadPercent: lane.loadPercent,
+          capReached: lane.capReached,
+        },
+      };
+    });
+    const active = rows.filter((r) => r.status === 'active');
+    return {
+      total: rows.length,
+      active: active.length,
+      // Без смены на сегодня мастер не получит ни одной заявки — это первое,
+      // что смотрят утром
+      withoutShift: active.filter((r) => !r.load.hasShift).length,
+      rows,
+    };
+  }
+
+  /**
+   * Завести штатного мастера.
+   *
+   * Двумя путями: по телефону существующего мастера платформы (он работает и
+   * там, и здесь — мультиаффилиация) или заведением нового. Второй случай —
+   * обычный для оператора: человек уже работает у него годами и в платформе
+   * его нет.
+   *
+   * Экзамен для штатного мастера оператора необязателен — решение владельца
+   * (DEV-15 §7.1.1). Поэтому карточка сразу активна, а не «кандидат»:
+   * иначе оператор не смог бы поставить на заявку собственного слесаря.
+   */
+  @Post(':orgId/masters')
+  hireMaster(
+    @Param('orgId') orgId: string,
+    @Body() body: {
+      masterId?: string;
+      fullName?: string;
+      phone?: string;
+      skillTags?: string[];
+      hourlyCostTiyin?: number;
+      since?: string;
+      until?: string | null;
+      objectIds?: string[];
+    },
+  ) {
+    let masterId = body.masterId;
+    if (!masterId) {
+      if (!body.phone?.match(/^\+998\d{9}$/)) {
+        throw new BadRequestException({ code: 'PHONE_INVALID', message: 'Телефон мастера: +998XXXXXXXXX' });
+      }
+      const existing = this.masters.list().find((m) => m.phone === body.phone);
+      if (existing) {
+        masterId = existing.id;
+      } else {
+        if (!body.fullName?.trim()) {
+          throw new BadRequestException({ code: 'NAME_REQUIRED', message: 'Имя мастера обязательно' });
+        }
+        const created = this.masters.create({
+          fullName: body.fullName.trim(),
+          phone: body.phone,
+          skillTags: body.skillTags ?? [],
+          taxMode: 'gph',
+          hasVehicle: false,
+        });
+        // Экзамен необязателен — карточка сразу рабочая (DEV-15 §7.1.1).
+        // Иначе оператор не смог бы поставить на заявку собственного слесаря,
+        // который работает у него годами
+        this.masters.update(created.id, { status: 'active' });
+        masterId = created.id;
+      }
+    }
+    const rec = this.affiliation.hire('t0', orgId, masterId, body);
+    const m = this.masters.list().find((x) => x.id === masterId);
+    return { ...rec, fullName: m?.fullName ?? null, phone: m?.phone ?? null };
+  }
+
+  @Post(':orgId/masters/:masterId/suspend')
+  suspendMaster(@Param('orgId') orgId: string, @Param('masterId') masterId: string, @Body() body: { reason?: string }) {
+    return this.affiliation.suspend('t0', orgId, masterId, body?.reason ?? '');
+  }
+
+  @Post(':orgId/masters/:masterId/resume')
+  resumeMaster(@Param('orgId') orgId: string, @Param('masterId') masterId: string) {
+    return this.affiliation.resume('t0', orgId, masterId);
+  }
+
+  @Post(':orgId/masters/:masterId/terminate')
+  terminateMaster(@Param('orgId') orgId: string, @Param('masterId') masterId: string, @Body() body: { until?: string }) {
+    return this.affiliation.terminate('t0', orgId, masterId, body?.until);
+  }
+
+  /**
+   * Назначить своего мастера на заявку.
+   *
+   * Три проверки, и каждая закрывает свой способ ошибиться: заявка должна
+   * быть на объекте оператора, мастер — числиться за ним действующим
+   * договором, а сама заявка — принадлежать оператору (общее имущество или
+   * взятая по праву первой руки). Иначе оператор смог бы поставить своего
+   * человека на чужую работу и на чужие деньги.
+   */
+  @Post(':orgId/orders/:orderId/assign')
+  async assignOwnMaster(
+    @Param('orgId') orgId: string,
+    @Param('orderId') orderId: string,
+    @Body() body: { masterId: string },
+    @Req() req: { auth: JwtClaims },
+  ) {
+    const order = await this.orders.get('t0', orderId);
+    if (!order.buildingId || !this.buildingIds(orgId).includes(order.buildingId)) {
+      throw new ForbiddenException({ code: 'NOT_YOUR_BUILDING', message: 'Заявка не на вашем объекте' });
+    }
+    if (order.orderScope !== 'common_area' && order.claimedByOperator !== orgId) {
+      throw new ForbiddenException({
+        code: 'NOT_YOUR_ORDER',
+        message: 'Частная заявка жителя достаётся вам только по праву первой руки',
+      });
+    }
+    if (!this.affiliation.isActive('t0', body?.masterId, orgId)) {
+      throw new ForbiddenException({
+        code: 'NOT_YOUR_MASTER',
+        message: 'Мастер за вами не числится или его договор приостановлен',
+      });
+    }
+    const master = this.masters.get(body.masterId);
+    // Первое назначение и переназначение — разные действия конвейера.
+    // Переназначение возможно только на статусах «Назначена»…«Доп-согласование»
+    // (ТЗ 4.5), и звать его для новой заявки значит получить отказ по стадии
+    // вместо назначения.
+    //
+    // Неоценённая заявка отклоняется отдельным сообщением: граф вернул бы
+    // «нарушение конвейера», а человеку нужно знать не это, а что сделать
+    if (order.status === 'new' && order.graphType !== 'emergency') {
+      throw new BadRequestException({
+        code: 'ORDER_NOT_ESTIMATED',
+        message: 'Заявка ещё не оценена — назначить мастера можно после оценки',
+      });
+    }
+    if (order.status === 'estimated' || order.status === 'approved' || order.status === 'new') {
+      return this.orders.transition(
+        't0',
+        orderId,
+        { action: 'assign', version: order.version },
+        req.auth.phone,
+        { masterId: master.id, masterName: master.fullName },
+      );
+    }
+    return this.orders.reassign('t0', orderId, master.id, master.fullName, 'назначен службой объекта', req.auth.phone);
   }
 
   /** U-01: дашборд объекта или портфеля — ответ на вопрос «что горит прямо сейчас» */

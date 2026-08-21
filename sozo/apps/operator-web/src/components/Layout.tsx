@@ -11,6 +11,7 @@ const NAV = [
   { to: '/observations', label: 'Замечания и обходы' },
   { to: '/shutdowns', label: 'Отключения' },
   { to: '/journal', label: 'Журнал доступа' },
+  { to: '/masters', label: 'Свои мастера' },
   { to: '/units', label: 'Помещения и жители' },
   { to: '/passport', label: 'Паспорт здания' },
   { to: '/tech-debt', label: 'Техдолг' },

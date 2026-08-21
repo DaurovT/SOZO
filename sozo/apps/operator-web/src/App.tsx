@@ -18,6 +18,7 @@ import { TechDebt } from './pages/TechDebt';
 import { Subscription } from './pages/Subscription';
 import { People } from './pages/People';
 import { Reports } from './pages/Reports';
+import { OwnMasters } from './pages/OwnMasters';
 import type { Dashboard as DashboardData } from './types';
 
 export function App() {
@@ -47,6 +48,7 @@ export function App() {
           <Route path="/subscription" element={<Subscription />} />
           <Route path="/people" element={<People />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/masters" element={<OwnMasters />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

@@ -1420,11 +1420,14 @@ model MasterAffiliation {
   skillTags       String[]  @map("skill_tags")
   hourlyCostTiyin BigInt    @default(0) @map("hourly_cost_tiyin") // у разных операторов разная
   objectIds       String[]  @map("object_ids") @db.Uuid
+  /** Причина приостановки. Обязательна при status=suspended — CHECK в m41 */
+  suspendReason   String?   @map("suspend_reason")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
   master MasterProfile @relation(fields: [masterId], references: [id])
 
-  @@unique([tenantId, masterId, orgId])
+  // Один действующий договор на пару «мастер — оператор»; прекращённых может
+  // быть сколько угодно — человек уходил и возвращался (частичный индекс в m41)
   @@index([tenantId, orgId, status])
   @@map("master_affiliation")
 }

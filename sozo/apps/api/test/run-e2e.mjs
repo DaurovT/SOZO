@@ -28,7 +28,7 @@ const ROOT = `http://localhost:${PORT}`;
 // вход с настоящим SMS, а общий сервер прогона работает на журнальном
 // отправителе. Держать оба режима в одном процессе нельзя — поставщик
 // выбирается один раз при старте.
-const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'platform', 'otp-sms'];
+const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'platform', 'operator-masters', 'otp-sms'];
 const suites = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 
 /** Свободен ли порт: занятый означает забытый сервер от прошлого прогона */
