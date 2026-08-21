@@ -23,6 +23,9 @@ const MENU: { section: string; links: { to: string; label: string }[] }[] = [
     links: [
       { to: '/kanban', label: 'Kanban-доска' },
       { to: '/orders/new', label: 'Новая заявка (телефон)' },
+      { to: '/call-queue', label: 'Позвонить' },
+      { to: '/photo-review', label: 'Проверка фото и чеков' },
+      { to: '/blocked', label: 'Заблокировано' },
       { to: '/archive', label: 'Архив' },
     ],
   },
@@ -31,6 +34,7 @@ const MENU: { section: string; links: { to: string; label: string }[] }[] = [
     links: [
       { to: '/lanes', label: 'Ленты мастеров' },
       { to: '/capacity', label: 'Ёмкость дня' },
+      { to: '/schedule', label: 'Расписание и отпуска' },
     ],
   },
   {
@@ -41,6 +45,8 @@ const MENU: { section: string; links: { to: string; label: string }[] }[] = [
       { to: '/client-requests', label: 'Обращения клиентов' },
       { to: '/incidents', label: 'Инциденты' },
       { to: '/permits', label: 'Наряды-допуски' },
+      { to: '/shutdowns', label: 'Отключения' },
+      { to: '/registry', label: 'Объекты и операторы' },
       { to: '/handover', label: 'Передача смены' },
       { to: '/kpi', label: 'KPI смены' },
     ],
@@ -50,6 +56,7 @@ const MENU: { section: string; links: { to: string; label: string }[] }[] = [
     links: [
       { to: '/complaints', label: 'Жалобы' },
       { to: '/disputes', label: 'Споры' },
+      { to: '/appeals', label: 'Апелляции мастеров' },
     ],
   },
 ];

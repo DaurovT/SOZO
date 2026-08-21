@@ -161,6 +161,17 @@ export interface StagePlanRec {
 
 @Injectable()
 export class MasterOpsService implements OnModuleInit {
+
+  /**
+   * Сохранить правку, сделанную снаружи.
+   *
+   * Диспетчерская меняет записи напрямую (решение по апелляции, ответ по
+   * отпуску), и без этого правка осталась бы в памяти: и файл, и база пишутся
+   * по сигналу, а не по факту изменения объекта.
+   */
+  touch(): void {
+    this.store.persist();
+  }
   readonly branches: BranchRec[] = [];
   readonly spareTiers: SpareTierRec[] = [];
   readonly addworks: AddworkRec[] = [];

@@ -32,6 +32,14 @@ psql_db -c "CREATE TABLE IF NOT EXISTS schema_migration (
   applied_at timestamptz NOT NULL DEFAULT now()
 )" >/dev/null
 
+# Учёт миграций — не данные арендатора, и приложение его не читает вовсе.
+# Но проверка охвата RLS считает таблицы, а не намерения: таблица без
+# политики выглядит одинаково и когда до неё не дошли руки, и когда она не
+# нужна. Включаем защиту без единой политики — роль приложения не видит
+# ничего, а миграции ходят суперпользователем, которого RLS не касается.
+psql_db -c "ALTER TABLE schema_migration ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE schema_migration FORCE ROW LEVEL SECURITY" >/dev/null
+
 APPLIED=$(psql_db -tAq -c "SELECT name FROM schema_migration" | tr -d '\r')
 
 # Порядок числовой: m9 идёт раньше m10, а не после, как при обычной сортировке
