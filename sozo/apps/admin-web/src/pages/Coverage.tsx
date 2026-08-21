@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 type CoverageStatus = 'works' | 'mock2' | 'mock3' | 'infra' | 'scaffold' | 'none';
 
 const STATUS: Record<CoverageStatus, { label: string; variant: string }> = {
-  works: { label: 'Работает (dev)', variant: 'success' },
+  works: { label: 'Работает', variant: 'success' },
   mock2: { label: 'Макет Ф2', variant: 'warning' },
   mock3: { label: 'Макет Ф3', variant: 'muted' },
   infra: { label: 'Ждёт инфраструктуру', variant: 'accent' },
@@ -34,8 +34,8 @@ const GROUPS: Group[] = [
       { block: 'Релизы прайса', scope: 'Excel-каталог, 136 позиций', status: 'works', link: '/price-releases', basis: 'ТЗ 6' },
       { block: 'Параметры системы', scope: '123 параметра с историей изменений', status: 'works', link: '/parameters', basis: 'ТЗ 16' },
       { block: 'Аудит', scope: 'Append-only журнал действий', status: 'works', link: '/audit', basis: 'ТЗ 17.6' },
-      { block: 'Персистентность данных', scope: 'файловое хранилище состояния; PostgreSQL+Prisma — следующий шаг', status: 'works', basis: 'DEV-02' },
-      { block: 'Планировщик таймеров', scope: '7 групп таймеров из 54 (PRD-05 §8)', status: 'works', link: '/scheduler', basis: 'PRD-05 §8' },
+      { block: 'Персистентность данных', scope: 'Все тридцать разделов состояния на PostgreSQL; прод переведён 21.08.2026, откат — строка в окружении', status: 'works', basis: 'DEV-02, DEV-19' },
+      { block: 'Планировщик таймеров', scope: '8 групп таймеров из 54 (PRD-05 §8); ручной прогон помечается в журнале', status: 'works', link: '/scheduler', basis: 'PRD-05 §8' },
       { block: 'Публичный API лендингов', scope: 'Цены «от» по категориям, ставки типов объектов, верификация бейджа, приём лидов с SLA и антиспамом', status: 'works', basis: 'PRD-05 §12.8, ТЗ 17.15' },
       { block: 'Авто-распределение', scope: 'Фильтры skill/зона/загрузка/оборудование/чёрный список, ранжирование по закреплению, грейду и рейтингу, авто-назначение с обоснованием', status: 'works', basis: 'ТЗ 7.3, PRD-05 §3' },
       { block: 'Планировщик слотов', scope: 'Сетка 30 мин, дорожный буфер 20%, план дня ≤80%, заморозка 2 ч, 8 приоритетов очереди, лист ожидания', status: 'works', basis: 'ТЗ 17.3, PRD-05 §2' },
@@ -81,7 +81,25 @@ const GROUPS: Group[] = [
       { block: 'Споры D-11', scope: 'Окно 72 ч после «Выполнена», блокировка доли мастера, эскалация «диспетчер не судит свои заявки», возврат через refund-API со сторно', status: 'works', link: '/disputes', basis: 'PRD-03 D-11, ТЗ 4.2' },
       { block: 'Инциденты D-13', scope: 'Детект кластеров по зонам за час, открытие инцидента, привязка заявок, закрытие', status: 'works', basis: 'PRD-03 D-13' },
       { block: 'Handover D-17', scope: 'Автосборка незакрытого, приём каждого пункта явной отметкой — без этого смена не сдана', status: 'works', basis: 'PRD-03 D-17' },
+      { block: 'Проверка фото и чеков D-07', scope: 'Очередь модерации: снимки с файлом отделены от отметок диспетчера, запчасти без чека выделены', status: 'works', basis: 'PRD-03 D-07' },
+      { block: 'Очередь «Позвонить» D-09', scope: 'Лиды и перезвоны со сроком и остатком времени; звонок не закрывается без итога', status: 'works', basis: 'PRD-03 D-09' },
+      { block: 'Расписание и отпуска D-14', scope: 'Смены дня, активные без смены, конфликты «смена на человеке в отпуске», решения по заявкам на отпуск с причиной отказа', status: 'works', basis: 'PRD-03 D-14' },
+      { block: 'Заблокировано D-16', scope: 'Заявки, стоящие из-за третьей стороны, с часами простоя и счётчиком «больше суток»', status: 'works', basis: 'PRD-03 D-16' },
+      { block: 'Апелляции мастеров D-20', scope: 'Реестр оспоренных санкций и оценок; решение без объяснения не принимается', status: 'works', basis: 'PRD-03 D-20, ТЗ 7.4' },
+      { block: 'Отключения D-22', scope: 'Календарь по всем объектам с горизонтом до 60 дней, счётчик непредупреждённых жителей', status: 'works', basis: 'PRD-03 D-22' },
+      { block: 'Объекты и операторы D-23', scope: 'Реестр подключённых домов, тариф оператора, доля просрочки согласований, пробелы готовности объекта', status: 'works', basis: 'PRD-03 D-23' },
       { block: 'KPI D-19', scope: 'Новая→Назначена, модерация, замены, инциденты, аварии (метрики здоровья сетки — фаза 2)', status: 'works', basis: 'PRD-03 D-19' },
+    ],
+  },
+  {
+    title: 'Контур «Дом»: кабинет оператора (PRD-07, DEV-15)',
+    rows: [
+      { block: 'Кабинет эксплуатирующей организации', scope: 'Все шестнадцать экранов U-01…U-16 на sozo.uz/operator: дашборд, помещения и жители, заявки по общему имуществу, право первой руки, наряды-допуски, обходы, отключения, паспорт дома, техдолг, журнал, финансы, тариф, отчёты, настройки', status: 'works', basis: 'PRD-07, DEV-15 §10.2' },
+      { block: 'Свои мастера U-05', scope: 'Принадлежность мастера оператору отдельной сущностью: у человека может быть два договора с разными ставками. Приложение «Мастер» не форкается', status: 'works', basis: 'DEV-15 §7.1' },
+      { block: 'Наряды-допуски W-06', scope: 'Согласование работ на общем имуществе; согласующему уходит SMS со ссылкой — пуша нет, обещать доставку нельзя', status: 'works', basis: 'DEV-15, PRD-07' },
+      { block: 'Отключения и зона влияния', scope: 'Пересечение окон на одном стояке отбивается самой базой, а не проверкой в коде; отменённое отключение стояк не держит', status: 'works', basis: 'DEV-15, DEV-19' },
+      { block: 'Экраны жителя и мастера', scope: 'C-51…C-54, C-56, C-57 в приложении «Клиент»; M-46 и M-47 в приложении «Мастер»', status: 'works', basis: 'PRD-01, PRD-02' },
+      { block: 'Голосования и опросы дома C-55', scope: 'Не начато — в PRD-01 помечено как Pro, фаза 2', status: 'mock2', basis: 'PRD-01 C-55' },
     ],
   },
   {
@@ -89,16 +107,16 @@ const GROUPS: Group[] = [
     rows: [
       { block: 'ЭДО', scope: 'didox.uz / faktura.uz, подписание СФ', status: 'mock2', link: '/mock/edo', basis: 'ТЗ 8' },
       { block: 'Банковская выписка', scope: 'Импорт MT940/Excel, авторазнесение FIFO', status: 'mock2', link: '/mock/bank-import', basis: 'ТЗ 8' },
-      { block: 'Дунинг-центр', scope: 'Этапы B2B и B2C по производственному календарю', status: 'mock2', link: '/mock/dunning', basis: 'ТЗ 8.9' },
+      { block: 'Дунинг-центр', scope: 'Этапы B2B и B2C по производственному календарю', status: 'works', link: '/billing/dunning', basis: 'ТЗ 8.9' },
       { block: 'Экспорт в 1С', scope: 'Проводки, СФ, ведомости', status: 'mock2', link: '/mock/integrations-1c', basis: 'ТЗ 8' },
-      { block: 'Рейтинговый движок', scope: 'Авто-пересчёт грейдов, окно 56 дней', status: 'mock2', link: '/mock/rating-engine', basis: 'ТЗ 7.4, PRD-05 §16' },
+      { block: 'Рейтинговый движок', scope: 'Пять компонент с расшифровкой, окно 56 дней, апелляции мастеров', status: 'works', link: '/rating-engine', basis: 'ТЗ 7.4, PRD-05 §16' },
       { block: 'Рефералка мастеров', scope: 'Бонус после 20 закрытых заявок приведённого', status: 'works', link: '/referrals', basis: 'ТЗ 18-п.11' },
       { block: 'Амортизация и ТО', scope: 'Линейная амортизация, график ТО', status: 'mock2', link: '/mock/depreciation', basis: 'ТЗ 17.9' },
       { block: 'Лицензиаты', scope: 'Газ и лифты через партнёров', status: 'mock2', link: '/mock/licensees', basis: 'ТЗ 17.8' },
-      { block: 'Коды закупки', scope: 'Закупка материалов в партнёрских магазинах', status: 'mock2', link: '/mock/purchase-codes', basis: 'ТЗ 8.4.2' },
-      { block: 'Техдолг точек', scope: 'Дефекты, пакетное утверждение', status: 'mock2', link: '/mock/techdebt', basis: 'ТЗ 10' },
+      { block: 'Коды закупки', scope: 'Закупка материалов в партнёрских магазинах', status: 'works', link: '/purchase-codes', basis: 'ТЗ 8.4.2' },
+      { block: 'Техдолг точек', scope: 'Дефекты, пакетное утверждение', status: 'works', link: '/techdebt', basis: 'ТЗ 10' },
       { block: 'UTM-аналитика', scope: 'Сквозная: от источника до выручки', status: 'mock2', link: '/mock/utm-analytics', basis: 'ТЗ 17.15' },
-      { block: 'Таймеры', scope: '54 таймера и эскалации', status: 'mock2', link: '/mock/timers', basis: 'PRD-05 §8' },
+      { block: 'Таймеры', scope: 'Журнал прогонов и эскалаций; сам движок — строкой выше, в ядре', status: 'works', link: '/scheduler', basis: 'PRD-05 §8' },
       { block: 'Матрица уведомлений', scope: 'Каналы, профили доставки, гигиена', status: 'mock2', link: '/mock/notifications', basis: 'PRD-05 §6' },
       { block: 'Кампании', scope: 'Сервисные касания, сезонные волны', status: 'mock2', link: '/mock/campaigns', basis: 'ТЗ 17.12' },
     ],
@@ -106,22 +124,22 @@ const GROUPS: Group[] = [
   {
     title: 'Инфраструктура',
     rows: [
-      { block: 'PostgreSQL + Prisma', scope: 'Схема 22 моделей готова', status: 'infra', basis: 'DEV-02' },
+      { block: 'PostgreSQL + Prisma', scope: '122 таблицы, изоляция арендаторов политиками на каждой, роль приложения без BYPASSRLS; миграции — deploy/migrate.sh с учётом применённого', status: 'works', basis: 'DEV-02, DEV-19' },
       { block: 'Планировщик BullMQ', scope: 'Движок таймеров и очередей — dev: setInterval; прод: BullMQ', status: 'works', link: '/scheduler', basis: 'PRD-05 §8' },
       { block: 'PDF-генератор', scope: 'Печатные документы: акт по заявке, отчёт по точке, журнал ТО, акт сверки, счёт-фактура (HTML→PDF; серверный PDF-рендер и S3 — фаза 2)', status: 'works', link: '/mock/documents', basis: 'PRD-05 §13' },
       { block: 'Платёжки Payme / Click', scope: 'Приём платежей + refund; нужны мерчант-договоры', status: 'infra', basis: 'DEV-05' },
       { block: 'SMS-шлюз Eskiz', scope: 'OTP и уведомления', status: 'infra', basis: 'PRD-05 §6' },
       { block: 'Геокодер Yandex / Google', scope: 'Сейчас заглушка', status: 'infra', basis: 'DEV-07' },
       { block: 'ОФД-фискализация', scope: 'Чеки по B2C-платежам', status: 'infra', basis: 'ТЗ 8' },
-      { block: 'Мониторинг Sentry', scope: 'Ошибки, метрики, алерты', status: 'infra', link: '/mock/monitoring', basis: 'PRD-05 §15' },
+      { block: 'Мониторинг Sentry', scope: 'Экран здоровья приложений работает; сам Sentry не подключён — пакета в зависимостях нет', status: 'infra', link: '/app-health', basis: 'PRD-05 §15' },
       { block: 'SaaS-тенанты', scope: 'Мультигородность, фича-флаги', status: 'mock3', link: '/mock/tenants', basis: 'ТЗ 17.13' },
     ],
   },
   {
     title: 'Мобильные приложения',
     rows: [
-      { block: 'Приложение «Клиент»', scope: 'Flutter, 50 экранов + веб-карточка заявки', status: 'scaffold', basis: 'PRD-01, DEV-08' },
-      { block: 'Приложение «Мастер»', scope: 'Flutter, 42 экрана, офлайн-first', status: 'scaffold', basis: 'PRD-02, DEV-09' },
+      { block: 'Приложение «Клиент»', scope: 'Flutter: 53 экрана PRD-01 + веб-карточка заявки, 8 наборов виджет-тестов. На устройстве не проверялось — сборок в сторах нет', status: 'works', basis: 'PRD-01, DEV-08' },
+      { block: 'Приложение «Мастер»', scope: 'Flutter: 43 экрана PRD-02, офлайн-first, 5 наборов виджет-тестов. На устройстве не проверялось — сборок в сторах нет', status: 'works', basis: 'PRD-02, DEV-09' },
     ],
   },
   {
@@ -137,7 +155,7 @@ export function CoveragePage() {
   const count = (s: CoverageStatus[]) => all.filter((r) => s.includes(r.status)).length;
 
   const tiles = [
-    { value: count(['works']), label: 'Работает (dev)' },
+    { value: count(['works']), label: 'Работает' },
     { value: count(['mock2', 'mock3']), label: 'Макетов' },
     { value: count(['infra']), label: 'Ждёт инфраструктуру' },
     { value: count(['none']), label: 'Не начато' },
