@@ -35,6 +35,27 @@ function parseDart(text) {
   return out;
 }
 
+/**
+ * Ключ, заведённый дважды.
+ *
+ * `parseDart` кладёт пары в `Map`, и второй ключ молча затирает первый — для
+ * сверки наборов это незаметно, а сборку API дубль роняет целиком
+ * (`npm run build -w @sozo/api` падает на первом же). Поэтому ищем по строкам,
+ * а не по разобранной карте.
+ */
+function duplicateKeys(text) {
+  const seen = new Map();
+  const bad = [];
+  text.split('\n').forEach((line, i) => {
+    const m = /^\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")\s*:/.exec(line);
+    if (!m) return;
+    const key = m[1] ?? m[2];
+    if (seen.has(key)) bad.push({ key, first: seen.get(key), second: i + 1 });
+    else seen.set(key, i + 1);
+  });
+  return bad;
+}
+
 /** Строки словаря, которые парсер не разобрал, — почти всегда сломанный литерал */
 function unparsedLines(text) {
   return text
@@ -51,8 +72,40 @@ function unparsedLines(text) {
 /** Плейсхолдеры вида {p1}, {sum} — их набор обязан совпасть с эталоном */
 const holders = (s) => (s.match(/\{[a-zA-Z0-9][a-zA-Z0-9_]*\}/g) ?? []).sort().join(',');
 
+/**
+ * Форма числа, в которой числительное вшито в само слово.
+ *
+ * Арабское двойственное «يومَي عمل» уже значит «двое суток», и `{n}` рядом с
+ * ним даёт «2 يومَي عمل» — так пишет машина, а не человек. То же с
+ * единственным: естественное «خلال يوم عمل واحد» лучше, чем «خلال 1 يوم عمل».
+ * Поэтому в этих трёх категориях плейсхолдер разрешено опустить.
+ *
+ * Разрешено именно опустить, а не заменить: лишний плейсхолдер, которого нет
+ * в оригинале, по-прежнему ошибка — подставлять в него нечего.
+ */
+const NUMERAL_IN_WORD = /\.(one|two|zero)$/;
+
+function holdersOk(key, ru, translated) {
+  const a = holders(ru);
+  const b = holders(translated);
+  if (a === b) return true;
+  if (!NUMERAL_IN_WORD.test(key)) return false;
+  const ruSet = new Set(a ? a.split(',') : []);
+  const trSet = b ? b.split(',') : [];
+  // Пропускаем только подмножество: потерять можно, выдумать нельзя
+  return trSet.every((h) => ruSet.has(h));
+}
+
 /** Неэкранированный `$` в Dart — это интерполяция, а не знак доллара */
 const badDollar = (s) => /(^|[^\\])\$/.test(s);
+
+function checkDuplicates(label, text) {
+  const bad = duplicateKeys(text);
+  if (!bad.length) return;
+  problem(
+    `${label}: ключ заведён дважды (${bad.length}) — ${JSON.stringify(bad[0].key).slice(0, 60)}, строки ${bad[0].first} и ${bad[0].second}`,
+  );
+}
 
 function compare(label, base, dict, { checkDollar, optional = () => false }) {
   const missing = [...base.keys()].filter((k) => !dict.has(k) && !optional(k));
@@ -65,7 +118,7 @@ function compare(label, base, dict, { checkDollar, optional = () => false }) {
   const empty = [];
   for (const [k, v] of dict) {
     if (!base.has(k)) continue;
-    if (holders(base.get(k)) !== holders(v)) holderBad.push(k);
+    if (!holdersOk(k, base.get(k), v)) holderBad.push(k);
     if (checkDollar && badDollar(v)) dollarBad.push(k);
     if (!v.trim()) empty.push(k);
   }
@@ -94,6 +147,7 @@ console.log('\nКлиентское приложение (Flutter)');
     const code = f.match(/^dict_([a-z]{2})\.dart$/)?.[1];
     if (!code || code === 'ru') continue;
     const text = readFileSync(join(dartDir, f), 'utf8');
+    checkDuplicates(`client ${code} (в сборке)`, text);
     const bad = unparsedLines(text);
     if (bad.length) problem(`client ${code}: ${bad.length} строк не разобраны, первая — ${bad[0][0]}: ${bad[0][1].trim().slice(0, 70)}`);
     compare(`client ${code} (в сборке)`, base, parseDart(text), { checkDollar: true });
@@ -102,6 +156,7 @@ console.log('\nКлиентское приложение (Flutter)');
   for (const f of readdirSync(serverDir).sort()) {
     const code = f.match(/^client-([a-z]{2})\.ts$/)?.[1];
     if (!code) continue;
+    checkDuplicates(`client ${code} (с сервера)`, readFileSync(join(serverDir, f), 'utf8'));
     // На сервере словарь лежит уже в JSON-виде: доллар там обычный символ
     compare(`client ${code} (с сервера)`, base, parseDart(readFileSync(join(serverDir, f), 'utf8')), {
       checkDollar: false,
@@ -123,6 +178,7 @@ console.log('\nСервер (API)');
   for (const f of readdirSync(dir).filter((x) => /^locale-[a-z]{2}\.ts$/.test(x)).sort()) {
     const code = f.slice(7, 9);
     const src = readFileSync(join(dir, f), 'utf8');
+    checkDuplicates(`api ${code}`, src);
     const cut = src.indexOf('VALUES');
     const head = cut > 0 ? src.slice(0, cut) : src;
     const tail = cut > 0 ? src.slice(cut) : '';
@@ -152,7 +208,9 @@ console.log('\nСервер (API)');
 console.log('\nЛендинг (React)');
 {
   const dir = join(ROOT, 'apps/landing/src/i18n');
-  const base = parseDart(readFileSync(join(dir, 'dict.ru.ts'), 'utf8'));
+  const ruText = readFileSync(join(dir, 'dict.ru.ts'), 'utf8');
+  checkDuplicates('landing ru', ruText);
+  const base = parseDart(ruText);
   console.log(`  эталон dict.ru.ts — ${base.size} ключей`);
 
   // Ключи, на которые ссылается разметка. Ловим `t('…')` и `tn('…')`, а также
@@ -229,7 +287,9 @@ console.log('\nЛендинг (React)');
   if (!files.length) console.log('  · переводов ещё нет');
   for (const f of files) {
     const code = f.slice(0, 2);
-    const dict = parseDart(readFileSync(join(dir, 'locales', f), 'utf8'));
+    const text = readFileSync(join(dir, 'locales', f), 'utf8');
+    checkDuplicates(`landing ${code}`, text);
+    const dict = parseDart(text);
     compare(`landing ${code}`, base, dict, { checkDollar: false, optional });
     checkPlurals(code, dict);
   }

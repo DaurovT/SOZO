@@ -16,7 +16,9 @@ export const business = {
   'business.heroCardPointsTitle': 'Точек на обслуживании',
 
   // Цифры под героем. Единица стоит рядом с числом, которое «докручивается»
-  'business.unitMin': 'мин',
+  // Число внутри строки, а не приклеено пробелом снаружи: по-корейски и
+  // по-китайски пробела перед единицей нет
+  'business.unitMin': '{n} мин',
   'business.statDaySla': 'приезд по аварии днём',
   'business.statNightSla': 'приезд по аварии ночью',
   'business.statContract': 'договор на всю сеть',

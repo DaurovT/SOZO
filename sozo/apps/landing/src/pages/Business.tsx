@@ -122,13 +122,13 @@ export default function Business() {
           <div className="hero-stats">
             <div>
               <p className="stat-value">
-                <Counter to={60} suffix={` ${t('business.unitMin')}`} />
+                <Counter to={60} format={(v) => t('business.unitMin', { n: v })} />
               </p>
               <p className="stat-label">{t('business.statDaySla')}</p>
             </div>
             <div>
               <p className="stat-value">
-                <Counter to={120} suffix={` ${t('business.unitMin')}`} />
+                <Counter to={120} format={(v) => t('business.unitMin', { n: v })} />
               </p>
               <p className="stat-label">{t('business.statNightSla')}</p>
             </div>
