@@ -102,12 +102,26 @@ fi
 
 [[ "$EXISTING" == "1" ]] || docker compose -f infra/docker-compose.yml exec -T postgres \
   psql -U sozo -d postgres -tAq -c "CREATE DATABASE ${DB_NAME}" >/dev/null
-for m in $(ls -d prisma/migrations/*/ | xargs -n1 basename | sort -V); do
+# Учёт применённых миграций ведётся с первого дня жизни базы.
+#
+# Пока прод был на файле, миграции накатывались целиком на пустую базу и
+# порядок с повторами значения не имели. С живой базой это перестаёт
+# работать: часть миграций по природе не идемпотентна, а применять всё
+# подряд на каждом обновлении значит однажды переписать данные. Дальше
+# обновления делает deploy/migrate.sh — он накатывает только новое.
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U sozo -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q \
+  -c "CREATE TABLE IF NOT EXISTS schema_migration (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())" >/dev/null
+
+for m in $(ls -d prisma/migrations/*/ | xargs -n1 basename \
+    | awk '{n=$0; sub(/^m/,"",n); split(n,a,"_"); printf "%09d %s\n", a[1], $0}' | sort | cut -d' ' -f2); do
   docker compose -f infra/docker-compose.yml exec -T postgres \
     psql -U sozo -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q < "prisma/migrations/${m}/migration.sql" >/dev/null \
     || { echo "Миграция ${m} не применилась"; systemctl start sozo-api; exit 1; }
+  docker compose -f infra/docker-compose.yml exec -T postgres \
+    psql -U sozo -d "${DB_NAME}" -tAq -c "INSERT INTO schema_migration (name) VALUES ('${m}') ON CONFLICT DO NOTHING" >/dev/null
 done
-echo "миграции применены"
+echo "миграции применены и записаны в учёт"
 
 # Пароль роли приложения — свой на каждой установке. Миграция заводит роль с
 # разработческим паролем, и оставить его в проде значит держать открытой

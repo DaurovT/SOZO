@@ -186,6 +186,40 @@ console.log('\nЛендинг (React)');
   const unused = [...base.keys()].filter((k) => !used.has(k));
   if (unused.length) console.log(`  · в словаре ${unused.length} ключей, которых разметка не зовёт (${unused.slice(0, 3).join(', ')}…)`);
 
+  /**
+   * Формы множественного числа.
+   *
+   * У русского их три, у арабского шесть, у китайского одна — `tn` спрашивает
+   * категорию у `Intl.PluralRules` и берёт ключ `<группа>.<категория>`.
+   * Не заведённая категория не падает, а молча уезжает на `.other`: арабский
+   * посетитель увидит форму для «многих» там, где нужно двойственное число.
+   *
+   * Группу, у которой и по-русски только `.other`, не трогаем: «{n} мин» —
+   * сокращение, оно не склоняется ни в одном языке.
+   */
+  const TAGS = { uz: 'uz', en: 'en', tr: 'tr', tg: 'tg', ar: 'ar', fr: 'fr', de: 'de', zh: 'zh-Hans', ko: 'ko' };
+  const declining = new Set();
+  const allGroups = new Set();
+  for (const k of base.keys()) {
+    const m = k.match(/^(.+)\.(one|two|few|many|zero|other)$/);
+    if (!m) continue;
+    allGroups.add(m[1]);
+    if (m[2] !== 'other') declining.add(m[1]);
+  }
+
+  function checkPlurals(code, dict) {
+    const cats = new Intl.PluralRules(TAGS[code] ?? code).resolvedOptions().pluralCategories;
+    const missing = [];
+    for (const g of allGroups) {
+      if (!dict.has(`${g}.other`)) missing.push(`${g}.other`);
+      if (!declining.has(g)) continue;
+      for (const c of cats) if (c !== 'other' && !dict.has(`${g}.${c}`)) missing.push(`${g}.${c}`);
+    }
+    if (missing.length) {
+      problem(`landing ${code}: нет ${missing.length} форм числа (${cats.join('/')}) — ${missing.slice(0, 4).join(', ')}`);
+    }
+  }
+
   let files = [];
   try {
     files = readdirSync(join(dir, 'locales')).filter((f) => /^[a-z]{2}\.ts$/.test(f)).sort();
@@ -194,10 +228,10 @@ console.log('\nЛендинг (React)');
   }
   if (!files.length) console.log('  · переводов ещё нет');
   for (const f of files) {
-    compare(`landing ${f.slice(0, 2)}`, base, parseDart(readFileSync(join(dir, 'locales', f), 'utf8')), {
-      checkDollar: false,
-      optional,
-    });
+    const code = f.slice(0, 2);
+    const dict = parseDart(readFileSync(join(dir, 'locales', f), 'utf8'));
+    compare(`landing ${code}`, base, dict, { checkDollar: false, optional });
+    checkPlurals(code, dict);
   }
 }
 

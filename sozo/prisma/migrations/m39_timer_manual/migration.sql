@@ -7,4 +7,10 @@
 --
 -- Имя, которое врёт, хуже отсутствующего: читающий журнал видит «simulated»
 -- и решает, что напоминания клиентам не уходили, — а они ушли.
-ALTER TABLE timer_run RENAME COLUMN simulated TO manual;
+DO $rename$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'timer_run' AND column_name = 'simulated') THEN
+    ALTER TABLE timer_run RENAME COLUMN simulated TO manual;
+  END IF;
+END $rename$;
