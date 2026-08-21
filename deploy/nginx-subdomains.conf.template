@@ -34,6 +34,18 @@ server {
     # Лендинг шлёт формы лидов напрямую в API
     location /v1/ { proxy_pass http://127.0.0.1:3000; include /etc/nginx/snippets/sozo-proxy.conf; }
 
+    # Кабинет оператора собирается с base=/operator/ и живёт здесь.
+    #
+    # `^~` и `index` не для красоты: без index запрос на «/operator/» уходит
+    # в общий фолбэк и отдаёт лендинг — кабинет открывается только по прямой
+    # ссылке на index.html. Проверка «код ответа 200» этого не показывает:
+    # двести отдаёт чужой index.html.
+    location ^~ /operator/ {
+        alias /home/azureuser/SOZO/sozo/apps/operator-web/dist/;
+        index index.html;
+        try_files $uri $uri/ /operator/index.html;
+    }
+
     location / { try_files $uri $uri/ /index.html; }
 }
 

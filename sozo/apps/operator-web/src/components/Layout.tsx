@@ -2,14 +2,22 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { clearSession, getUser } from '../auth';
 
 const NAV = [
+  // Порядок — по частоте открытия, а не по номерам экранов из DEV-15:
+  // наряды и заявки смотрят каждый день, паспорт здания — раз в квартал
   { to: '/', label: 'Дашборд', end: true },
   { to: '/permits', label: 'Наряды-допуски' },
+  { to: '/orders', label: 'Общее имущество' },
   { to: '/first-refusal', label: 'Первая рука' },
-  { to: '/units', label: 'Помещения и жители' },
   { to: '/observations', label: 'Замечания и обходы' },
   { to: '/shutdowns', label: 'Отключения' },
   { to: '/journal', label: 'Журнал доступа' },
+  { to: '/units', label: 'Помещения и жители' },
+  { to: '/passport', label: 'Паспорт здания' },
+  { to: '/tech-debt', label: 'Техдолг' },
+  { to: '/reports', label: 'Отчёты' },
   { to: '/finance', label: 'Финансы' },
+  { to: '/subscription', label: 'Подписка' },
+  { to: '/people', label: 'Люди и роли' },
   { to: '/settings', label: 'Настройки объекта' },
 ];
 

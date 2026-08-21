@@ -20,6 +20,167 @@ export class OperatorApiController {
     private readonly orders: OrdersService,
   ) {}
 
+  /**
+   * Объекты оператора одним списком.
+   *
+   * Вынесено в помощник, а не переписано в каждом экране: скоуп по оператору
+   * — это правило доступа, и повторять его семь раз значит однажды забыть.
+   */
+  private buildingIds(orgId: string): string[] {
+    return this.buildings.listBuildings('t0', orgId).map((b) => b.id);
+  }
+
+  /**
+   * U-03: заявки по общему имуществу.
+   *
+   * Только общее имущество и только объекты этого оператора. Частные заявки
+   * жителей сюда не попадают никогда: оператор их не видит по определению —
+   * это чужая работа в чужой квартире (ТЗ §19.3).
+   */
+  @Get(':orgId/orders')
+  async commonAreaOrders(
+    @Param('orgId') orgId: string,
+    @Query('buildingId') buildingId?: string,
+    @Query('status') status?: string,
+  ) {
+    const ids = buildingId ? [buildingId] : this.buildingIds(orgId);
+    const all = await this.orders.list('t0');
+    const rows = all
+      .filter((o) => o.buildingId && ids.includes(o.buildingId) && o.orderScope === 'common_area')
+      .filter((o) => !status || o.status === status)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((o) => ({
+        id: o.id,
+        number: o.number,
+        buildingId: o.buildingId,
+        status: o.status,
+        urgency: o.urgency,
+        description: o.description,
+        address: o.address,
+        masterName: o.masterName ?? null,
+        laborSettlement: o.laborSettlement ?? null,
+        createdAt: o.createdAt.toISOString(),
+      }));
+    // Разбивка по статусам — то, ради чего экран открывают: видно, что висит
+    const byStatus: Record<string, number> = {};
+    for (const r of rows) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+    return { total: rows.length, byStatus, rows };
+  }
+
+  /**
+   * U-08: паспорт здания.
+   *
+   * Зоны, стояки, оборудование и регламенты ТО в одном ответе: это
+   * справочная страница, её открывают целиком и читают глазами, а не
+   * фильтруют. Четыре запроса ради одного экрана — четыре повода получить
+   * несогласованный снимок.
+   */
+  @Get(':orgId/buildings/:buildingId/passport')
+  passport(@Param('orgId') orgId: string, @Param('buildingId') buildingId: string) {
+    const b = this.buildings.get('t0', buildingId);
+    const zones = this.buildings.listZones('t0', buildingId);
+    const units = this.buildings.listUnits('t0', buildingId);
+    // Стояки не хранятся отдельной сущностью: они собираются из помещений и
+    // зон, потому что стояк — это то, что их связывает, а не самостоятельный
+    // объект учёта
+    const risers = [...new Set([...units.flatMap((u) => u.riserIds), ...zones.map((z) => z.riserId).filter(Boolean)])];
+    return {
+      building: {
+        id: b.id,
+        name: b.name,
+        address: b.address,
+        connectionStatus: b.connectionStatus,
+        workFrom: b.workFrom ?? null,
+        workTo: b.workTo ?? null,
+        noiseFrom: b.noiseFrom ?? null,
+        noiseTo: b.noiseTo ?? null,
+        emergencyPhone: b.emergencyPhone ?? null,
+        dispatchPhone: b.dispatchPhone ?? null,
+      },
+      zones: zones.map((z) => ({
+        id: z.id,
+        zoneType: z.zoneType,
+        label: z.label,
+        riserId: z.riserId ?? null,
+        isCritical: z.isCritical,
+        isLicensed: z.isLicensed,
+      })),
+      risers,
+      unitsTotal: units.length,
+      equipment: this.buildings.listEquipment('t0', buildingId),
+      maintenance: this.buildings.maintenancePlan('t0', buildingId),
+    };
+  }
+
+  /**
+   * U-09: техдолг объекта.
+   *
+   * Дефекты, их стоимость и то, по скольким решение ещё не принято. Последнее
+   * — главное число экрана: незакрытый дефект без решения не стоит ничего в
+   * плане и всплывает аварией.
+   */
+  @Get(':orgId/buildings/:buildingId/tech-debt')
+  techDebt(@Param('orgId') orgId: string, @Param('buildingId') buildingId: string) {
+    return {
+      summary: this.buildings.defectSummary('t0', buildingId),
+      defects: this.buildings.listDefects('t0', buildingId),
+      observations: this.buildings.listObservations('t0', buildingId, 'open'),
+    };
+  }
+
+  /**
+   * U-15: подписка, тариф, расчёт.
+   *
+   * Нетто-расчёт показывается одной суммой со знаком: у оператора и
+   * платформы встречные обязательства, и два платежа навстречу друг другу —
+   * это две комиссии банка и два повода не сойтись.
+   */
+  // Не `:orgId/subscription`: этот адрес уже занят записью подписки в модуле
+  // subscriptions, и второй обработчик на нём молча не вызывался бы. Здесь
+  // экран, а там сущность — разные вещи и разные адреса
+  @Get(':orgId/billing-overview')
+  subscription(@Param('orgId') orgId: string) {
+    const sub = this.subs.get('t0', orgId);
+    const settlement = this.subs.settlement('t0', orgId);
+    return {
+      subscription: sub ?? null,
+      settlement,
+      objectsTotal: this.buildingIds(orgId).length,
+    };
+  }
+
+  /**
+   * U-14: люди оператора и их роли.
+   *
+   * Собирается по объектам, а не из отдельного реестра: человек в этом
+   * контуре существует как роль на объекте — согласующий, консьерж, инженер.
+   * Один и тот же телефон может быть согласующим на одном объекте и
+   * консьержем на другом, и «пользователь оператора» без объекта не значит
+   * ничего.
+   */
+  @Get(':orgId/people')
+  people(@Param('orgId') orgId: string) {
+    const buildings = this.buildings.listBuildings('t0', orgId);
+    const byPhone = new Map<string, { phone: string; fullName: string; roles: Array<{ buildingId: string; buildingName: string; staffRole: string; isBackup: boolean }> }>();
+    for (const b of buildings) {
+      for (const s of this.buildings.listStaff('t0', b.id)) {
+        const rec = byPhone.get(s.userPhone) ?? { phone: s.userPhone, fullName: s.fullName, roles: [] };
+        rec.roles.push({ buildingId: b.id, buildingName: b.name, staffRole: s.staffRole, isBackup: Boolean(s.isBackup) });
+        byPhone.set(s.userPhone, rec);
+      }
+    }
+    const people = [...byPhone.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
+    return {
+      total: people.length,
+      // Объект без согласующего не может активироваться и не согласует наряды
+      // — это первое, что смотрят на этом экране
+      buildingsWithoutApprover: buildings
+        .filter((b) => !this.buildings.listStaff('t0', b.id).some((s) => s.staffRole === 'approver'))
+        .map((b) => ({ id: b.id, name: b.name })),
+      people,
+    };
+  }
+
   /** U-01: дашборд объекта или портфеля — ответ на вопрос «что горит прямо сейчас» */
   @Get(':orgId/dashboard')
   dashboard(@Param('orgId') orgId: string, @Query('buildingId') buildingId?: string) {

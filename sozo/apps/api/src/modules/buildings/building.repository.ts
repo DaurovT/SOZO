@@ -316,6 +316,89 @@ export class InMemoryBuildingRepository implements OnModuleInit {
         };
         await tx.building.upsert({ where: { id: b.id }, create: { id: b.id, tenantId, ...data }, update: data });
       }
+      // Дети объекта: помещения, зоны, персонал, жители, оборудование,
+      // дефекты, замечания.
+      //
+      // Их не писали вовсе — семь коллекций из четырнадцати. Записать было
+      // нельзя: у пяти моделей схема расходилась с кодом настолько, что
+      // запись не собиралась (разобрано в m40). На базе они жили только в
+      // памяти процесса и исчезали при перезапуске.
+      for (const u of snap.units) {
+        const data = {
+          buildingId: u.buildingId, entrance: u.entrance, floor: u.floor,
+          number: u.number, unitType: u.unitType, riserIds: u.riserIds,
+        };
+        await tx.unit.upsert({ where: { id: u.id }, create: { id: u.id, tenantId, ...data }, update: data });
+      }
+      for (const z of snap.zones) {
+        const data = {
+          buildingId: z.buildingId, zoneType: z.zoneType, label: z.label,
+          riserId: z.riserId, isCritical: z.isCritical, isLicensed: z.isLicensed,
+        };
+        await tx.commonZone.upsert({ where: { id: z.id }, create: { id: z.id, tenantId, ...data }, update: data });
+      }
+      for (const st of snap.staff) {
+        const data = {
+          buildingId: st.buildingId, userPhone: st.userPhone, fullName: st.fullName,
+          staffRole: st.staffRole as never, isBackup: Boolean(st.isBackup), isDuty: Boolean(st.isDuty),
+          skillTags: [],
+        };
+        await tx.buildingStaff.upsert({ where: { id: st.id }, create: { id: st.id, tenantId, ...data }, update: data });
+      }
+      for (const r of snap.residents) {
+        const data = {
+          unitId: r.unitId, userPhone: r.userPhone, fullName: r.fullName ?? '',
+          residentRole: r.residentRole as never, verifiedBy: r.verifiedBy,
+        };
+        await tx.unitResident.upsert({ where: { id: r.id }, create: { id: r.id, tenantId, ...data }, update: data });
+      }
+      for (const e of snap.equipment) {
+        const data = {
+          buildingId: e.buildingId, commonZoneId: e.commonZoneId, equipmentType: e.equipmentType,
+          model: e.model, serial: e.serial,
+          commissionedAt: e.commissionedAt ? new Date(e.commissionedAt) : null,
+          intervalDays: e.intervalDays,
+          lastServiceAt: e.lastServiceAt ? new Date(e.lastServiceAt) : null,
+          isLicensed: e.isLicensed,
+        };
+        await tx.buildingEquipment.upsert({ where: { id: e.id }, create: { id: e.id, tenantId, ...data }, update: data });
+      }
+      for (const d of snap.defects) {
+        const data = {
+          buildingId: d.buildingId, commonZoneId: d.commonZoneId, equipmentId: d.equipmentId,
+          title: d.title, severity: d.severity as string,
+          // Дефект дома точки B2B не имеет — колонка обнуляема с m40
+          locationId: null,
+          description: d.title,
+          estimatedCostTiyin: BigInt(Math.max(0, d.estimatedCostTiyin)),
+          // CHECK в m40: отложенный дефект обязан иметь срок — «потом» без
+          // даты это не решение, а способ его не принимать
+          deadline: d.decision === 'postponed' ? new Date(d.deadline ?? Date.now() + 30 * 86_400_000) : (d.deadline ? new Date(d.deadline) : null),
+          responsible: d.responsible, source: d.source, observationId: d.observationId,
+          decision: d.decision, decisionReason: d.decisionReason, decisionBy: d.decisionBy,
+          decisionAt: d.decisionAt ? new Date(d.decisionAt) : null,
+          status: d.status as never,
+          priority: d.severity === 'emergency' || d.severity === 'critical' ? 'critical' : 'medium',
+        };
+        await tx.defect.upsert({ where: { id: d.id }, create: { id: d.id, tenantId, ...data }, update: data });
+      }
+      for (const o of snap.observations) {
+        const data = {
+          buildingId: o.buildingId, zoneKey: o.zoneKey, unitId: o.unitId,
+          authorPhone: o.authorPhone, source: o.source as never, categoryId: o.categoryId,
+          severity: o.severity as never, photoIds: o.photoIds, comment: o.comment,
+          status: o.status, suggestedRoute: o.suggestedRoute, joinedBy: o.joinedBy,
+          routedTo: o.routedTo, routedEntityId: o.routedEntityId,
+          resolvedAt: o.resolvedAt ? new Date(o.resolvedAt) : null,
+          resolvedPhotoId: o.resolvedPhotoId,
+        };
+        await tx.buildingObservation.upsert({
+          where: { id: o.id },
+          create: { id: o.id, tenantId, createdAt: new Date(o.createdAt), ...data },
+          update: data,
+        });
+      }
+
       await tx.operatorPriceItem.deleteMany({});
       for (const x of snap.opPrices) {
         await tx.operatorPriceItem.create({

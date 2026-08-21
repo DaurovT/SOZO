@@ -98,6 +98,13 @@ enum ReleaseStatus {
   archived
 }
 
+/**
+ * Два жизненных цикла в одном перечне (m40).
+ *
+ * Первые шесть — дефект акта осмотра B2B: решение принимает заказчик, и
+ * «на согласовании» обязательный этап. Последние три — дефект дома: заказчика
+ * нет, оператор решает сам, путь короче.
+ */
 enum DefectStatus {
   new
   pending_approval
@@ -105,6 +112,9 @@ enum DefectStatus {
   postponed
   rejected
   resolved
+  open
+  in_progress
+  fixed
 }
 
 enum RoleKind {
@@ -298,8 +308,8 @@ model User {
 
   roles         UserRole[]
   masterProfile MasterProfile?
-  residences    UnitResident[]  // контур «Дом»: житель одного или нескольких помещений
-  buildingStaff BuildingStaff[] // контур «Дом»: роли в эксплуатирующей организации
+  // Жителя и персонал объекта связь с пользователем больше не держит: они
+  // опознаются телефоном, потому что учётной записи у них может не быть (m40)
 
   @@unique([tenantId, phone])
   @@map("user")
@@ -831,7 +841,27 @@ model OrderMaterial {
 model Defect {
   id                String       @id @db.Uuid
   tenantId          String       @map("tenant_id") @db.Uuid
-  locationId        String       @map("location_id") @db.Uuid
+  /**
+   * Точка B2B — только у дефекта из акта осмотра. У дефекта контура «Дом» её
+   * нет: он про здание, а не про арендованную точку (m40).
+   */
+  locationId        String?      @map("location_id") @db.Uuid
+  buildingId        String?      @map("building_id") @db.Uuid
+  commonZoneId      String?      @map("common_zone_id") @db.Uuid
+  equipmentId       String?      @map("equipment_id") @db.Uuid
+  title             String       @default("")
+  severity          String       @default("substantial")
+  estimatedCostTiyin BigInt      @default(0) @map("estimated_cost_tiyin")
+  /** Срок устранения. У отложенного дефекта обязателен — CHECK в m40 */
+  deadline          DateTime?    @db.Timestamptz()
+  responsible       String?
+  source            String       @default("walkthrough")
+  /** Замечание, из которого вырос дефект: по нему видно, что обход не впустую */
+  observationId     String?      @map("observation_id") @db.Uuid
+  decision          String?
+  decisionReason    String?      @map("decision_reason")
+  decisionBy        String?      @map("decision_by")
+  decisionAt        DateTime?    @map("decision_at") @db.Timestamptz()
   foundInOrderId    String?      @map("found_in_order_id") @db.Uuid
   status            DefectStatus @default(new)
   priority          String // critical | high | medium | low (ТЗ 3.5)
@@ -1220,17 +1250,18 @@ model UnitResident {
   id           String       @id @db.Uuid
   tenantId     String       @map("tenant_id") @db.Uuid
   unitId       String       @map("unit_id") @db.Uuid
-  userId       String       @map("user_id") @db.Uuid
+  /** Телефон, а не ссылка на пользователя: житель может не иметь приложения (m40) */
+  userPhone    String       @default("") @map("user_phone")
+  fullName     String       @default("") @map("full_name")
   residentRole ResidentRole @default(owner) @map("resident_role")
   verifiedBy   String       @default("self") @map("verified_by") // operator | document | self | crowd
   validUntil   DateTime?    @map("valid_until") @db.Timestamptz()
   createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz()
 
   unit Unit @relation(fields: [unitId], references: [id])
-  user User @relation(fields: [userId], references: [id])
 
-  @@unique([tenantId, unitId, userId])
-  @@index([tenantId, userId])
+  @@unique([tenantId, unitId, userPhone])
+  @@index([tenantId, userPhone])
   @@map("unit_resident")
 }
 
@@ -1402,7 +1433,9 @@ model BuildingStaff {
   id         String    @id @db.Uuid
   tenantId   String    @map("tenant_id") @db.Uuid
   buildingId String    @map("building_id") @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
+  /** Телефон, а не ссылка на пользователя: у консьержа учётной записи нет (m40) */
+  userPhone  String    @default("") @map("user_phone")
+  fullName   String    @default("") @map("full_name")
   staffRole  StaffRole @map("staff_role")
   isDuty     Boolean   @default(false) @map("is_duty")
   isBackup   Boolean   @default(false) @map("is_backup") // резервный согласующий — обязателен для active
@@ -1410,9 +1443,8 @@ model BuildingStaff {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
   building Building @relation(fields: [buildingId], references: [id])
-  user     User     @relation(fields: [userId], references: [id])
 
-  @@unique([tenantId, buildingId, userId, staffRole])
+  @@unique([tenantId, buildingId, userPhone, staffRole])
   @@index([tenantId, buildingId, staffRole])
   @@map("building_staff")
 }
@@ -1442,8 +1474,14 @@ model BuildingObservation {
   tenantId       String              @map("tenant_id") @db.Uuid
   buildingId     String              @map("building_id") @db.Uuid
   commonZoneId   String?             @map("common_zone_id") @db.Uuid
+  /**
+   * Место свободной меткой: «двор», «подъезд 2». Обход идёт по дому целиком,
+   * и половина замечаний не про заведённую зону, а про то, что попалось по
+   * дороге — ссылка отсекла бы ровно их (m40).
+   */
+  zoneKey        String              @default("") @map("zone_key")
   unitId         String?             @map("unit_id") @db.Uuid
-  authorUserId   String              @map("author_user_id") @db.Uuid
+  authorPhone    String              @default("") @map("author_phone")
   source         ObservationSource   @default(walkthrough)
   categoryId     String              @map("category_id") // справочник A-44
   severity       ObservationSeverity @default(housekeeping)
@@ -1452,6 +1490,10 @@ model BuildingObservation {
   geoLng         Decimal?            @map("geo_lng") @db.Decimal(9, 6)
   comment        String?
   status         String              @default("open") // open | routed | resolved | rejected
+  /** Предложение справочника A-44 — отдельно от решения человека */
+  suggestedRoute String              @default("journal") @map("suggested_route")
+  /** Кто присоединился: десять жалоб на одну лужу — одно замечание */
+  joinedBy       String[]            @map("joined_by")
   routedTo       String?             @map("routed_to") // task | defect | order | contractor | journal
   routedEntityId String?             @map("routed_entity_id") @db.Uuid
   resolvedAt     DateTime?           @map("resolved_at") @db.Timestamptz()

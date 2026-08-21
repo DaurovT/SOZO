@@ -27,6 +27,16 @@ const PAIRS = [
   ['AccessPermit', 'apps/api/src/modules/access/permit.repository.ts', 'PermitRecord'],
   ['VisitPass', 'apps/api/src/modules/access/permit.repository.ts', 'PassRecord'],
   ['ResourceShutdown', 'apps/api/src/modules/access/permit.repository.ts', 'ShutdownRecord'],
+  // Дети объекта. Их не было в списке, и это скрыло целый класс расхождений:
+  // пять моделей не совпадали с кодом настолько, что записать их было нельзя,
+  // — а отчёт показывал ноль, потому что про них не спрашивали
+  ['Unit', 'apps/api/src/modules/buildings/building.repository.ts', 'UnitRecord'],
+  ['CommonZone', 'apps/api/src/modules/buildings/building.repository.ts', 'CommonZoneRecord'],
+  ['BuildingStaff', 'apps/api/src/modules/buildings/building.repository.ts', 'BuildingStaffRecord'],
+  ['UnitResident', 'apps/api/src/modules/buildings/building.repository.ts', 'ResidentRecord'],
+  ['BuildingEquipment', 'apps/api/src/modules/buildings/building.repository.ts', 'EquipmentRecord'],
+  ['Defect', 'apps/api/src/modules/buildings/building.repository.ts', 'DefectRecord'],
+  ['BuildingObservation', 'apps/api/src/modules/buildings/building.repository.ts', 'ObservationRecord'],
 ];
 
 /**

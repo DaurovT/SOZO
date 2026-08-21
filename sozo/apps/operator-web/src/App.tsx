@@ -12,6 +12,12 @@ import { Units } from './pages/Units';
 import { Observations } from './pages/Observations';
 import { Shutdowns } from './pages/Shutdowns';
 import { Journal } from './pages/Journal';
+import { CommonOrders } from './pages/CommonOrders';
+import { Passport } from './pages/Passport';
+import { TechDebt } from './pages/TechDebt';
+import { Subscription } from './pages/Subscription';
+import { People } from './pages/People';
+import { Reports } from './pages/Reports';
 import type { Dashboard as DashboardData } from './types';
 
 export function App() {
@@ -35,6 +41,12 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/units" element={<Units />} />
           <Route path="/journal" element={<Journal />} />
+          <Route path="/orders" element={<CommonOrders />} />
+          <Route path="/passport" element={<Passport />} />
+          <Route path="/tech-debt" element={<TechDebt />} />
+          <Route path="/subscription" element={<Subscription />} />
+          <Route path="/people" element={<People />} />
+          <Route path="/reports" element={<Reports />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
