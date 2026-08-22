@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
+import '../push/push.dart';
 import '../api/models.dart';
 import 'outbox.dart';
 
@@ -14,6 +16,7 @@ class Session extends ChangeNotifier {
   Session() {
     api = ApiClient(baseUrl: defaultBaseUrl);
     outbox = Outbox(api);
+    push = PushService(api);
   }
 
   /// Версия сборки — сверяется с минимальной серверной (F-60)
@@ -27,6 +30,10 @@ class Session extends ChangeNotifier {
 
   late final ApiClient api;
   late final Outbox outbox;
+
+  /// Канал push. Живёт рядом с сессией: токен устройства регистрируется за
+  /// вошедшим мастером и снимается, когда он выходит
+  late final PushService push;
 
   MasterProfile? profile;
   String? lastPhone;
@@ -58,6 +65,9 @@ class Session extends ChangeNotifier {
     if (api.token != null) {
       await refreshProfile(silent: true);
       await refreshConfig();
+      // Токен устройства подтверждаем на каждом старте: поставщик меняет его
+      // молча, и пропущенный оффер — это заявка, ушедшая другому мастеру
+      unawaited(push.register());
     }
     ready = true;
     notifyListeners();
@@ -78,6 +88,7 @@ class Session extends ChangeNotifier {
     await prefs.setString(_kPhone, phone);
     lastPhone = phone;
     accessDeniedMessage = null;
+    unawaited(push.register());
     await refreshProfile();
     await refreshConfig();
     if (profile != null) await refreshCatalog();
@@ -174,6 +185,9 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Сначала снимаем устройство, пока токен сессии ещё жив: после обнуления
+    // запрос уйдёт без авторизации, а офферы продолжат приходить вышедшему
+    await push.unregister();
     api.token = null;
     profile = null;
     accessDeniedMessage = null;

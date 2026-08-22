@@ -68,6 +68,13 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Тихие уведомления и обновление данных в фоне.
+	     Без remote-notification iOS доставит push только когда приложение
+	     открыто, а данные заявки в нём не обновятся до следующего запуска. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

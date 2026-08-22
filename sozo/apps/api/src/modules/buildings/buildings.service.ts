@@ -214,6 +214,19 @@ export class BuildingsService {
     return this.repo.listResidents(tenantId, unitId);
   }
 
+  /**
+   * Телефоны жителей затронутых помещений.
+   *
+   * Нужны оповещению зоны влияния: отключение стояка касается не «квартир»,
+   * а людей, и адресатов надо назвать поимённо. Уникальные — в одной
+   * квартире прописаны двое, и два одинаковых сообщения об одном отключении
+   * читаются как сбой рассылки.
+   */
+  residentPhonesOfUnits(tenantId: string, unitIds: string[]): string[] {
+    const phones = this.repo.residentsOfBuilding(tenantId, unitIds).map((r) => r.userPhone);
+    return [...new Set(phones.filter(Boolean))];
+  }
+
   /** Сводка заселённости объекта для U-06 */
   residentsSummary(tenantId: string, buildingId: string) {
     const units = this.repo.listUnits(tenantId, buildingId);

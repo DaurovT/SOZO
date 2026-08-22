@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
+import '../push/push.dart';
 
 /// Сессия приложения: адрес сервера, токен, профиль и выбранный контекст роли.
 ///
@@ -23,6 +25,10 @@ class Session extends ChangeNotifier {
   static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'https://api.sozo.uz');
 
   late ApiClient api = ApiClient(baseUrl: defaultBase);
+
+  /// Канал push. Живёт рядом с сессией, потому что привязан к ней: токен
+  /// устройства регистрируется за вошедшим человеком и снимается при выходе.
+  late final PushService push = PushService(api);
 
   String? phone;
 
@@ -121,10 +127,18 @@ class Session extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kToken, token);
     await prefs.setString(_kPhone, phoneNumber);
+    // Регистрируем устройство сразу: первое уведомление по заявке приходит
+    // через минуты после входа, и ждать следующего запуска нельзя.
+    // Без await — вход не должен зависеть от доступности Firebase
+    unawaited(push.register());
     notifyListeners();
   }
 
   Future<void> signOut() async {
+    // Сначала снимаем устройство, пока токен сессии ещё жив: после обнуления
+    // запрос уйдёт без авторизации и будет отвергнут, а уведомления по чужим
+    // заявкам продолжат приходить на этот аппарат
+    await push.unregister();
     api.token = null;
     me = null;
     contextId = null;

@@ -178,6 +178,9 @@ export class LoyaltyService implements OnModuleInit {
     acc.history.push({ id: uuidv7(), kind: 'accrual', amountTiyin, note, at: new Date().toISOString() });
     this.tryIssueVoucher(acc);
     this.store.persist();
+    // Начисление — уведомление низкого приоритета (PRD-01 §5): человеку
+    // приятно, но будить его этим нельзя
+    this.bus.publish('loyalty.accrued', { phone, amountTiyin, balanceTiyin: acc.balanceTiyin, note });
   }
 
   /** FEFO: свободный ваучер с ближайшим сроком годности, номинал ≤ баланса */
@@ -196,6 +199,19 @@ export class LoyaltyService implements OnModuleInit {
       amountTiyin: -candidate.nominalTiyin,
       note: `Ваучер ${candidate.code} (${candidate.nominalTiyin / 100} сум)`,
       at: new Date().toISOString(),
+    });
+    /**
+     * Ваучер — единственное в лояльности, что стоит SMS (PRD-01 §5).
+     *
+     * У него есть срок годности, и пропущенное уведомление означает
+     * сгоревшие деньги человека. Остальное в программе можно посмотреть
+     * когда угодно, а это — нет.
+     */
+    this.bus.publish('loyalty.voucher_issued', {
+      phone: acc.phone,
+      code: candidate.code,
+      nominalTiyin: candidate.nominalTiyin,
+      expiresAt: candidate.expiresAt,
     });
   }
 }

@@ -35,3 +35,18 @@ coverage/
 # Дизайн-канва: исходники — *.dc.html и canvas.json, собранный файл (2+ МБ) артефакт
 design-home/*.html
 !design-home/*.dc.html
+
+# Ключи Firebase (push).
+#
+# Сервисный аккаунт — право рассылать уведомления от имени SOZO всем, у кого
+# стоит приложение: в репозиторий он не попадает никогда, его место —
+# /etc/sozo/fcm-service-account.json с правами 600.
+#
+# google-services.json и GoogleService-Info.plist секретами в строгом смысле
+# не являются (они уезжают внутри приложения), но привязаны к конкретному
+# проекту Firebase и разъезжаются между средами — их кладут на машину сборки,
+# а не хранят в истории.
+**/google-services.json
+**/GoogleService-Info.plist
+*-service-account*.json
+*.p8

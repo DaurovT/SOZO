@@ -170,6 +170,22 @@ class ApiClient {
 
   Future<Map<String, dynamic>> me() async => (await get('/app/me')) as Map<String, dynamic>;
 
+  /// Регистрация устройства для push (ТЗ §11).
+  ///
+  /// Зовётся при каждом старте с живой сессией, а не только после входа:
+  /// токен меняет сам поставщик, и молчаливая смена означает, что
+  /// уведомления просто перестанут приходить.
+  Future<Map<String, dynamic>> registerDevice({
+    required String token,
+    required String app,
+    required String platform,
+  }) async =>
+      (await post('/devices', {'token': token, 'app': app, 'platform': platform})) as Map<String, dynamic>;
+
+  /// Снятие устройства при выходе — чтобы чужие заявки не приходили на аппарат
+  Future<Map<String, dynamic>> revokeDevice(String token) async =>
+      (await post('/devices/revoke', {'token': token})) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> saveConsents(Map<String, dynamic> body) async =>
       (await post('/app/consents', body)) as Map<String, dynamic>;
 

@@ -4,6 +4,22 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+/**
+ * Firebase подключается, только если ключ проекта лежит рядом.
+ *
+ * Плагин google-services обязателен для push, но без файла google-services.json
+ * он валит сборку с ошибкой про отсутствующий ресурс. Проекта Firebase у SOZO
+ * ещё нет: положить сюда пустышку значит получить приложение, которое молча
+ * не доставляет уведомления, а применять плагин безусловно — сломать сборку
+ * всем, кто пушей не касается.
+ *
+ * Поэтому условие. Появится ключ — файл кладут в эту папку, и канал
+ * включается сам, без правки сборочных файлов.
+ */
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "uz.sozo.sozo_client"
     compileSdk = flutter.compileSdkVersion

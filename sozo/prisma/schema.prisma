@@ -3399,3 +3399,82 @@ model MasterNps {
   @@index([tenantId, at(sort: Desc)])
   @@map("master_nps")
 }
+
+// ============================================================
+// ДОСТАВКА PUSH (ТЗ §11, PRD-01 §5, PRD-02 §5, DEV-13 п.24)
+// ============================================================
+
+/**
+ * Токен устройства для push.
+ *
+ * Ключ строки — сам токен, а не пара «человек + приложение»: у мастера
+ * бывает телефон и планшет, у семьи — общий планшет с двумя учётными
+ * записями. Уникальность по токену нужна и с другой стороны: FCM выдаёт тот
+ * же токен переустановленному приложению, и если телефон сменил владельца,
+ * строка обязана переехать на нового человека, а не удвоиться — иначе
+ * прежний хозяин продолжит получать чужие заявки.
+ *
+ * Адресат — телефон, как и везде в системе: учётной записи у клиента B2C
+ * может не быть вовсе, а телефон есть всегда. Приложение хранится рядом,
+ * потому что один и тот же человек бывает и мастером, и клиентом: слесарь
+ * заказывает ремонт себе домой тем же номером, и оффер в его клиентское
+ * приложение уходить не должен.
+ */
+model DeviceToken {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  token      String    @unique
+  /** client | master — приложения разные, и deep-link у них разный */
+  app        String
+  platform   String // android | ios | web
+  phone      String
+  /** Язык уведомления. Из профиля, а не из заголовка запроса (ТЗ §14) */
+  locale     String    @default("ru")
+  /**
+   * Когда устройство в последний раз подтвердило токен.
+   *
+   * По этой метке чистятся мёртвые строки: FCM отзывает токен молча, и
+   * телефон, не заходивший полгода, — это не адресат, а строка, на которую
+   * тратится запрос при каждой рассылке.
+   */
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz()
+  /** Снят поставщиком (UNREGISTERED) — храним для истории, не шлём */
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz()
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, phone, app, revokedAt])
+  @@map("device_token")
+}
+
+/**
+ * Журнал доставки (DEV-07 §2 п.12: «ретраи, частотные капы, delivery-log»).
+ *
+ * Пишется и успех, и отказ. Без успешных строк нельзя ответить на главный
+ * вопрос эксплуатации — «уведомление не пришло или не отправлялось»: у этих
+ * двух случаев разные виновные и разные действия, а по пустому журналу они
+ * неразличимы.
+ *
+ * Здесь же лежит основание частотного потолка (ТЗ §17.12: сервисные касания
+ * не чаще одного в две недели). Считать их по ленте нельзя — лента клиента
+ * вычисляется из заявок и ничего не знает о том, что было отправлено.
+ */
+model PushDelivery {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  /** Имя события матрицы: order.assigned, master.offer, … */
+  event     String
+  phone     String
+  app       String
+  /** push | sms_fallback | none — чем в итоге доставили */
+  channel   String
+  status    String // sent | failed | skipped
+  /** Почему пропущено или не ушло: no_token, rate_capped, HTTP 502 */
+  detail    String?
+  orderId   String?  @map("order_id") @db.Uuid
+  attempts  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, phone, createdAt(sort: Desc)])
+  @@index([tenantId, event, createdAt(sort: Desc)])
+  @@map("push_delivery")
+}

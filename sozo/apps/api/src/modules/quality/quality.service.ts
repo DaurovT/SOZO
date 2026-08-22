@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
+import { EventBus } from '../../common/event-bus';
 import { PgMirror } from '../../common/pg-mirror';
 
 /**
@@ -82,6 +83,7 @@ export class QualityService implements OnModuleInit {
   constructor(
     private readonly store: StateStore,
     prisma: PrismaService,
+    private readonly bus: EventBus,
   ) {
     this.store.register(
       'quality',
@@ -257,6 +259,20 @@ export class QualityService implements OnModuleInit {
     };
     this.complaints.push(rec);
     this.store.persist();
+    /**
+     * Подтверждение человеку, что жалобу приняли (ТЗ §17.10).
+     *
+     * Не формальность: жалоба — это уже испорченное впечатление, и молчание
+     * в ответ портит его второй раз. SLA первого ответа два часа, но знать,
+     * что обращение дошло, человек должен сразу.
+     */
+    this.bus.publish('complaint.registered', {
+      complaintId: rec.id,
+      orderId: rec.orderId,
+      orderNumber: rec.orderNumber,
+      complainantPhone: rec.complainantPhone,
+      type: rec.type,
+    });
     return rec;
   }
 
@@ -283,6 +299,9 @@ export class QualityService implements OnModuleInit {
       throw new BadRequestException({ code: 'PLAYBOOK_REQUIRED', message: `Метод из плейбука обязателен: ${PLAYBOOK.map((p) => p.code).join(', ')}` });
     }
     if (!resolution?.trim()) throw new BadRequestException({ code: 'RESOLUTION_REQUIRED' });
+    // Повторная резолюция уже закрытой жалобы — не решение, а второе
+    // уведомление человеку о том, что он уже прочитал
+    if (c.status === 'resolved' || c.status === 'rejected') return c;
     c.status = confirmed ? 'resolved' : 'rejected';
     c.playbookCode = playbookCode;
     c.resolution = resolution;
@@ -290,6 +309,14 @@ export class QualityService implements OnModuleInit {
     c.resolvedAt = new Date().toISOString();
     c.firstResponseAt = c.firstResponseAt ?? c.resolvedAt;
     this.store.persist();
+    this.bus.publish('complaint.resolved', {
+      complaintId: c.id,
+      orderId: c.orderId,
+      orderNumber: c.orderNumber,
+      complainantPhone: c.complainantPhone,
+      confirmed: c.confirmed === true,
+      resolution: c.resolution ?? '',
+    });
     return c;
   }
 

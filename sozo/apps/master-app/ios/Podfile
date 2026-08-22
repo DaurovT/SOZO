@@ -1,5 +1,8 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# Минимум iOS 15: этого требует Firebase (firebase_core и firebase_messaging
+# объявляют deployment_target 15.0). Строка раскомментирована не для порядка —
+# без неё CocoaPods берёт цель из проекта, видит 13.0 и отказывается ставить
+# зависимости вовсе.
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'

@@ -720,6 +720,10 @@ export class AccessService {
       plannedFrom: rec.plannedFrom,
       plannedTo: rec.plannedTo,
       affectedUnitIds: rec.affectedUnitIds,
+      // Адресаты — в событии: движок уведомлений не знает про жителей и
+      // помещения, и узнавать не должен (DEV-07 §3 п.2). Здесь они уже под
+      // рукой — зона влияния только что посчитана
+      residentPhones: this.buildings.residentPhonesOfUnits(tenantId, affected),
       emergency: rec.isEmergency,
       lateNotice: rec.lateNotice,
     });
@@ -731,14 +735,29 @@ export class AccessService {
     return this.repo.listShutdowns(tenantId, buildingId);
   }
 
-  /** Фактическое отключение — отметка мастера с экрана M-45 */
+  /**
+   * Фактическое отключение — отметка мастера с экрана M-45.
+   *
+   * Повторный вызов ничего не делает и не оповещает никого второй раз.
+   * Это не педантизм: отметку ставит мастер из подвала, где связь плохая, а
+   * приложение повторяет неподтверждённые запросы из офлайн-очереди. Каждое
+   * повторное событие — это рассылка всем жителям затронутых квартир, то
+   * есть сотня уведомлений и столько же SMS у тех, кто без приложения.
+   */
   startShutdown(tenantId: string, id: string): ShutdownRecord {
     const x = this.repo.getShutdown(tenantId, id);
     if (!x) throw new NotFoundException('Отключение не найдено');
+    if (x.status === 'active' || x.status === 'restored') return x;
     x.status = 'active';
     x.actualFrom = new Date().toISOString();
     this.repo.saveShutdown(x);
-    this.bus.publish('shutdown.started', { shutdownId: x.id, affectedUnitIds: x.affectedUnitIds });
+    this.bus.publish('shutdown.started', {
+      shutdownId: x.id,
+      affectedUnitIds: x.affectedUnitIds,
+      resourceType: x.resourceType,
+      plannedTo: x.plannedTo,
+      residentPhones: this.buildings.residentPhonesOfUnits(tenantId, x.affectedUnitIds),
+    });
     return x;
   }
 
@@ -749,6 +768,12 @@ export class AccessService {
   restoreShutdown(tenantId: string, id: string): ShutdownRecord & { overranMin: number } {
     const x = this.repo.getShutdown(tenantId, id);
     if (!x) throw new NotFoundException('Отключение не найдено');
+    if (x.status === 'restored') {
+      // Уже подан. Повтор возвращает то же состояние и молчит — по той же
+      // причине, что и у начала отключения
+      const already = Math.max(0, Math.round((Date.parse(x.actualTo ?? x.plannedTo) - Date.parse(x.plannedTo)) / 60_000));
+      return { ...x, overranMin: already };
+    }
     x.status = 'restored';
     x.actualTo = new Date().toISOString();
     this.repo.saveShutdown(x);
@@ -756,6 +781,8 @@ export class AccessService {
     this.bus.publish('shutdown.restored', {
       shutdownId: x.id,
       affectedUnitIds: x.affectedUnitIds,
+      resourceType: x.resourceType,
+      residentPhones: this.buildings.residentPhonesOfUnits(tenantId, x.affectedUnitIds),
       overranMin,
     });
     return { ...x, overranMin };

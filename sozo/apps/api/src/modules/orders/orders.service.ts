@@ -3,7 +3,7 @@ import type { GraphType, TransitionRequest } from '@sozo/contracts';
 import { createOrderStateMachine, emptyContext, uuidv7, type TransitionContext } from '@sozo/kernel';
 import { ORDER_REPOSITORY, type OrderRecord, type OrderRepository } from './order.repository';
 import { PricingService } from '../pricing/pricing.service';
-import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
+import { EventBus, type OrderClosedEvent, type OrderStatusChangedEvent } from '../../common/event-bus';
 import { AccessService } from '../access/access.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { SlaService } from '../sla/sla.service';
@@ -561,6 +561,43 @@ export class OrdersService {
     }
     if (applied === 'duplicate') return order;
 
+    /**
+     * Переход состоялся — сообщаем шине (DEV-07 §4.В).
+     *
+     * Публикуется после applyTransition и до всего остального: доставка
+     * уведомления клиенту не должна зависеть от того, чем закончится расчёт
+     * SLA или биллинга. Подписчик решает сам, о чём стоит уведомить, — заявка
+     * про матрицу доставки не знает.
+     */
+    this.bus.publish<OrderStatusChangedEvent>('order.status_changed', {
+      orderId: applied.id,
+      number: applied.number,
+      graphType: applied.graphType,
+      action: req.action,
+      from: order.status,
+      to: applied.status,
+      clientPhone: applied.clientPhone,
+      clientName: applied.clientName,
+      address: applied.address,
+      masterId: applied.masterId,
+      masterName: applied.masterName,
+      organizationId: applied.organizationId,
+      locationId: applied.locationId,
+      urgency: applied.urgency,
+      reason: req.reason ?? applied.pause?.reason,
+      window: applied.requestedWindow
+        ? {
+            date: applied.requestedWindow.date,
+            startMin: applied.requestedWindow.startMin,
+            endMin: applied.requestedWindow.endMin,
+          }
+        : undefined,
+      // Последняя сумма по заявке: подтверждённая смета, а до неё — вилка.
+      // Именно её человек и увидит в тексте «Подтвердите стоимость»
+      amountTiyin: applied.quotes.at(-1)?.amountTiyin ?? applied.totalFromTiyin,
+      approvers: this.approversFor(applied, req.action),
+    });
+
     // Отметки этапов SLA (DEV-15 §7.2): реакция — принятие в работу, прибытие — старт,
     // устранение — завершение. Дедлайны считает модуль sla, статусы он не трогает.
     if (req.action === 'assign') this.sla.markReached(tenantId, applied.id, 'response');
@@ -598,6 +635,30 @@ export class OrdersService {
       });
     }
     return applied;
+  }
+
+  /**
+   * Кому уходит запрос на утверждение (ТЗ §5.2).
+   *
+   * Только для действий, которые действительно требуют решения человека с
+   * деньгами: на «мастер выехал» утверждающих искать незачем, а поиск по
+   * представителям точки не бесплатный — он идёт на каждый переход.
+   *
+   * Отбор по потолку: утверждает тот, чей лимит покрывает сумму. Если не
+   * покрывает никто — запрос уходит всем без лимита (уровень организации),
+   * потому что дальше по иерархии эскалировать уже некуда, а молчание здесь
+   * останавливает работу мастера.
+   */
+  private approversFor(order: OrderRecord, action: string): Array<{ phone: string; name: string }> | undefined {
+    if (!['request_approval', 'request_addwork'].includes(action)) return undefined;
+    if (!order.organizationId || !order.locationId) return undefined;
+    const found = this.crm.findLocation(order.locationId);
+    if (!found) return undefined;
+    const amount = order.quotes.at(-1)?.amountTiyin ?? order.totalFromTiyin;
+    const reps = found.loc.representatives;
+    const able = reps.filter((r) => r.approvalLimitTiyin === null || r.approvalLimitTiyin >= amount);
+    const list = able.length ? able : reps.filter((r) => r.approvalLimitTiyin === null);
+    return list.map((r) => ({ phone: r.phone, name: r.fullName }));
   }
 
   /** Сохранить изменения вложенных коллекций заявки (фото, сметы) */
@@ -673,10 +734,27 @@ export class OrdersService {
       throw new BadRequestException({ code: 'REASSIGN_STAGE_INVALID', message: 'Переназначение возможно на статусах «Назначена»…«Доп-согласование» (ТЗ 4.5)' });
     }
     if (!reason) throw new BadRequestException({ code: 'REASON_REQUIRED', message: 'Причина переназначения обязательна (справочник D-15)' });
+    const previous = order.masterName;
     order.statusLog.push({ from: order.status, to: order.status, action: 'reassign', actorPhone, reason: `${reason} · ${order.masterName ?? '—'} → ${masterName}`, at: new Date() });
     order.masterId = masterId;
     order.masterName = masterName;
     this.repo.touch();
+    /**
+     * «К вам едет другой мастер» (PRD-01 §5).
+     *
+     * Статус при переназначении не меняется, поэтому в общий поток переходов
+     * это событие не попадает — а для клиента оно из самых заметных: он ждёт
+     * конкретного человека, которого ему назвали по имени. Узнать о замене на
+     * пороге хуже, чем узнать о ней заранее.
+     */
+    this.bus.publish('order.master_replaced', {
+      orderId: order.id,
+      number: order.number,
+      clientPhone: order.clientPhone,
+      previousMasterName: previous,
+      masterName,
+      reason,
+    });
     return order;
   }
 

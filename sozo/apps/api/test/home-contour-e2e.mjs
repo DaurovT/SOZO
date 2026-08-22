@@ -232,6 +232,33 @@ async function main() {
   const s5 = await call(`/buildings/${uk}/shutdowns`, { token: t, body: { resourceType: 'cold_water', riserId: 'R7', plannedFrom: iso(0), plannedTo: iso(4), reason: 'Прорыв', isEmergency: true } });
   check('аварийное отключение меткой не штрафуется', s5.body.lateNotice === false);
 
+  /**
+   * Повтор отметок отключения.
+   *
+   * Мастер ставит их из подвала, где связь плохая, а приложение повторяет
+   * неподтверждённые запросы из офлайн-очереди. Каждое повторное событие —
+   * это рассылка всем жителям затронутых квартир заново: сотня уведомлений
+   * и столько же SMS у тех, кто без приложения. Проверяем по отметкам
+   * времени: при повторе они обязаны остаться прежними.
+   */
+  const shutStart = await call(`/shutdowns/${s1.body.id}/start`, { token: t, method: 'POST' });
+  const shutStartAgain = await call(`/shutdowns/${s1.body.id}/start`, { token: t, method: 'POST' });
+  check('отключение началось', shutStart.body.status === 'active', shutStart.body.status);
+  check(
+    'повторная отметка начала не переписывает факт',
+    shutStartAgain.body.actualFrom === shutStart.body.actualFrom,
+    `${shutStart.body.actualFrom} → ${shutStartAgain.body.actualFrom}`,
+  );
+
+  const shutDone = await call(`/shutdowns/${s1.body.id}/restore`, { token: t, method: 'POST' });
+  const shutDoneAgain = await call(`/shutdowns/${s1.body.id}/restore`, { token: t, method: 'POST' });
+  check('ресурс подан', shutDone.body.status === 'restored', shutDone.body.status);
+  check(
+    'повторная отметка подачи не переписывает факт',
+    shutDoneAgain.body.actualTo === shutDone.body.actualTo,
+    `${shutDone.body.actualTo} → ${shutDoneAgain.body.actualTo}`,
+  );
+
   // ---------------------------------------------------------------
   group('7. Замечания и обходы');
   const noPhotoObs = await call(`/buildings/${uk}/observations`, { token: t, body: { zoneKey: 'двор', categoryId: 'housekeeping', photoIds: [] } });

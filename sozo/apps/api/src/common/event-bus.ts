@@ -78,6 +78,50 @@ export interface OrderClosedEvent {
   serviceFeeBps?: number;
 }
 
+/**
+ * Payload события order.status_changed — контракт для подписчика в notifications.
+ *
+ * Публикуется на каждый переход статусной машины, а не только на интересные:
+ * что интересно, решает подписчик по матрице (PRD-01 §5), и решать это в
+ * заявке значило бы держать в ней список из сорока событий доставки.
+ *
+ * Всё, что нужно для текста уведомления, едет в событии — имя мастера, окно,
+ * адрес, сумма. Иначе доставка полезла бы читать заявку, а с ней и всё, что
+ * к заявке привязано, и правило зависимостей (DEV-07 §3) не пережило бы
+ * первого же уведомления про смету.
+ */
+export interface OrderStatusChangedEvent {
+  orderId: string;
+  number: string;
+  graphType: string;
+  /** Действие перехода: assign, depart, complete — по нему выбирается текст */
+  action: string;
+  from: string;
+  to: string;
+  clientPhone: string;
+  clientName: string;
+  address: string;
+  masterId?: string;
+  masterName?: string;
+  organizationId?: string;
+  locationId?: string;
+  urgency: 'normal' | 'urgent' | 'emergency';
+  /** Причина паузы или отмены — из неё человек понимает, что происходит */
+  reason?: string;
+  /** Окно, которое выбрал клиент: «сегодня 14:00–16:00» в тексте уведомления */
+  window?: { date?: string; startMin?: number; endMin?: number };
+  /** Сумма к подтверждению или к оплате, тийины */
+  amountTiyin?: number;
+  /**
+   * Кому в организации уходит запрос на утверждение (B2B, ТЗ §5.2).
+   *
+   * Считается в заявке и едет готовым списком по той же причине, что и
+   * ставка сбора в order.closed: доставка не должна знать про представителей
+   * точки и пороги договора. Пусто для B2C — там решает сам клиент.
+   */
+  approvers?: Array<{ phone: string; name: string }>;
+}
+
 /** Payload события observation.created — контракт для подписчика в orders */
 export interface ObservationCreatedEvent {
   observationId: string;

@@ -3,14 +3,21 @@ import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
 import { PgMirror } from '../../common/pg-mirror';
+import { EventBus } from '../../common/event-bus';
+import { MastersService } from '../masters/masters.module';
 import { tr, trValue } from '../../common/locale';
 
 /**
  * Лента уведомлений мастера (PRD-02 §7, матрица из 27 событий).
  *
  * Здесь события оседают и живут историей. Доставка push — отдельный слой:
- * без неё лента работает, но мастер узнаёт о событии, только открыв приложение.
- * Deep-link хранится сразу — когда появится FCM, он поедет в payload без переделки.
+ * лента работает и без неё, но мастер узнаёт о событии, только открыв
+ * приложение. Deep-link хранится с самого начала и уходит в push как есть.
+ *
+ * Все двадцать семь событий матрицы (PRD-02 §5) проходят через `push()` —
+ * единственный метод записи. Поэтому доставка подключена именно здесь, одним
+ * событием шины: врезать её в двадцать семь мест вызова значило бы двадцать
+ * семь раз получить возможность забыть.
  */
 
 export type NotificationKind =
@@ -59,6 +66,31 @@ export interface NotificationRec {
   createdAt: string;
 }
 
+/**
+ * Что уходит в шину на каждую запись ленты (контракт для notifications).
+ *
+ * Телефон кладётся в событие, а не ищется подписчиком: доставка не должна
+ * знать про реестр мастеров (DEV-07 §3 п.2). Здесь он под рукой — карточка
+ * мастера всё равно уже прочитана.
+ */
+export interface MasterNotifiedEvent {
+  masterId: string;
+  masterPhone: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  bodyArgs?: (string | number)[];
+  priority: NotificationPriority;
+  deepLink?: string;
+  orderId?: string;
+  /**
+   * Срок жизни push, секунды. В ленте не хранится намеренно: история не
+   * протухает, протухает уведомление на экране. Просроченный оффер,
+   * всплывший через полчаса, — это нажатие «Принять» и отказ в ответ.
+   */
+  ttlSeconds?: number;
+}
+
 /** Группировка в ленте: одна иконка на смысловую группу, а не на каждый вид */
 export const NOTIFICATION_GROUPS: Record<NotificationKind, { icon: string; group: string }> = {
   offer: { icon: 'bolt', group: 'Заявки' },
@@ -90,6 +122,8 @@ export class NotificationsService {
   constructor(
     private readonly store: StateStore,
     prisma: PrismaService,
+    private readonly bus: EventBus,
+    private readonly masters: MastersService,
   ) {
     this.store.register(
       'masterNotifications',
@@ -158,18 +192,46 @@ export class NotificationsService {
     priority?: NotificationPriority;
     deepLink?: string;
     orderId?: string;
+    /** Только для доставки: у оффера равен его таймеру. В ленту не пишется */
+    ttlSeconds?: number;
   }): NotificationRec {
+    const { ttlSeconds, ...feed } = data;
     const rec: NotificationRec = {
       id: uuidv7(),
       priority: data.priority ?? 'normal',
       read: false,
       createdAt: new Date().toISOString(),
-      ...data,
+      ...feed,
     };
     this.items.push(rec);
     // Лента не архив: держим последние 2000 на всех, старое мастеру не нужно
     if (this.items.length > 2000) this.items.splice(0, this.items.length - 2000);
     this.store.persist();
+
+    /**
+     * Событие для доставки. Публикуется ПОСЛЕ записи в ленту: если push не
+     * уйдёт — мастер всё равно увидит событие, открыв приложение, а обратный
+     * порядок дал бы уведомление о том, чего в ленте ещё нет.
+     *
+     * Телефон может не найтись — карточку мастера удалили, лента осталась.
+     * Это не повод бросать: запись уже сделана, а доставлять некому.
+     */
+    const phone = this.masters.list().find((m) => m.id === rec.masterId)?.phone;
+    if (phone) {
+      const event: MasterNotifiedEvent = {
+        masterId: rec.masterId,
+        masterPhone: phone,
+        kind: rec.kind,
+        title: rec.title,
+        body: rec.body,
+        bodyArgs: rec.bodyArgs,
+        priority: rec.priority,
+        deepLink: rec.deepLink,
+        orderId: rec.orderId,
+        ttlSeconds,
+      };
+      this.bus.publish('master.notified', event);
+    }
     return rec;
   }
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'dart:async';
+
 import 'design_tokens.dart';
 import 'widgets/figma_icon.dart';
 import 'i18n.dart';
@@ -11,6 +13,7 @@ import 'screens/outbox_screen.dart';
 import 'screens/profile_extras.dart';
 import 'screens/profile_screen.dart';
 import 'screens/today_screen.dart';
+import 'push/deep_link.dart';
 import 'store/session.dart';
 import 'widgets/app_chrome.dart';
 import 'widgets/common.dart';
@@ -19,9 +22,22 @@ import 'widgets/common.dart';
 /// Один объект на процесс — приложение мастера однопользовательское по определению.
 final session = Session();
 
+/// Ключ навигатора: тап по уведомлению приходит вне дерева виджетов, и
+/// открыть по нему экран больше нечем — контекста у такого события нет.
+final navigatorKey = GlobalKey<NavigatorState>();
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MasterApp());
+}
+
+/// Поднять канал уведомлений и связать его с навигацией
+Future<void> _startPush() async {
+  await session.push.init();
+  session.push.onDeepLink = (link) {
+    final nav = navigatorKey.currentState;
+    if (nav != null) unawaited(openDeepLink(nav, link));
+  };
 }
 
 class MasterApp extends StatefulWidget {
@@ -37,11 +53,15 @@ class _MasterAppState extends State<MasterApp> {
     super.initState();
     l10n.load();
     session.boot();
+    // Канал поднимаем отдельно от загрузки сессии: инициализация Firebase
+    // ходит в сеть, а лента дня ждать этого не должна
+    unawaited(_startPush());
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: t('common.sozoMaster'),
       debugShowCheckedModeBanner: false,
       theme: sozoTheme(),

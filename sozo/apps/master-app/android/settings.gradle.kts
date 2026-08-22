@@ -21,6 +21,11 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.0.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    // Плагин Firebase объявлен, но не применён здесь: применяется он в
+    // app/build.gradle.kts и только при наличии google-services.json.
+    // Проекта Firebase у SOZO пока нет, и безусловное применение ломало бы
+    // сборку у всех — включая тех, кто пушей не касается
+    id("com.google.gms.google-services") version "4.5.0" apply false
 }
 
 include(":app")

@@ -25,6 +25,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Канал по умолчанию для уведомлений FCM.
+             Нужен на случай, когда сервер не назвал канал сам: без этой
+             метки Android положит такое уведомление в канал «Прочее» с
+             минимальной важностью, и человек его не увидит. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="sozo_default" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

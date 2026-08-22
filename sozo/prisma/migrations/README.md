@@ -5,6 +5,7 @@
 | `000_init/migration.sql` | Полная структура: 37 таблиц, enum'ы, индексы. Генерируется из `schema.prisma` командой `npm run db:sql` | — |
 | `m7_buildings_rls/migration.sql` | RLS-политики контура «Дом» + CHECK-инварианты DEV-02 §4.4 (пп. 7, 10, 13, 14) | — |
 | `m7_shutdown_exclusion/migration.sql` | Инвариант п.9 «один стояк — одно отключение»: EXCLUDE-ограничение | **расширение `btree_gist`** (пакет `postgresql-contrib`; в образе `postgres:16-alpine` есть) |
+| `m42_push/migration.sql` | Доставка push: токены устройств и журнал доставки (ТЗ §11) | — |
 
 Порядок применения — сверху вниз.
 

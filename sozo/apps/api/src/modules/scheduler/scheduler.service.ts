@@ -221,7 +221,24 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
           /* критичные дефекты не отменяются — правило графа */
         }
       } else if (waitedH >= 24) {
+        // Та же болезнь, что и у напоминаний об оплате: без отметки
+        // утверждающий получал бы «смета ждёт решения» каждую минуту все
+        // двое суток до авто-отмены
+        const key = `approval_escalated:${o.id}`;
+        if (this.done.has(key)) continue;
+        this.done.add(key);
+        this.mirror.schedule();
         this.audit.write({ actorPhone: 'система', action: 'timer.approval_escalated', entity: 'Order', entityId: o.id, payload: { number: o.number, waitedH: Math.round(waitedH) } });
+        // ТЗ §5.3: на T+24 повторное напоминание уходит уже двумя каналами.
+        // Молчание утверждающего стоит клиенту суток простоя, и одного
+        // push, который человек мог смахнуть не глядя, здесь мало
+        this.bus.publish('order.approval_escalated', {
+          orderId: o.id,
+          number: o.number,
+          amountTiyin: o.quotes.at(-1)?.amountTiyin ?? o.totalFromTiyin,
+          waitedH: Math.round(waitedH),
+          approvers: this.approversOf(o),
+        });
         escalated += 1;
       }
     }
@@ -237,12 +254,44 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     for (const o of waiting) {
       const h = (now - new Date(o.statusLog.at(-1)?.at ?? o.createdAt).getTime()) / 3_600_000;
       if (h >= 24) {
+        /**
+         * Один раз на этап, а не на каждый тик.
+         *
+         * Раньше отметки не было, и это сходило с рук, пока напоминание
+         * оставалось строкой в аудите: мусор в журнале никого не будил.
+         * С подключённой доставкой та же ветка стала отправкой сообщения —
+         * и заявка, висящая в «ожидает оплаты», слала должнику требование
+         * каждую минуту, пока кто-нибудь не заплатит.
+         *
+         * Ключ включает этап: T+24 и T+72 — два разных напоминания, второе
+         * обязано уйти, даже если первое уже отправлено.
+         */
+        const stage = h >= 72 ? 'T+72' : 'T+24';
+        const key = `payment_reminder:${o.id}:${stage}`;
+        if (this.done.has(key)) continue;
+        this.done.add(key);
+        this.mirror.schedule();
         this.audit.write({
           actorPhone: 'система',
-          action: h >= 72 ? 'timer.payment_reminder_sms' : 'timer.payment_reminder_push',
+          action: stage === 'T+72' ? 'timer.payment_reminder_sms' : 'timer.payment_reminder_push',
           entity: 'Order',
           entityId: o.id,
-          payload: { number: o.number, stage: h >= 72 ? 'T+72 SMS + блок новых заявок' : 'T+24 push' },
+          payload: { number: o.number, stage: stage === 'T+72' ? 'T+72 SMS + блок новых заявок' : 'T+24 push' },
+        });
+        /**
+         * Напоминание человеку (ТЗ §8.9, дунинг B2C).
+         *
+         * До сих пор таймер писал в аудит и на этом заканчивался: запись
+         * «уведомлено» означала, что мы знаем о долге, а не что о нём знает
+         * клиент. Дальше доставку решает движок уведомлений — он же решает,
+         * что T+72 уходит SMS, а T+24 обходится push.
+         */
+        this.bus.publish('order.payment_reminder', {
+          orderId: o.id,
+          number: o.number,
+          clientPhone: o.clientPhone,
+          amountTiyin: o.quotes.at(-1)?.amountTiyin ?? o.totalFromTiyin,
+          stage,
         });
         notified += 1;
       }
@@ -304,6 +353,50 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     this.log('#18', 'Приостановка при неоплате (10-е)', `приостановлено: ${suspended}`, suspended, sim);
   }
 
+  /**
+   * Кому напоминать об утверждении.
+   *
+   * Тот же отбор, что и при первом запросе (ТЗ §5.2): утверждает тот, чей
+   * потолок покрывает сумму. Напомнить не тому — значит потерять ещё сутки,
+   * потому что человек без права утверждения ничего с уведомлением сделать
+   * не сможет.
+   */
+  private approversOf(order: { locationId?: string; quotes: Array<{ amountTiyin: number }>; totalFromTiyin: number }): Array<{ phone: string; name: string }> {
+    if (!order.locationId) return [];
+    const found = this.crm.findLocation(order.locationId);
+    if (!found) return [];
+    const amount = order.quotes.at(-1)?.amountTiyin ?? order.totalFromTiyin;
+    const reps = found.loc.representatives;
+    const able = reps.filter((r) => r.approvalLimitTiyin === null || r.approvalLimitTiyin >= amount);
+    const list = able.length ? able : reps.filter((r) => r.approvalLimitTiyin === null);
+    return list.map((r) => ({ phone: r.phone, name: r.fullName }));
+  }
+
+  /**
+   * Кому в организации адресованы деньги (ТЗ §8.9: дунинг идёт бухгалтерии
+   * и руководству организации).
+   *
+   * Только уровень организации — те, у кого потолок утверждения не задан.
+   * Первая редакция брала всех, кто вправе утверждать хоть что-то, и это
+   * была ошибка масштаба: у сети из пятидесяти точек счёт организации
+   * уходил бы полусотне руководителей точек, которые его не оплачивают и
+   * повлиять на оплату не могут. Каждый этап дунинга — с десятого дня ещё и
+   * SMS каждому.
+   */
+  private orgApprovers(organizationId?: string): Array<{ phone: string; name: string }> {
+    if (!organizationId) return [];
+    const org = this.crm.list().find((o) => o.id === organizationId);
+    if (!org) return [];
+    const out = new Map<string, { phone: string; name: string }>();
+    for (const loc of this.crm.get(organizationId).locations) {
+      for (const rep of loc.representatives) {
+        if (rep.approvalLimitTiyin !== null) continue;
+        out.set(rep.phone, { phone: rep.phone, name: rep.fullName });
+      }
+    }
+    return [...out.values()];
+  }
+
   /** Возраст в днях по виртуальному времени планировщика */
   private ageDays(iso: string): number {
     return Math.floor((this.now().getTime() - new Date(iso).getTime()) / 86_400_000);
@@ -334,6 +427,24 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         entity: 'Invoice',
         entityId: inv.id,
         payload: { number: inv.number, organization: inv.organizationName, ageDays, stage: stage[1] },
+      });
+      /**
+       * Этап дунинга людям в организации (ТЗ §8.9).
+       *
+       * Адресаты — те, кто вправе платить и решать: бухгалтерию от рядового
+       * сотрудника отличает право утверждения, и в CRM это единственный
+       * признак, который у нас есть. Слать всем подряд нельзя — счёт
+       * организации не касается человека, который вызывает электрика.
+       */
+      this.bus.publish('invoice.dunning', {
+        invoiceId: inv.id,
+        number: inv.number,
+        organizationId: inv.organizationId,
+        organizationName: inv.organizationName,
+        amountTiyin: inv.amountTiyin,
+        ageDays,
+        stage: stage[1],
+        recipients: this.orgApprovers(inv.organizationId),
       });
       touched += 1;
     }

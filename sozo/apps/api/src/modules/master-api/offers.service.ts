@@ -288,6 +288,10 @@ export class MasterOffersService {
       priority: 'heads_up',
       deepLink: `sozo-master://offer/${rec.id}`,
       orderId: rec.orderId,
+      // Уведомление живёт ровно столько, сколько оффер: пуш, доставленный
+      // после истечения таймера, зовёт мастера нажать «Принять» и получить
+      // отказ — это хуже, чем не прийти вовсе
+      ttlSeconds: ttl,
     });
     if (this.offers.length > 500) this.offers.splice(0, this.offers.length - 500);
     this.store.persist();

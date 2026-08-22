@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'design_tokens.dart';
 import 'i18n.dart';
+import 'push/deep_link.dart';
 import 'screens/context_screen.dart';
 import 'screens/login_screen.dart';
 import 'store/session.dart';
@@ -12,11 +13,32 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await l10n.load();
   await session.load();
+  // Push поднимаем до runApp, но не ждём: инициализация Firebase ходит в
+  // сеть, а запуск приложения ждать этого не должен. Если канала нет —
+  // приложение работает как прежде, события видно в ленте
+  unawaited(_startPush());
   runApp(const SozoClientApp());
   // Догружаемый словарь мог устареть — сверяем отпечаток и обновляем в фоне.
   // После `runApp`, а не до: запуск не должен ждать сети ради перевода,
   // который уже лежит в кеше и работает
   unawaited(l10n.refreshInBackground());
+}
+
+/// Ключ навигатора — единственный способ открыть экран по тапу на
+/// уведомление: тап приходит вне дерева виджетов, контекста у него нет.
+final navigatorKey = GlobalKey<NavigatorState>();
+
+/// Поднять канал уведомлений и связать его с навигацией.
+///
+/// Если человек уже вошёл, устройство регистрируется сразу: сессия живёт
+/// между запусками, а токен поставщик меняет когда захочет.
+Future<void> _startPush() async {
+  await session.push.init();
+  session.push.onDeepLink = (link) {
+    final nav = navigatorKey.currentState;
+    if (nav != null) unawaited(openDeepLink(nav, link));
+  };
+  if (session.signedIn) await session.push.register();
 }
 
 class SozoClientApp extends StatelessWidget {
@@ -29,6 +51,7 @@ class SozoClientApp extends StatelessWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([l10n, session]),
       builder: (context, _) => MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'SOZO',
         theme: sozoTheme(),
         debugShowCheckedModeBanner: false,

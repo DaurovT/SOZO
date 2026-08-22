@@ -109,6 +109,22 @@ class ApiClient {
 
   Future<Map<String, dynamic>> me() async => (await get('/master/me')) as Map<String, dynamic>;
 
+  /// Регистрация устройства для push (ТЗ §11, PRD-02 §5).
+  ///
+  /// Зовётся при каждом старте с живой сессией, а не только после входа:
+  /// токен меняет сам поставщик, и молчаливая смена означает пропущенный
+  /// оффер — то есть заявку, ушедшую другому мастеру.
+  Future<Map<String, dynamic>> registerDevice({
+    required String token,
+    required String app,
+    required String platform,
+  }) async =>
+      (await post('/devices', {'token': token, 'app': app, 'platform': platform})) as Map<String, dynamic>;
+
+  /// Снятие устройства при выходе — чтобы офферы не приходили тому, кто вышел
+  Future<Map<String, dynamic>> revokeDevice(String token) async =>
+      (await post('/devices/revoke', {'token': token})) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> today({String? date}) async =>
       (await get('/master/today', query: {'date': ?date})) as Map<String, dynamic>;
 
