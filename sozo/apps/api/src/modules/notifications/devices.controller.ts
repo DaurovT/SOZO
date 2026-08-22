@@ -6,6 +6,30 @@ import { DeviceTokensService, type DevicePlatform, type PushApp } from './device
 import { PushDispatchService } from './push-dispatch.service';
 
 const APPS: PushApp[] = ['client', 'master'];
+
+/**
+ * Подсказка по итогу проверки.
+ *
+ * Отдельной функцией, потому что половина отказов чинится не там, где их
+ * читают. THIRD_PARTY_AUTH_ERROR от FCM означает, что учётные данные
+ * отвергла Apple, а не Google: искать причину надо в ключе APNs — Team ID,
+ * Key ID и в том, к какому приложению ключ привязан, — а вовсе не в ключе
+ * сервисного аккаунта, который в этот момент работает исправно.
+ */
+function hintFor(devices: number, status: string, detail?: string): string {
+  if (devices === 0) return 'Устройств нет: человек не открывал приложение после установки либо вышел из него';
+  if (status === 'sent') return 'Отправлено поставщику. Если на телефоне пусто — проверьте разрешение на уведомления в настройках телефона';
+  if (detail?.includes('THIRD_PARTY_AUTH_ERROR') || detail?.includes('APNs')) {
+    return (
+      'FCM принял запрос, но Apple отвергла учётные данные APNs. Проверьте в Firebase → Cloud Messaging: ' +
+      'Team ID (ровно 10 символов), Key ID и что ключ .p8 загружен именно для этого iOS-приложения'
+    );
+  }
+  if (detail?.includes('404') || detail?.includes('UNREGISTERED')) {
+    return 'Токен устройства мёртв — приложение удалили или переустановили. Строка снята, вернётся при следующем входе';
+  }
+  return `Поставщик не принял: ${detail ?? 'причина в журнале сервера'}`;
+}
 const PLATFORMS: DevicePlatform[] = ['android', 'ios', 'web'];
 
 /**
@@ -118,6 +142,49 @@ export class AdminPushController {
    * «уведомления не приходят» — это приложение, в которое не заходили после
    * обновления, и отличить такой случай от сбоя канала иначе нечем.
    */
+  /**
+   * Проверочное уведомление себе или указанному человеку.
+   *
+   * Нужно после каждого касания к каналу: включили FCM, сменили ключ,
+   * пересобрали приложение. Без такой кнопки проверка выглядит как «создайте
+   * заявку и назначьте мастера» — то есть боевое действие с боевыми данными
+   * ради того, чтобы посмотреть, дошло ли уведомление.
+   *
+   * Приоритет высокий намеренно: проверяют обычно именно то, разбудит ли
+   * телефон, а тихое уведомление в шторке этого не показывает.
+   */
+  @Post('test')
+  async test(
+    @Body() body: { phone?: string; app?: string },
+    @Req() req: { auth: JwtClaims },
+  ) {
+    const phone = body.phone?.trim() || req.auth.phone;
+    const app = (body.app as PushApp) ?? 'client';
+    if (!APPS.includes(app)) {
+      throw new BadRequestException({ code: 'APP_UNKNOWN', message: 'Приложение: client или master', app: body.app });
+    }
+    const devices = this.devices.for(phone, app);
+    const rec = await this.dispatch.deliver({
+      event: 'push.test',
+      phone,
+      app,
+      title: 'Проверка связи',
+      body: 'Уведомления SOZO работают. Это сообщение отправил администратор',
+      priority: 'high',
+    });
+    return {
+      phone,
+      app,
+      devicesFound: devices.length,
+      result: rec.status,
+      channel: rec.channel,
+      detail: rec.detail,
+      // Прямая подсказка вместо чтения журнала: у отказа здесь всего
+      // несколько причин, и каждая чинится по-своему
+      hint: hintFor(devices.length, rec.status, rec.detail),
+    };
+  }
+
   @Get('deliveries')
   deliveries(@Query('phone') phone?: string, @Query('limit') limit?: string) {
     if (!phone) throw new BadRequestException({ code: 'PHONE_REQUIRED', message: 'Укажите телефон человека' });
