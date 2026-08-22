@@ -108,5 +108,5 @@ NODE
 
 echo
 echo "Что говорил сам сервер в последних отказах:"
-journalctl -u sozo --no-pager -n 2000 2>/dev/null | grep -E "FCM отказал|Push уходят|FCM недоступен" | tail -10 \
-  || echo "  (записей не нашлось — проверьте имя службы в journalctl)"
+journalctl -u sozo-api --no-pager -n 3000 2>/dev/null | grep -A 20 -E "FCM отказал|Push уходят|FCM недоступен" | tail -40 \
+  || echo "  (записей не нашлось — служба называется иначе, проверьте systemctl list-units | grep sozo)"
