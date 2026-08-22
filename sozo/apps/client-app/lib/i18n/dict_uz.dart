@@ -146,6 +146,11 @@ const uzDict = <String, String>{
   'c01.version': 'Versiya {version}',
   'c01.updateTitle': 'Davom etish uchun ilovani yangilang',
   'c01.update': 'Yangilash',
+  'c01.guestTitle': 'Xizmat narxlari',
+  'c01.guestSubtitle': 'Bular boshlangʻich narxlar. Aniq narxni usta koʻrikdan keyin aytadi. Usta chaqirish uchun kirish kerak: arizaga telefon raqami zarur.',
+  'c01.guestFrom': '{p1} dan',
+  'c01.guestLoginCta': 'Kirish va usta chaqirish',
+  'c01.guestEmpty': 'Narxlar hali eʼlon qilinmagan',
   // ---------- C-02 ----------
   'c02.title': 'Kirish',
   'c02.phoneLabel': 'Telefon raqami',

@@ -22,6 +22,7 @@ import 'b2b/site_screens.dart';
 import 'b2b/staff_home.dart';
 import 'complaints_screen.dart';
 import 'consents_screen.dart';
+import 'guest_prices_screen.dart';
 import 'context_screen.dart';
 import 'create/wizard.dart';
 import 'decisions_screen.dart';
@@ -96,6 +97,7 @@ class ShowcaseScreen extends StatelessWidget {
         const SizedBox(height: SozoSpace.s16),
 
         _group(t('showcase.entry'), [
+          _row('C-01', t('c01.guestTitle'), () => const GuestPricesScreen()),
           _row('C-04', t('c04.title'), () => const ConsentsScreen()),
           _row('C-05', t('c05.title'), () => const ContextScreen()),
         ]),

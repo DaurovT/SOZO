@@ -63,6 +63,23 @@ async function main() {
   console.log(`Сквозной прогон приложения «Клиент» → ${BASE}`);
 
   // ---------------------------------------------------------------- вход
+  // ------------------------------------------------------- гость (C-01)
+  // Единственное, что приложение показывает до входа. Экран цен для гостя
+  // ходит сюда без заголовка авторизации: закройся эндпоинт токеном —
+  // «Продолжить без регистрации» снова перестанет работать, а заметит это
+  // человек, а не прогон
+  group('Гостевой просмотр цен');
+  const guestPrices = await call('/public/prices');
+  check('цены отдаются без токена', guestPrices.status === 200, `получили ${guestPrices.status}`);
+  const guestCats = guestPrices.body.categories ?? [];
+  check('категории непусты', Array.isArray(guestCats) && guestCats.length > 0, JSON.stringify(guestPrices.body).slice(0, 100));
+  check('у каждой категории есть имя', guestCats.every((c) => typeof c.category === 'string' && c.category.length > 0));
+  // Ноль означал бы «бесплатно», а бесплатных работ в прайсе нет
+  check('цена «от» — положительное число или её нет вовсе',
+    guestCats.every((c) => c.priceFromTiyin == null || c.priceFromTiyin > 0),
+    JSON.stringify(guestCats.slice(0, 3)));
+  check('номер релиза прайса назван', typeof guestPrices.body.releaseNumber === 'number', String(guestPrices.body.releaseNumber));
+
   group('Вход');
   const noToken = await call('/app/me');
   check('без токена — 401', noToken.status === 401, `получили ${noToken.status}`);

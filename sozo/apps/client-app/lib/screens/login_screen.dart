@@ -13,6 +13,7 @@ import '../widgets/blocks.dart';
 import '../widgets/brand.dart';
 import '../widgets/figma_icon.dart';
 import '../widgets/language_sheet.dart';
+import 'guest_prices_screen.dart';
 
 /// C-01 → C-02 → C-03. Перенос макета 1:1: `161:1569` sozo-intro-screen,
 /// `165:15` login-phone-screen, `167:1587` login-sms-code-screen.
@@ -278,16 +279,30 @@ class _LoginFlowState extends State<LoginFlow> {
             color: authAmber,
             onTap: () => setState(() => _step = _Step.phone),
           ),
-          const SizedBox(height: SozoSpace.s16),
-          // «Продолжить без регистрации»: в макете есть, в API гостевого
-          // режима нет — ссылка нарисована, но никуда не ведёт, пока по
-          // гостевому сценарию не будет решения
-          Text(
-            t('c01.guest'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: authInk),
+          // «Продолжить без регистрации» ведёт к ценам «от» по категориям
+          // (C-01, экран GuestPricesScreen). Заказать гостем нельзя — заявке
+          // нужен телефон, — но узнать порядок цены человек вправе, не отдавая
+          // номер.
+          //
+          // Отступы 3 и 10 вместо 16 и 24 из макета: надпись обёрнута в область
+          // нажатия высотой 44 (минимум Apple HIG), и без вычета она разъехалась
+          // бы на 27 точек. Сумма от кнопки до карточек та же — 57.
+          const SizedBox(height: 3),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openGuestPrices,
+            child: SizedBox(
+              height: 44,
+              child: Center(
+                child: Text(
+                  t('c01.guest'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: authInk),
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: SozoSpace.s24),
+          const SizedBox(height: 10),
           Padding(
             padding: const EdgeInsets.only(top: SozoSpace.s12),
             child: Row(
@@ -306,6 +321,16 @@ class _LoginFlowState extends State<LoginFlow> {
   }
 
   Future<void> _editBaseUrl() => showServerAddressSheet(context);
+
+  /// Цены до входа. Отдельным маршрутом, а не четвёртым состоянием этого
+  /// экрана: с шагами входа гостя ничего не связывает, и класть его сюда
+  /// значило бы тащить номер и таймер повтора через экран, который их не
+  /// касается.
+  void _openGuestPrices() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const GuestPricesScreen()),
+    );
+  }
 
 
   // ---------------- C-02. Телефон (макет 165:15) ----------------
