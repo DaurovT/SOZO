@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { DeviceTokensService } from './device-tokens.service';
 import { PushDispatchService } from './push-dispatch.service';
-import { DevicesController } from './devices.controller';
+import { AdminPushController, DevicesController } from './devices.controller';
 import { SmsService } from '../../common/sms.service';
 import { PushService } from '../../common/push.service';
 import { PlatformModule } from '../platform/platform.module';
@@ -20,7 +20,7 @@ import { PlatformModule } from '../platform/platform.module';
  */
 @Module({
   imports: [PlatformModule],
-  controllers: [DevicesController],
+  controllers: [DevicesController, AdminPushController],
   providers: [NotificationsService, DeviceTokensService, PushDispatchService, SmsService, PushService],
 })
 export class NotificationsModule {}

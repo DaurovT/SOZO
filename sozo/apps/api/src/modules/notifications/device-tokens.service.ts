@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
@@ -39,14 +39,29 @@ export interface DeviceTokenRec {
  */
 const STALE_DAYS = 180;
 
+/**
+ * Сколько держим снятую строку, прежде чем удалить совсем.
+ *
+ * Снятый токен не удаляется сразу намеренно: он возвращается при первом же
+ * фоновом обновлении, которое приложение делает и после выхода. Но вечно
+ * он не нужен — через квартал это уже не «человек вышел вчера», а мусор,
+ * который проходит через каждую выборку адресатов.
+ */
+const KEEP_REVOKED_DAYS = 90;
+
+/** Как часто подметаем. Чаще раза в сутки незачем: строки живут месяцами */
+const SWEEP_EVERY_MS = 24 * 3600 * 1000;
+
 @Injectable()
 export class DeviceTokensService implements OnModuleInit {
   private readonly items: DeviceTokenRec[] = [];
   private readonly mirror: PgMirror;
 
+  private readonly log = new Logger('Push');
+
   constructor(
     private readonly store: StateStore,
-    prisma: PrismaService,
+    private readonly prisma: PrismaService,
   ) {
     this.store.register(
       'deviceTokens',
@@ -96,8 +111,48 @@ export class DeviceTokensService implements OnModuleInit {
     this.store.registerMirror(this.mirror);
   }
 
+  private lastSweep = 0;
+
   onModuleInit(): Promise<void> {
     return this.mirror.init();
+  }
+
+  /**
+   * Уборка мёртвых строк — лениво, при регистрации устройства.
+   *
+   * Без отдельного таймера: регистрация происходит на каждом запуске
+   * приложения, то есть достаточно часто, а таймер в монолите пришлось бы
+   * заводить, останавливать при выключении и объяснять в двух местах.
+   *
+   * Удаляем только заведомо мёртвое: снятое больше квартала назад и не
+   * подтверждавшееся дольше двух сроков живости. Устройство человека,
+   * который вернулся через полгода, при этом не теряется — оно
+   * зарегистрируется заново при первом же запуске приложения.
+   */
+  private sweep(): void {
+    const now = Date.now();
+    if (now - this.lastSweep < SWEEP_EVERY_MS) return;
+    this.lastSweep = now;
+    const revokedBefore = now - KEEP_REVOKED_DAYS * 86_400_000;
+    const seenBefore = now - 2 * STALE_DAYS * 86_400_000;
+    const dead = this.items.filter(
+      (d) =>
+        (d.revokedAt && Date.parse(d.revokedAt) < revokedBefore) || Date.parse(d.lastSeenAt) < seenBefore,
+    );
+    if (!dead.length) return;
+    for (const d of dead) {
+      const i = this.items.indexOf(d);
+      if (i >= 0) this.items.splice(i, 1);
+    }
+    this.store.persist();
+    // Из базы строки уходят отдельным запросом: зеркало умеет только
+    // записывать набор, а удаление в нём не выражено
+    if (this.prisma.enabled) {
+      void this.prisma
+        .withContext((tx) => tx.deviceToken.deleteMany({ where: { token: { in: dead.map((d) => d.token) } } }))
+        .catch((e: unknown) => this.log.error(`чистка устройств не удалась: ${(e as Error).message}`));
+    }
+    this.log.log(`снято мёртвых устройств: ${dead.length}`);
   }
 
   /**
@@ -116,6 +171,7 @@ export class DeviceTokensService implements OnModuleInit {
     phone: string;
     locale?: Locale;
   }): DeviceTokenRec {
+    this.sweep();
     const now = new Date().toISOString();
     const found = this.items.find((d) => d.token === input.token);
     if (found) {

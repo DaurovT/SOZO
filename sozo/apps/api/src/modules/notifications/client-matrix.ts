@@ -44,6 +44,10 @@ export const link = {
   complaints: () => `${CLIENT_SCHEME}://complaints`,
   /** C-49 — баллы и ваучеры участника программы */
   loyalty: () => `${CLIENT_SCHEME}://loyalty`,
+  /** C-25 — история и гарантия по заявке */
+  warranty: (id: string) => `${CLIENT_SCHEME}://order/${id}/warranty`,
+  /** C-27 — диалог «как дела» после ремонта */
+  care: (id: string) => `${CLIENT_SCHEME}://order/${id}/care`,
 };
 
 /** Готовое к отправке уведомление: всё, кроме способа доставки */

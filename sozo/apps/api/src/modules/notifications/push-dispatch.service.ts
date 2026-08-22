@@ -86,6 +86,20 @@ const PARAM_SMS_DOUBLE = 204;
  */
 const RETRY_DELAYS_MS = [5_000, 30_000];
 
+/**
+ * Сколько живёт журнал доставки.
+ *
+ * Квартал — это горизонт разбора: жалоба «мне не пришло уведомление
+ * полгода назад» не разбирается по журналу, её разбирают по заявке.
+ * Без ротации таблица растёт быстрее всех остальных в базе — на каждое
+ * событие по строке на адресата, — и однажды становится самой тяжёлой
+ * в системе ради данных, которые никто не читает.
+ */
+const KEEP_DELIVERIES_DAYS = 90;
+
+/** Реже раза в сутки убирать незачем */
+const ROTATE_EVERY_MS = 24 * 3600 * 1000;
+
 @Injectable()
 export class PushDispatchService {
   private readonly log = new Logger('Push');
@@ -96,6 +110,19 @@ export class PushDispatchService {
    * человеку» без похода в базу. Полный журнал живёт в push_delivery.
    */
   private readonly recent: DeliveryRec[] = [];
+
+  private lastRotate = 0;
+
+  /**
+   * Когда человеку последний раз назначили сервисное касание.
+   *
+   * Отдельно от журнала, и вот почему: `deliver()` асинхронен, а подписчик
+   * шины зовёт его без ожидания. Два касания, родившиеся в одном тике
+   * планировщика, успевали пройти проверку потолка одновременно — оба видели
+   * пустую историю, потому что записать результат ни один ещё не успел.
+   * Место в окне занимается сразу и синхронно, до первой же отправки.
+   */
+  private readonly serviceTouchAt = new Map<string, number>();
 
   constructor(
     private readonly push: PushService,
@@ -112,11 +139,14 @@ export class PushDispatchService {
   async deliver(input: DeliverInput): Promise<DeliveryRec> {
     if (!input.phone) return this.record(input, 'none', 'skipped', 'no_phone');
 
-    if (input.serviceTouch && this.capped(input.phone)) {
-      // Потолок — не ошибка доставки, а решение не отправлять. В журнале
-      // видно именно это: иначе «пользователь жалуется, что не приходит»
-      // разбирали бы как сбой канала
-      return this.record(input, 'none', 'skipped', 'rate_capped');
+    if (input.serviceTouch) {
+      if (this.capped(input.phone)) {
+        // Потолок — не ошибка доставки, а решение не отправлять. В журнале
+        // видно именно это: иначе «пользователь жалуется, что не приходит»
+        // разбирали бы как сбой канала
+        return this.record(input, 'none', 'skipped', 'rate_capped');
+      }
+      this.serviceTouchAt.set(input.phone, Date.now());
     }
 
     const devices = this.devices.for(input.phone, input.app);
@@ -273,6 +303,9 @@ export class PushDispatchService {
     const days = Number(this.params.text(PARAM_SERVICE_TOUCH_DAYS, '14'));
     if (!Number.isFinite(days) || days <= 0) return false;
     const since = Date.now() - days * 24 * 3600 * 1000;
+    // Занятое место — это и отправленное, и отправляемое прямо сейчас:
+    // о втором журнал ещё не знает
+    if ((this.serviceTouchAt.get(phone) ?? 0) >= since) return true;
     return this.recent.some(
       (r) => r.phone === phone && r.serviceTouch && r.status === 'sent' && Date.parse(r.createdAt) >= since,
     );
@@ -306,8 +339,30 @@ export class PushDispatchService {
     return rec;
   }
 
+  /**
+   * Ротация журнала — лениво, при записи.
+   *
+   * Отдельного таймера нет намеренно: записи и так идут постоянно, а лишний
+   * таймер в монолите пришлось бы заводить, гасить при выключении и помнить
+   * о нём при каждом переносе модуля.
+   */
+  private rotate(): void {
+    const now = Date.now();
+    if (now - this.lastRotate < ROTATE_EVERY_MS) return;
+    this.lastRotate = now;
+    if (!this.prisma.enabled) return;
+    const before = new Date(now - KEEP_DELIVERIES_DAYS * 86_400_000);
+    void this.prisma
+      .withContext(async (tx) => {
+        const { count } = await tx.pushDelivery.deleteMany({ where: { createdAt: { lt: before } } });
+        if (count > 0) this.log.log(`журнал доставки: удалено старых записей ${count}`);
+      })
+      .catch((e: unknown) => this.log.error(`ротация журнала доставки не удалась: ${(e as Error).message}`));
+  }
+
   private persist(rec: DeliveryRec): void {
     if (!this.prisma.enabled) return;
+    this.rotate();
     const tenantId = (currentDbContext() ?? systemContext()).tenantId;
     void this.prisma
       .withContext(async (tx) => {

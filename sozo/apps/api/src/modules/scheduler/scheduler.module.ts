@@ -5,6 +5,7 @@ import { AuditService } from '../platform/audit.service';
 import { BillingModule } from '../billing/billing.module';
 import { CrmModule } from '../crm/crm.module';
 import { OrdersModule } from '../orders/orders.module';
+import { PlatformModule } from '../platform/platform.module';
 import type { JwtClaims } from '../../common/jwt';
 
 /** Экран «Планировщик» (A-34): состояние движка, история срабатываний, ручной прогон */
@@ -51,7 +52,7 @@ class SchedulerController {
 }
 
 @Module({
-  imports: [BillingModule, CrmModule, OrdersModule],
+  imports: [BillingModule, CrmModule, OrdersModule, PlatformModule],
   controllers: [SchedulerController],
   providers: [SchedulerService],
   exports: [SchedulerService],

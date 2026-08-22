@@ -110,6 +110,7 @@ export class NotificationsService implements OnModuleInit {
     this.subscribeReplacement();
     this.subscribeHome();
     this.subscribeTimers();
+    this.subscribeFeedback();
     this.subscribeCare();
   }
 
@@ -200,13 +201,72 @@ export class NotificationsService implements OnModuleInit {
   }
 
   /**
+   * Забота о клиенте между заявками (PRD-01 §5, ТЗ §17.12).
+   *
+   * Три уведомления, которые рождаются временем, а не действием: просьба
+   * уточнить адрес перед визитом, конец гарантии и касание «как дела».
+   * Первые два операционные — они про уже существующую заявку. Третье
+   * сервисное, и потолок частоты его касается.
+   */
+  private subscribeCare(): void {
+    this.bus.subscribe<{ orderId: string; number: string; clientPhone: string; hoursLeft: number }>(
+      'order.address_details_missing',
+      (e) => {
+        void this.push.deliver({
+          event: 'order.address_details_missing',
+          phone: e.clientPhone,
+          app: 'client',
+          orderId: e.orderId,
+          title: 'Уточните детали адреса',
+          body: 'Мастер приедет через {0} ч. Подъезд, этаж, домофон — чтобы не искал вход',
+          bodyArgs: [e.hoursLeft],
+          priority: 'high',
+          deepLink: link.addressDetails(e.orderId),
+        });
+      },
+    );
+
+    this.bus.subscribe<{ orderId: string; number: string; clientPhone: string; daysLeft: number }>(
+      'order.warranty_expiring',
+      (e) => {
+        void this.push.deliver({
+          event: 'order.warranty_expiring',
+          phone: e.clientPhone,
+          app: 'client',
+          orderId: e.orderId,
+          title: 'Гарантия заканчивается',
+          body: 'По заявке {0} осталось {1} дн. Проверьте работу — пока гарантия действует, выезд бесплатный',
+          bodyArgs: [e.number, e.daysLeft],
+          deepLink: link.warranty(e.orderId),
+        });
+      },
+    );
+
+    this.bus.subscribe<{ orderId: string; clientPhone: string; subject: string }>('order.care_touch', (e) => {
+      void this.push.deliver({
+        event: 'order.care_touch',
+        phone: e.clientPhone,
+        app: 'client',
+        orderId: e.orderId,
+        title: 'Как дела?',
+        body: '{0} — всё работает нормально?',
+        bodyArgs: [e.subject],
+        deepLink: link.care(e.orderId),
+        // Единственное сервисное касание в матрице: не чаще одного в окно
+        // параметра 203, и SMS им не дублируется никогда
+        serviceTouch: true,
+      });
+    });
+  }
+
+  /**
    * Жалобы и лояльность — то, что человек воспринимает как отношение к себе.
    *
    * Приоритеты здесь низкие намеренно. «Баллы начислены» ночью с гудком —
    * верный способ научить человека отключать уведомления целиком, а вместе с
    * ними и те, ради которых канал заводился.
    */
-  private subscribeCare(): void {
+  private subscribeFeedback(): void {
     this.bus.subscribe<{ complainantPhone: string; orderNumber?: string }>('complaint.registered', (e) => {
       void this.push.deliver({
         event: 'complaint.registered',

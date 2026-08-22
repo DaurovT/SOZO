@@ -455,6 +455,73 @@ await startApi({ PUSH_PROVIDER: '' });
 }
 stopApi();
 
+// ===========================================================================
+// 4. Забота о клиенте: касание «как дела», гарантия, потолок частоты
+// ===========================================================================
+
+group('Забота: касание и гарантия');
+await startApi({ PUSH_PROVIDER: '' });
+{
+  const clientToken = await login(CLIENT_PHONE);
+  const dispatcherToken = await login(DISPATCHER_PHONE);
+  const adminToken = await login(ADMIN_PHONE);
+  await seedAndPick(clientToken, dispatcherToken);
+
+  /**
+   * Устройство обязательно: частотный потолок считает отправленное, а не
+   * попытки. Человеку без приложения ничего не уходит вовсе, и ограничивать
+   * там нечего — записи в журнале помечены как пропущенные.
+   */
+  await req('POST', '/devices', {
+    token: clientToken,
+    body: { token: 'device-care-1', app: 'client', platform: 'android', locale: 'ru' },
+  });
+
+  const events = async () => {
+    const log = await req('GET', '/devices/deliveries', { token: clientToken });
+    return (log.body.items ?? []).map((i) => i.event);
+  };
+  /** Отправленные, а не все: запись со статусом skipped — решение промолчать */
+  const sentEvents = async () => {
+    const log = await req('GET', '/devices/deliveries', { token: clientToken });
+    return (log.body.items ?? []).filter((i) => i.status === 'sent').map((i) => i.event);
+  };
+
+  // Демо-данные содержат закрытые заявки; прогоняем месяц вперёд, чтобы
+  // наступили и касание «как дела» (10 дней), и конец гарантии (30 − 7)
+  await req('POST', '/admin/scheduler/simulate', { token: adminToken, body: { days: 30 } });
+  await settle();
+  const first = await events();
+
+  check('касание «как дела» отправлено', first.includes('order.care_touch'), first.join(', ').slice(0, 160));
+  check('предупреждение о гарантии отправлено', first.includes('order.warranty_expiring'), first.join(', ').slice(0, 160));
+
+  /**
+   * Частотный потолок (ТЗ §17.12).
+   *
+   * У человека в демо-данных несколько закрытых заявок, и по каждой
+   * наступает срок касания. Уйти должно одно: «как дела» — не операционное
+   * уведомление, и три таких за вечер учат отключать уведомления совсем.
+   */
+  const touches = (await sentEvents()).filter((e) => e === 'order.care_touch').length;
+  const capped = first.filter((e) => e === 'order.care_touch').length - touches;
+  check('сервисных касаний отправлено ровно одно', touches === 1, `отправлено ${touches}`);
+  check('лишние касания отсечены потолком, а не потеряны молча', capped > 0, `отсечено: ${capped}`);
+
+  // Повторные прогоны таймеров ничего не добавляют
+  for (let i = 0; i < 3; i++) {
+    await req('POST', '/admin/scheduler/run', { token: adminToken, body: {} });
+    await settle();
+  }
+  const second = await events();
+  check(
+    'повторные прогоны не плодят заботу',
+    second.length === first.length,
+    `было ${first.length}, стало ${second.length}`,
+  );
+}
+stopApi();
+
 console.log(`\n${'='.repeat(60)}`);
 console.log(`Проверок: ${passed + failed}, прошло: ${passed}, упало: ${failed}`);
 cleanup();

@@ -1,5 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '../identity/auth.guard';
+import { BadRequestException, Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { AuthGuard, Roles } from '../identity/auth.guard';
 import type { JwtClaims } from '../../common/jwt';
 import { localeOf, type Locale } from '../../common/locale';
 import { DeviceTokensService, type DevicePlatform, type PushApp } from './device-tokens.service';
@@ -91,5 +91,50 @@ export class DevicesController {
   @Get('deliveries')
   deliveries(@Req() req: { auth: JwtClaims }) {
     return { items: this.dispatch.history(req.auth.phone) };
+  }
+}
+
+/**
+ * Журнал доставки для разбора жалоб.
+ *
+ * Отдельный контроллер с ролью, а не параметр к предыдущему: там человек
+ * смотрит свои уведомления, здесь диспетчер разбирает чужую жалобу «мне
+ * ничего не приходило». Разделять права внутри одного эндпоинта значило бы
+ * однажды отдать чужую переписку по забытому условию.
+ */
+@Controller('admin/push')
+@UseGuards(AuthGuard)
+@Roles('admin', 'dispatcher')
+export class AdminPushController {
+  constructor(
+    private readonly dispatch: PushDispatchService,
+    private readonly devices: DeviceTokensService,
+  ) {}
+
+  /**
+   * Что уходило человеку и чем кончилось.
+   *
+   * Здесь же видно, есть ли у него устройство вообще: половина жалоб
+   * «уведомления не приходят» — это приложение, в которое не заходили после
+   * обновления, и отличить такой случай от сбоя канала иначе нечем.
+   */
+  @Get('deliveries')
+  deliveries(@Query('phone') phone?: string, @Query('limit') limit?: string) {
+    if (!phone) throw new BadRequestException({ code: 'PHONE_REQUIRED', message: 'Укажите телефон человека' });
+    const items = this.dispatch.history(phone, Math.min(Number(limit) || 100, 500));
+    return {
+      phone,
+      devices: {
+        client: this.devices.for(phone, 'client').length,
+        master: this.devices.for(phone, 'master').length,
+      },
+      items,
+      // Сводка по причинам: по ней видно, сломан канал или адресата нет
+      byDetail: items.reduce<Record<string, number>>((acc, i) => {
+        const k = i.detail ?? i.status;
+        acc[k] = (acc[k] ?? 0) + 1;
+        return acc;
+      }, {}),
+    };
   }
 }

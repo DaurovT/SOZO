@@ -8,6 +8,7 @@ import { AuditService } from '../platform/audit.service';
 import { BillingService } from '../billing/billing.service';
 import { CrmService } from '../crm/crm.service';
 import { OrdersService } from '../orders/orders.service';
+import { ParametersService } from '../platform/parameters.service';
 
 /**
  * Движок таймеров и эскалаций (PRD-05 §8 — 54 таймера; DEV-07 §5 — воркеры).
@@ -52,6 +53,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly billing: BillingService,
     private readonly crm: CrmService,
     private readonly orders: OrdersService,
+    private readonly params: ParametersService,
   ) {
     this.mirror = new PgMirror(prisma, 'Scheduler', {
       load: async (tx) => {
@@ -168,6 +170,9 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     this.subscriptionCycle(manual); // #15, ТЗ 8.3
     this.suspendUnpaid(manual); // ТЗ 8.3 — приостановка к 10-му
     this.dunning(manual); // #15–17, ТЗ 8.9
+    await this.addressDetailsReminder(manual); // C-50, ТЗ §17.17
+    await this.warrantyExpiring(manual); // ТЗ §17.12
+    await this.careTouch(manual); // ТЗ §17.12 — сервисное касание
     this.balanceChecker(manual); // #42
     this.gphExpiry(manual); // A-11 — алерт за 14 дней
     return this.runs.slice(before).reverse();
@@ -449,6 +454,118 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       touched += 1;
     }
     this.log('#15–17', 'Дунинг дебиторки', touched ? `новых этапов дунинга: ${touched}` : 'нет новых этапов', touched, sim);
+  }
+
+  /** Число из параметра вида «14 дней»: значения редактируются как текст */
+  private paramNumber(num: number, fallback: number): number {
+    const m = /(\d+)/.exec(this.params.text(num, String(fallback)));
+    return m ? Number(m[1]) : fallback;
+  }
+
+  /**
+   * Напоминание уточнить детали адреса (C-50, ТЗ §17.17).
+   *
+   * Мастер теряет время на поиске подъезда и домофона, а клиент узнаёт об
+   * этом по звонку «я у ворот». Напоминание уходит незадолго до окна — и
+   * только тому, кто деталей не заполнил: остальным это просто шум.
+   */
+  private async addressDetailsReminder(sim: boolean): Promise<void> {
+    const hours = this.paramNumber(205, 4);
+    const all = await this.orders.list('t0');
+    const now = this.now().getTime();
+    let sent = 0;
+    for (const o of all) {
+      if (!['assigned', 'master_departed'].includes(o.status)) continue;
+      if (o.graphType === 'b2b') continue; // адрес точки известен из паспорта
+      if (o.addressDetails && Object.values(o.addressDetails).some((v) => String(v ?? '').trim())) continue;
+      const w = o.requestedWindow;
+      if (!w?.date || w.startMin === undefined) continue;
+      const windowAt = new Date(`${w.date}T00:00:00`).getTime() + w.startMin * 60_000;
+      const leftH = (windowAt - now) / 3_600_000;
+      if (leftH > hours || leftH < 0) continue;
+      const key = `address_details:${o.id}`;
+      if (this.done.has(key)) continue;
+      this.done.add(key);
+      this.mirror.schedule();
+      this.bus.publish('order.address_details_missing', {
+        orderId: o.id,
+        number: o.number,
+        clientPhone: o.clientPhone,
+        hoursLeft: Math.max(0, Math.round(leftH)),
+      });
+      sent += 1;
+    }
+    this.log('#C-50', 'Напоминание о деталях адреса', sent ? `напомнили по ${sent} заявкам` : 'нет кандидатов', sent, sim);
+  }
+
+  /**
+   * Гарантия заканчивается (ТЗ §17.12).
+   *
+   * Смысл не в вежливости: пока гарантия действует, повторный выезд для
+   * клиента бесплатен, а после — платный. Человек, узнавший об этом на
+   * следующий день после окончания, считает себя обманутым, и он прав.
+   */
+  private async warrantyExpiring(sim: boolean): Promise<void> {
+    const warrantyDays = this.paramNumber(29, 30);
+    const noticeDays = this.paramNumber(207, 7);
+    const all = await this.orders.list('t0');
+    const now = this.now().getTime();
+    let sent = 0;
+    for (const o of all) {
+      if (!['closed', 'rated'].includes(o.status)) continue;
+      const closedAt = o.statusLog.filter((l) => l.to === 'closed').at(-1)?.at;
+      if (!closedAt) continue;
+      const endsAt = new Date(closedAt).getTime() + warrantyDays * 86_400_000;
+      const leftDays = (endsAt - now) / 86_400_000;
+      if (leftDays > noticeDays || leftDays < 0) continue;
+      const key = `warranty_expiring:${o.id}`;
+      if (this.done.has(key)) continue;
+      this.done.add(key);
+      this.mirror.schedule();
+      this.bus.publish('order.warranty_expiring', {
+        orderId: o.id,
+        number: o.number,
+        clientPhone: o.clientPhone,
+        daysLeft: Math.max(0, Math.round(leftDays)),
+      });
+      sent += 1;
+    }
+    this.log('#W-7', 'Окончание гарантии', sent ? `предупреждено: ${sent}` : 'нет кандидатов', sent, sim);
+  }
+
+  /**
+   * Касание «Как дела» (C-27, ТЗ §17.12).
+   *
+   * Единственное здесь, что не является операционным уведомлением: человека
+   * спрашивают, всё ли работает, через полторы недели после ремонта. Поэтому
+   * помечается сервисным — на него распространяется частотный потолок, а
+   * согласие на маркетинг проверяет движок доставки.
+   */
+  private async careTouch(sim: boolean): Promise<void> {
+    const afterDays = this.paramNumber(206, 10);
+    const all = await this.orders.list('t0');
+    const now = this.now().getTime();
+    let sent = 0;
+    for (const o of all) {
+      if (!['closed', 'rated'].includes(o.status)) continue;
+      if (o.graphType === 'b2b') continue; // сервисные касания — контур B2C
+      const closedAt = o.statusLog.filter((l) => l.to === 'closed').at(-1)?.at;
+      if (!closedAt) continue;
+      const passedDays = (now - new Date(closedAt).getTime()) / 86_400_000;
+      if (passedDays < afterDays) continue;
+      const key = `care_touch:${o.id}`;
+      if (this.done.has(key)) continue;
+      this.done.add(key);
+      this.mirror.schedule();
+      this.bus.publish('order.care_touch', {
+        orderId: o.id,
+        number: o.number,
+        clientPhone: o.clientPhone,
+        subject: o.lines[0]?.name ?? o.description.slice(0, 40),
+      });
+      sent += 1;
+    }
+    this.log('#C-27', 'Касание «Как дела»', sent ? `отправлено: ${sent}` : 'нет кандидатов', sent, sim);
   }
 
   /** #42: ежедневный баланс-чекер с алертом при расхождении в 1 сум (ТЗ 8.8) */
