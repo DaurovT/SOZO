@@ -117,15 +117,45 @@ async function main() {
   });
   check('без смены мастера бронировать некуда', errText(noShift.body) === 'NO_SHIFT', errText(noShift.body));
 
-  // Заморозку проверяем на сегодня — но только заведя смену на сегодня же,
-  // иначе отказ придёт по другой причине и проверка пройдёт впустую
-  await call('/dispatch/scheduling/shifts/seed-day', { token: t, body: { date: day(0) } });
+  // Заморозка считается от ТЕКУЩЕГО времени: «сейчас + 2 часа». Поэтому смена
+  // на сегодня заводится вокруг «сейчас», а не стандартными 09:00–18:00, и
+  // бронь ставится на «сейчас + 30 минут» — заведомо внутри окна заморозки.
+  //
+  // Раньше здесь стояли фиксированные 09:00, и проверка проходила только если
+  // прогон случился между 07:00 и 09:00: в остальное время до брони было
+  // больше двух часов, заморозка не срабатывала, бронь создавалась, а вторая
+  // попытка падала с ALREADY_BOOKED вместо LANE_FROZEN.
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  // Оставляем себе четыре часа до полуночи: иначе поздним вечером окно смены
+  // вылезет за границу суток и отказ придёт как OUT_OF_SHIFT
+  const base = Math.min(nowMin, 24 * 60 - 240);
+
+  // Смена на сегодня у мастера может уже быть — её заводят соседние наборы
+  // общего прогона (seed-day ставит всем активным 09:00–18:00). Тогда наша
+  // не создастся, а бронь в ночной час окажется вне чужого окна: проверка
+  // падала с OUT_OF_SHIFT вместо LANE_FROZEN. Поэтому берём мастера, у
+  // которого смены на сегодня нет.
+  const todayShifts = (await call(`/dispatch/scheduling/shifts?date=${day(0)}`, { token: t, method: 'GET' })).body;
+  const busyToday = new Set((todayShifts ?? []).map((x) => x.masterId));
+  const freeMaster = shifts.map((x) => x.masterId).find((id) => !busyToday.has(id));
+  const frozenMaster = freeMaster ?? master;
+
+  if (!freeMaster) {
+    // Свободных нет — освобождаем окно сами. Смена с бронями не снимется,
+    // и это правильно: тогда проверка честно упадёт, а не соврёт зелёным
+    const mine = (todayShifts ?? []).find((x) => x.masterId === master);
+    if (mine) await call(`/dispatch/scheduling/shifts/${mine.id}`, { token: t, method: 'DELETE' });
+  }
+  const madeShift = await call('/dispatch/scheduling/shifts', {
+    token: t, body: { masterId: frozenMaster, date: day(0), startMin: base, endMin: base + 240 },
+  });
+  check('смена на сегодня заведена вокруг текущего часа', madeShift.status < 400, errText(madeShift.body));
   const frozen = await call('/dispatch/scheduling/bookings', {
-    token: t, body: { orderId: o2, masterId: master, date: day(0), startMin: 540 },
+    token: t, body: { orderId: o2, masterId: frozenMaster, date: day(0), startMin: base + 30 },
   });
   check('ближайшие часы ленты заморожены', errText(frozen.body) === 'LANE_FROZEN', errText(frozen.body));
   const forcedToday = await call('/dispatch/scheduling/bookings', {
-    token: t, body: { orderId: o2, masterId: master, date: day(0), startMin: 540, force: true },
+    token: t, body: { orderId: o2, masterId: frozenMaster, date: day(0), startMin: base + 30, force: true },
   });
   check('и продавливаются подтверждением', forcedToday.status < 400, errText(forcedToday.body));
   await call(`/dispatch/scheduling/bookings/${o2}`, { token: t, method: 'DELETE' });
