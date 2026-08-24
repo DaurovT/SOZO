@@ -297,7 +297,12 @@ code {
    3. Анимации появления (scroll-driven, с фолбэком на IntersectionObserver)
    ====================================================================== */
 
-[data-reveal] {
+/* Прятать блок разрешено только после того, как скрипт подтвердил, что умеет
+   показать его обратно: класс `js-reveal` ставит `useReveal`. Без скрипта,
+   с упавшим бандлом или в старом браузере страница видна целиком — текст
+   важнее анимации. Раньше правило было безусловным, и любой сбой наблюдателя
+   превращал секцию в пустой белый прямоугольник. */
+.js-reveal [data-reveal] {
   opacity: 0;
   transform: translateY(22px);
   transition:
@@ -306,7 +311,7 @@ code {
   transition-delay: var(--reveal-delay, 0ms);
 }
 
-[data-reveal].is-in {
+.js-reveal [data-reveal].is-in {
   opacity: 1;
   transform: none;
 }
@@ -316,8 +321,8 @@ code {
     scroll-behavior: auto;
   }
 
-  [data-reveal],
-  [data-reveal].is-in {
+  .js-reveal [data-reveal],
+  .js-reveal [data-reveal].is-in {
     opacity: 1;
     transform: none;
     transition: none;
@@ -629,21 +634,37 @@ code {
    6. Шапка
    ====================================================================== */
 
+/* Шапка — часть интерфейса, а не белая полоса поверх сайта.
+   Больше прозрачности и сильнее размытие: после тёмного героя плотная
+   белая плашка читалась как чужой слой, наехавший на страницу. */
 .header {
   position: sticky;
   top: 0;
   z-index: 60;
-  background: rgb(255 255 255 / 82%);
-  backdrop-filter: saturate(180%) blur(14px);
+  background: rgb(255 255 255 / 68%);
+  backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid transparent;
   transition:
     background-color 0.3s ease,
-    border-color 0.3s ease;
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
+/* На прокрутке — граница вместо тени: тень отделяла шапку от страницы,
+   а нужно, наоборот, обозначить край, не создавая второго плана */
 .header.is-scrolled {
-  border-bottom-color: var(--border);
-  box-shadow: var(--shadow-sm);
+  background: rgb(255 255 255 / 86%);
+  border-bottom-color: rgb(0 0 0 / 6%);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 3%);
+}
+
+/* Браузеры без backdrop-filter получают плотный фон: полупрозрачная шапка
+   без размытия — это нечитаемый текст поверх фотографии */
+@supports not (backdrop-filter: blur(1px)) {
+  .header,
+  .header.is-scrolled {
+    background: var(--surface);
+  }
 }
 
 /* Шапка поверх тёмного героя */
@@ -1319,6 +1340,10 @@ code {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* Кадрируем к верхней трети: на портрете там лицо, а `center` у вертикального
+     снимка вырезает грудь и подбородок. Полного единообразия так не добиться —
+     кадры сняты по-разному, и выравнивает их пересъёмка, а не CSS. */
+  object-position: 50% 28%;
   z-index: -2;
   transition: transform 0.7s var(--ease-out);
 }
@@ -1919,11 +1944,16 @@ code {
    19. Липкая панель звонка (моб.)
    ====================================================================== */
 
+/* Липкая панель звонка.
+   Появляется, только когда первый экран уже уехал вверх, а свой призыв к
+   действию ещё не показался: пока крупная кнопка «Вызвать мастера» на виду,
+   вторая такая же внизу лишняя и закрывает содержимое. Класс `is-on` ставит
+   Home.tsx по двум наблюдателям — за героем и за финальным блоком. */
 .sticky-call {
   position: fixed;
   left: var(--s12);
   right: var(--s12);
-  bottom: var(--s12);
+  bottom: calc(var(--s12) + env(safe-area-inset-bottom, 0px));
   z-index: 50;
   display: flex;
   gap: var(--s8);
@@ -1932,6 +1962,18 @@ code {
   background: rgb(18 19 23 / 88%);
   backdrop-filter: blur(14px);
   box-shadow: var(--shadow-lg);
+  opacity: 0;
+  transform: translateY(120%);
+  pointer-events: none;
+  transition:
+    opacity 0.25s var(--ease-out),
+    transform 0.25s var(--ease-out);
+}
+
+.sticky-call.is-on {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
 .sticky-call .btn {
@@ -1945,8 +1987,13 @@ code {
   border-color: rgb(255 255 255 / 16%);
 }
 
-.sticky-call-spacer {
-  height: 76px;
+/* Место под липкую панель отдаёт подвал, а не отдельная распорка в конце
+   страницы. Распорка стояла внутри `<main>`, между тёмным финальным блоком и
+   тёмным подвалом, и красилась фоном страницы — на телефоне это выглядело
+   как белый разрыв посреди тёмного низа. Отступ в подвале решает заодно и
+   вторую задачу: панель перестаёт закрывать его ссылки. */
+.footer {
+  padding-bottom: calc(76px + var(--s24) + env(safe-area-inset-bottom, 0px));
 }
 
 /* ======================================================================
@@ -2720,9 +2767,13 @@ legend {
 
   .burger,
   .mobile-nav,
-  .sticky-call,
-  .sticky-call-spacer {
+  .sticky-call {
     display: none;
+  }
+
+  /* Панели нет — и места под неё в подвале тоже не нужно */
+  .footer {
+    padding-bottom: var(--s48);
   }
 
   .sticky-col {
@@ -2783,4 +2834,32 @@ legend {
   /* Номер телефона всегда пишется слева направо, в любом языке */
   direction: ltr;
   text-align: start;
+}
+
+
+/* ---------- Карточки четырёх аудиторий ----------
+   Схема интерфейса сверху, дальше заголовок, текст и ссылка. Карточка тянется
+   на всю высоту ячейки, а ссылка прижата к низу: иначе при разной длине текста
+   призывы к действию встают ступеньками и читаются как разные по важности. */
+.aud-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s12);
+  height: 100%;
+}
+
+.aud-card .h3 {
+  margin-top: var(--s4);
+}
+
+.aud-card .muted {
+  flex: 1;
+}
+
+.aud-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-button);
+  border: 1px solid var(--border);
 }

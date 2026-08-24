@@ -2,6 +2,12 @@ import { useCallback, useRef, useState } from 'react';
 import { useT } from '../i18n';
 
 /**
+ * ВАЖНО про загрузку картинок: у контейнера `.ba` тёмный фон и фиксированная
+ * пропорция, поэтому незагруженное фото выглядит не как пустое место, а как
+ * чёрный прямоугольник — то есть как поломка. Для блока, которым мы
+ * доказываем «видно, что именно сделали», это недопустимо, и `loading="lazy"`
+ * здесь снят намеренно: две картинки по 60 КБ дешевле, чем сомнение.
+ *
  * Слайдер «до / после»: тянешь ручку — открывается вторая фотография.
  *
  * Позиция живёт в CSS-переменной --ba-pos, поэтому перерисовку делает
@@ -61,14 +67,12 @@ export default function BeforeAfter(props: {
       <img
         src={before}
         alt={t('components.beforeAfter.altBefore', { alt })}
-        loading="lazy"
         decoding="async"
       />
       <img
         className="ba-after"
         src={after}
         alt={t('components.beforeAfter.altAfter', { alt })}
-        loading="lazy"
         decoding="async"
       />
       <span className="ba-label ba-label--before">

@@ -1,14 +1,13 @@
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchPrices } from '../api';
-import AppShowcase from '../components/AppShowcase';
+import AudiencePreview from '../components/AudiencePreview';
 import BeforeAfter from '../components/BeforeAfter';
-import Counter from '../components/Counter';
 import Faq from '../components/Faq';
 import Marquee from '../components/Marquee';
 import MasterRail from '../components/MasterRail';
-import StoreButtons from '../components/StoreButtons';
 import { useLocale, useT, useTn } from '../i18n';
-import { displayCategory, FALLBACK_CATEGORIES, zoneLabel } from '../lib/catalog';
+import { displayCategory, FALLBACK_CATEGORIES } from '../lib/catalog';
 import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
 import { formatTiyin } from '../lib/format';
 import { categoryPhoto, PHOTO } from '../lib/photos';
@@ -28,54 +27,63 @@ const FACTS = [
   'home.factPayment',
 ];
 
-const USP = [
-  { titleKey: 'home.uspTimeTitle', textKey: 'home.uspTimeText' },
-  { titleKey: 'home.uspPriceTitle', textKey: 'home.uspPriceText' },
-  { titleKey: 'home.uspPhotoTitle', textKey: 'home.uspPhotoText' },
-  { titleKey: 'home.uspWarrantyTitle', textKey: 'home.uspWarrantyText' },
+/* Четыре аудитории продукта. Порядок не случаен: сверху тот, кого больше
+   всего, дальше — по убыванию доли трафика. Ссылка у каждой своя, потому что
+   и разговор у каждой свой. */
+const AUDIENCES = [
+  {
+    to: '/order',
+    kind: 'client' as const,
+    titleKey: 'home.audienceClientTitle',
+    textKey: 'home.audienceClientText',
+    ctaKey: 'home.audienceClientCta',
+  },
+  {
+    to: '/masters',
+    kind: 'master' as const,
+    titleKey: 'home.audienceMasterTitle',
+    textKey: 'home.audienceMasterText',
+    ctaKey: 'home.audienceMasterCta',
+  },
+  {
+    to: '/business',
+    kind: 'business' as const,
+    titleKey: 'home.audienceBusinessTitle',
+    textKey: 'home.audienceBusinessText',
+    ctaKey: 'home.audienceBusinessCta',
+  },
+  {
+    to: '/operators',
+    kind: 'operator' as const,
+    titleKey: 'home.audienceOperatorTitle',
+    textKey: 'home.audienceOperatorText',
+    ctaKey: 'home.audienceOperatorCta',
+  },
 ];
 
+/* Три доказательства в одном блоке: снимки, человек, история. Каждое
+   отвечает на свой вопрос — «что сделали», «кто приезжал», «где это потом
+   искать», — и потому не пересказывает соседнее. */
+const TRUST = [
+  { titleKey: 'home.trustPhotoTitle', textKey: 'home.trustPhotoText' },
+  { titleKey: 'home.trustMasterTitle', textKey: 'home.trustMasterText' },
+  { titleKey: 'home.trustAppTitle', textKey: 'home.trustAppText' },
+];
+
+/* Механика заявки — одна на все четыре аудитории. Меняется только, кто
+   платит и куда приходит отчёт. */
 const STEPS = [
-  { titleKey: 'home.stepRequestTitle', textKey: 'home.stepRequestText' },
-  { titleKey: 'home.stepDealTitle', textKey: 'home.stepDealText' },
-  { titleKey: 'home.stepVisitTitle', textKey: 'home.stepVisitText' },
-  { titleKey: 'home.stepActTitle', textKey: 'home.stepActText' },
-];
-
-/* Район хранится русской строкой — подпись берётся через `zoneLabel`, как и
-   везде на сайте: имя собственное на каждом языке пишется своей графикой. */
-const REVIEWS = [
-  {
-    nameKey: 'home.reviewDilnozaName',
-    initialKey: 'home.reviewDilnozaInitial',
-    textKey: 'home.reviewDilnozaText',
-    zone: 'Юнусабад',
-  },
-  {
-    nameKey: 'home.reviewSergeyName',
-    initialKey: 'home.reviewSergeyInitial',
-    textKey: 'home.reviewSergeyText',
-    zone: 'Мирабад',
-  },
-  {
-    nameKey: 'home.reviewAzizaName',
-    initialKey: 'home.reviewAzizaInitial',
-    textKey: 'home.reviewAzizaText',
-    zone: 'Чиланзар',
-  },
-  {
-    nameKey: 'home.reviewBotirName',
-    initialKey: 'home.reviewBotirInitial',
-    textKey: 'home.reviewBotirText',
-    zone: 'Сергели',
-  },
+  { titleKey: 'home.howRequestTitle', textKey: 'home.howRequestText' },
+  { titleKey: 'home.howDealTitle', textKey: 'home.howDealText' },
+  { titleKey: 'home.howWorkTitle', textKey: 'home.howWorkText' },
+  { titleKey: 'home.howActTitle', textKey: 'home.howActText' },
 ];
 
 const FAQ = [
   { qKey: 'home.faqVisitQ', aKey: 'home.faqVisitA' },
   { qKey: 'home.faqPriceQ', aKey: 'home.faqPriceA' },
   { qKey: 'home.faqEmergencyQ', aKey: 'home.faqEmergencyA' },
-  { qKey: 'home.faqMastersQ', aKey: 'home.faqMastersA' },
+  { qKey: 'home.faqAreaQ', aKey: 'home.faqAreaA' },
   { qKey: 'home.faqNoAppQ', aKey: 'home.faqNoAppA' },
   { qKey: 'home.faqPaymentQ', aKey: 'home.faqPaymentA' },
 ];
@@ -133,17 +141,54 @@ function CategoryTiles() {
   );
 }
 
+/**
+ * Показывать ли липкую панель звонка.
+ *
+ * Два условия, и оба — про то, чтобы панель не мешала. Пока виден первый
+ * экран, на нём уже есть крупная кнопка «Вызвать мастера» и телефон — вторая
+ * такая же внизу закрывает фотографию и карточки статуса. Пока виден финальный
+ * блок, там снова обе кнопки, и панель наезжает на них и на подвал.
+ *
+ * Наблюдаем за двумя узлами, а не считаем прокрутку: обработчик scroll на
+ * телефоне работает каждый кадр, а наблюдателю браузер сообщает сам.
+ */
+function useStickyCall(hero: RefObject<HTMLElement>, tail: RefObject<HTMLElement>) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const nodes = [hero.current, tail.current].filter(Boolean) as HTMLElement[];
+    if (!nodes.length || !('IntersectionObserver' in window)) return;
+
+    const seen = new Map<Element, boolean>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) seen.set(e.target, e.isIntersecting);
+        // Панель нужна ровно между: герой ушёл, финальный блок ещё не пришёл
+        setVisible(![...seen.values()].some(Boolean));
+      },
+      { threshold: 0 },
+    );
+    nodes.forEach((n) => io.observe(n));
+    return () => io.disconnect();
+  }, [hero, tail]);
+
+  return visible;
+}
+
 /* ---------- Страница ---------- */
 
 export default function Home() {
   const t = useT();
   const tn = useTn();
   const sla = useSla();
+  const heroRef = useRef<HTMLElement>(null);
+  const tailRef = useRef<HTMLElement>(null);
+  const showCall = useStickyCall(heroRef, tailRef);
 
   return (
     <>
       {/* ===== Герой ===== */}
-      <section className="hero">
+      <section className="hero" ref={heroRef}>
         <div className="wrap">
           <div className="hero-grid">
             <div className="hero-copy">
@@ -193,17 +238,20 @@ export default function Home() {
             </div>
           </div>
 
+          {/*
+            Цифры стоят как есть, без докрутки. Счётчик начинается с нуля, и
+            первую секунду человек читает «0 мин · 0 дней · 0 часов» — рядом с
+            обещанием гарантии это выглядит незаполненным шаблоном, а не
+            анимацией. Докручивать имеет смысл достигнутый показатель
+            («7 400 закрытых заявок»), а не условие договора.
+          */}
           <div className="hero-stats">
             <div>
-              <p className="stat-value">
-                <Counter to={10} format={(v) => tn('home.statMinutes', v)} />
-              </p>
+              <p className="stat-value">{tn('home.statMinutes', 10)}</p>
               <p className="stat-label">{t('home.statCallback')}</p>
             </div>
             <div>
-              <p className="stat-value">
-                <Counter to={30} format={(v) => tn('home.statDays', v)} />
-              </p>
+              <p className="stat-value">{tn('home.statDays', 30)}</p>
               <p className="stat-label">{t('home.statWarranty')}</p>
             </div>
             <div>
@@ -211,9 +259,7 @@ export default function Home() {
               <p className="stat-label">{t('home.statEmergency')}</p>
             </div>
             <div>
-              <p className="stat-value">
-                <Counter to={2} format={(v) => tn('home.statHours', v)} />
-              </p>
+              <p className="stat-value">{tn('home.statHours', 2)}</p>
               <p className="stat-label">{t('home.statWindow')}</p>
             </div>
           </div>
@@ -221,6 +267,33 @@ export default function Home() {
       </section>
 
       <Marquee items={FACTS.map((key) => t(key))} />
+
+      {/* ===== Четыре аудитории ===== */}
+      <section className="section">
+        <div className="wrap">
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('home.audienceEyebrow')}</p>
+            <h2 className="h2">{t('home.audienceTitle')}</h2>
+          </div>
+          <div className="grid grid-4">
+            {AUDIENCES.map((a, i) => (
+              <article
+                key={a.to}
+                className="card card-lift aud-card"
+                data-reveal
+                style={revealDelay(i)}
+              >
+                <AudiencePreview kind={a.kind} />
+                <h3 className="h3">{t(a.titleKey)}</h3>
+                <p className="muted">{t(a.textKey)}</p>
+                <Link to={a.to} className="link-action">
+                  {t(a.ctaKey)} →
+                </Link>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ===== Категории ===== */}
       <section className="section section-alt" id="services">
@@ -239,43 +312,19 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ===== Почему мы ===== */}
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('home.uspEyebrow')}</p>
-            <h2 className="h2">{t('home.uspTitle')}</h2>
-          </div>
-          <div className="grid grid-4">
-            {USP.map((u, i) => (
-              <article
-                key={u.titleKey}
-                className="card card-lift stack-sm"
-                data-reveal
-                style={revealDelay(i)}
-              >
-                <p className="usp-num">0{i + 1}</p>
-                <h3 className="h3">{t(u.titleKey)}</h3>
-                <p className="muted">{t(u.textKey)}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ===== Как это работает ===== */}
       <section className="section section-alt">
         <div className="wrap">
           <div className="grid-2">
             <div className="sticky-col" data-reveal>
               <div className="section-head">
-                <p className="eyebrow">{t('home.stepsEyebrow')}</p>
-                <h2 className="h2">{t('home.stepsTitle')}</h2>
-                <p className="lead">{t('home.stepsLead')}</p>
+                <p className="eyebrow">{t('home.howEyebrow')}</p>
+                <h2 className="h2">{t('home.howTitle')}</h2>
+                <p className="lead">{t('home.howLead')}</p>
               </div>
               <div className="btn-row">
                 <Link to="/order" className="btn">
-                  {t('home.stepsCta')}
+                  {t('home.callMaster')}
                 </Link>
               </div>
             </div>
@@ -295,106 +344,48 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ===== До / после ===== */}
-      <section className="section">
-        <div className="wrap">
-          <div className="grid-2" style={{ alignItems: 'center' }}>
-            <div className="stack-lg" data-reveal>
-              <div className="section-head">
-                <p className="eyebrow">{t('home.photoEyebrow')}</p>
-                <h2 className="h2">{t('home.photoTitle')}</h2>
-                <p className="lead">{t('home.photoLead')}</p>
-              </div>
-              <ul className="stack-sm">
-                <li className="tick">
-                  <span>{t('home.photoPointAuthentic')}</span>
-                </li>
-                <li className="tick">
-                  <span>{t('home.photoPointAct')}</span>
-                </li>
-                <li className="tick">
-                  <span>{t('home.photoPointHistory')}</span>
-                </li>
-              </ul>
-              <p className="small muted">{t('home.photoHint')}</p>
-            </div>
+      {/* ===== Почему можно доверять ===== */}
+      {/*
+        Три отдельные главы — фотоотчёт, мастера, приложение — свёрнуты в один
+        блок. Порознь они говорили одно и то же («видно, что сделано») три раза
+        подряд и растягивали клиентскую часть настолько, что до аварийного
+        блока и вопросов человек не доходил. Доказательство сильнее, когда оно
+        одно и показано, а не когда его трижды пересказали.
+      */}
+      <section className="section section-dark" id="trust">
+        <div className="wrap stack-lg">
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('home.trustEyebrow')}</p>
+            <h2 className="h2">{t('home.trustTitle')}</h2>
+            <p className="lead">{t('home.trustLead')}</p>
+          </div>
 
+          <div className="grid-2" style={{ alignItems: 'center' }}>
             <div data-reveal>
               <BeforeAfter
                 before={PHOTO.beforeShot}
                 after={PHOTO.afterShot}
                 alt={t('home.photoAlt')}
               />
+              <p className="small muted" style={{ marginTop: 'var(--s12)' }}>
+                {t('home.photoHint')}
+              </p>
             </div>
-          </div>
-        </div>
-      </section>
 
-      {/* ===== Мастера ===== */}
-      <section className="section section-dark">
-        <div className="wrap">
-          <div className="head-row">
-            <div className="section-head" data-reveal>
-              <p className="eyebrow">{t('home.mastersEyebrow')}</p>
-              <h2 className="h2">{t('home.mastersTitle')}</h2>
-              <p className="lead">{t('home.mastersLead')}</p>
-            </div>
-            <Link to="/masters" className="link-action">
-              {t('home.mastersJoinLink')}
-            </Link>
+            <ul className="stack" data-reveal>
+              {TRUST.map((item) => (
+                <li key={item.titleKey} className="stack-sm">
+                  <h3 className="h3">{t(item.titleKey)}</h3>
+                  <p className="muted">{t(item.textKey)}</p>
+                </li>
+              ))}
+            </ul>
           </div>
+
           <div data-reveal>
             <MasterRail masters={MASTERS} />
           </div>
           <p className="small muted">{t('home.mastersHint')}</p>
-        </div>
-      </section>
-
-      {/* ===== Приложения ===== */}
-      <section className="section section-alt" id="app">
-        <div className="wrap">
-          <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('home.appEyebrow')}</p>
-            <h2 className="h2">{t('home.appTitle')}</h2>
-            <p className="lead">{t('home.appLead')}</p>
-          </div>
-          <div data-reveal>
-            <AppShowcase />
-          </div>
-          <div style={{ marginTop: 'var(--s32)' }}>
-            <StoreButtons />
-          </div>
-        </div>
-      </section>
-
-      {/* ===== Отзывы ===== */}
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('home.reviewsEyebrow')}</p>
-            <h2 className="h2">{t('home.reviewsTitle')}</h2>
-          </div>
-          <div className="reviews-rail">
-            {REVIEWS.map((r) => (
-              <article className="review" key={r.nameKey}>
-                <p className="review-stars" aria-label={t('home.reviewsRating')}>
-                  ★★★★★
-                </p>
-                <p className="review-quote">{t(r.textKey)}</p>
-                <div className="review-who">
-                  <span className="review-avatar" aria-hidden="true">
-                    {t(r.initialKey)}
-                  </span>
-                  <div>
-                    <p className="tile-name" style={{ color: 'var(--text)' }}>
-                      {t(r.nameKey)}
-                    </p>
-                    <p className="small muted">{zoneLabel(r.zone, t)}</p>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -415,49 +406,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ===== Тизеры B2B и мастерам ===== */}
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('home.teasersEyebrow')}</p>
-            <h2 className="h2">{t('home.teasersTitle')}</h2>
-          </div>
-          <div className="split">
-            <Link to="/business" className="split-card" data-reveal>
-              <img src={PHOTO.roofHvac} alt="" loading="lazy" decoding="async" />
-              <span className="badge">{t('home.businessBadge')}</span>
-              <h3 className="h2" style={{ marginTop: 'var(--s12)' }}>
-                {t('home.businessTitle')}
-              </h3>
-              <div className="split-list">
-                <span>{t('home.businessPointSla')}</span>
-                <span>{t('home.businessPointFee')}</span>
-                <span>{t('home.businessPointReport')}</span>
-              </div>
-              <span className="link-action" style={{ color: 'var(--on-dark)' }}>
-                {t('home.businessLink')}
-              </span>
-            </Link>
-
-            <Link to="/masters" className="split-card" data-reveal style={revealDelay(1)}>
-              <img src={PHOTO.electricPanel} alt="" loading="lazy" decoding="async" />
-              <span className="badge">{t('home.mastersBadge')}</span>
-              <h3 className="h2" style={{ marginTop: 'var(--s12)' }}>
-                {t('home.mastersCardTitle')}
-              </h3>
-              <div className="split-list">
-                <span>{t('home.mastersPointFlow')}</span>
-                <span>{t('home.mastersPointPay')}</span>
-                <span>{t('home.mastersPointSchedule')}</span>
-              </div>
-              <span className="link-action" style={{ color: 'var(--on-dark)' }}>
-                {t('home.mastersCardLink')}
-              </span>
-            </Link>
-          </div>
-        </div>
-      </section>
-
       {/* ===== FAQ ===== */}
       <section className="section section-alt">
         <div className="wrap">
@@ -472,7 +420,7 @@ export default function Home() {
       </section>
 
       {/* ===== Финальный CTA ===== */}
-      <section className="section-lg section-dark">
+      <section className="section-lg section-dark" ref={tailRef}>
         <div className="wrap">
           <div className="stack-lg" style={{ maxWidth: '56ch' }} data-reveal>
             <h2 className="h1">{t('home.finalTitle')}</h2>
@@ -490,7 +438,7 @@ export default function Home() {
       </section>
 
       {/* Липкая панель звонка — только на мобильном (CSS скрывает от 1000px). */}
-      <div className="sticky-call">
+      <div className={showCall ? 'sticky-call is-on' : 'sticky-call'}>
         <a href={DISPATCH_TEL_HREF} className="btn btn-ghost">
           {t('home.call')}
         </a>
@@ -498,7 +446,6 @@ export default function Home() {
           {t('home.callMaster')}
         </Link>
       </div>
-      <div className="sticky-call-spacer" aria-hidden="true" />
     </>
   );
 }

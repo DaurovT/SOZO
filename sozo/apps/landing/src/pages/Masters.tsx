@@ -1,38 +1,29 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import Counter from '../components/Counter';
 import Faq from '../components/Faq';
 import { AppRow, AppTabbar, Phone } from '../components/Phone';
-import { useLocale, useT, useTn } from '../i18n';
+import { useT, useTn } from '../i18n';
 import { PHOTO } from '../lib/photos';
-import { formatSum } from '../lib/format';
 import { revealDelay } from '../lib/reveal';
+import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
 import { MASTERS } from '../lib/team';
-
-/**
- * Параметры прикидки заработка — маркетинговый контент, не оферта.
- * Реальная доля зависит от уровня мастера, а поток заявок — от города и сезона.
- *
- * Диапазоны держим реалистичными: калькулятор, который умеет показать
- * «30 миллионов в месяц», выглядит как приманка и убивает доверие.
- */
-const SHARE = 0.55;
-const WORK_DAYS = 22;
-const CHECK_MIN = 120_000;
-const CHECK_MAX = 300_000;
-const ORDERS_MIN = 2;
-const ORDERS_MAX = 6;
 
 /** Условия работы. Подписи — ключи словаря, порядок блоков не переводится. */
 const TERMS = [
-  { title: 'mastersPage.termShareTitle', text: 'mastersPage.termShareText' },
-  { title: 'mastersPage.termWeeklyTitle', text: 'mastersPage.termWeeklyText' },
   { title: 'mastersPage.termFlowTitle', text: 'mastersPage.termFlowText' },
   { title: 'mastersPage.termScheduleTitle', text: 'mastersPage.termScheduleText' },
+  { title: 'mastersPage.termShareTitle', text: 'mastersPage.termShareText' },
+  { title: 'mastersPage.termWeeklyTitle', text: 'mastersPage.termWeeklyText' },
   { title: 'mastersPage.termTrainingTitle', text: 'mastersPage.termTrainingText' },
   /* Материалы в долг через партнёрские магазины — это фаза 2 (PRD-06 §3.5),
      на лендинге не обещаем, пока не работает. */
   { title: 'mastersPage.termDisputeTitle', text: 'mastersPage.termDisputeText' },
+];
+
+/* Заработок словами: три вопроса, которые мастер задаёт вслух. */
+const MONEY = [
+  { title: 'mastersPage.moneyOrdersTitle', text: 'mastersPage.moneyOrdersText' },
+  { title: 'mastersPage.moneyShareTitle', text: 'mastersPage.moneyShareText' },
+  { title: 'mastersPage.moneyPayoutTitle', text: 'mastersPage.moneyPayoutText' },
 ];
 
 const REQUIREMENTS = [
@@ -75,6 +66,7 @@ const STORIES = [
 ];
 
 const FAQ = [
+  { q: 'mastersPage.faqCombineQ', a: 'mastersPage.faqCombineA' },
   { q: 'mastersPage.faqEmploymentQ', a: 'mastersPage.faqEmploymentA' },
   { q: 'mastersPage.faqOrdersQ', a: 'mastersPage.faqOrdersA' },
   { q: 'mastersPage.faqMaterialsQ', a: 'mastersPage.faqMaterialsA' },
@@ -86,13 +78,6 @@ const FAQ = [
 export default function Masters() {
   const t = useT();
   const tn = useTn();
-  const locale = useLocale();
-  const [ordersPerDay, setOrdersPerDay] = useState(3);
-  const [check, setCheck] = useState(180_000);
-  const monthly = Math.floor((ordersPerDay * check * SHARE * WORK_DAYS) / 10_000) * 10_000;
-  const checkPos = ((check - CHECK_MIN) / (CHECK_MAX - CHECK_MIN)) * 100;
-  const ordersPos = ((ordersPerDay - ORDERS_MIN) / (ORDERS_MAX - ORDERS_MIN)) * 100;
-
   // Заголовок героя переводится целой фразой: выделенная часть отмечена в ней
   // подстановкой {mark} и на другом языке может стоять в другом месте
   const [titleBefore, titleAfter] = t('mastersPage.heroTitle').split('{mark}');
@@ -115,8 +100,8 @@ export default function Masters() {
                 <Link to="/apply" className="btn">
                   {t('mastersPage.applyCta')}
                 </Link>
-                <a href="#calc" className="btn btn-ghost">
-                  {t('mastersPage.heroCalcLink')}
+                <a href={DISPATCH_TEL_HREF} className="btn btn-ghost">
+                  {DISPATCH_TEL_DISPLAY}
                 </a>
               </div>
               <p className="hero-note">{t('mastersPage.heroNote')}</p>
@@ -133,11 +118,8 @@ export default function Masters() {
                 />
               </div>
               <div className="float-card float-card--status">
-                <p className="float-title">{t('mastersPage.weekEarnings')}</p>
-                <p className="float-value">{t('mastersPage.weekEarningsValue')}</p>
-                <p className="float-title" style={{ marginTop: 6 }}>
-                  {t('mastersPage.payoutMonday')}
-                </p>
+                <p className="float-title">{t('mastersPage.payoutCardTitle')}</p>
+                <p className="float-value">{t('mastersPage.payoutCardValue')}</p>
               </div>
               <div className="float-card float-card--price">
                 <p className="float-title">{t('mastersPage.newOrderNear')}</p>
@@ -149,7 +131,7 @@ export default function Masters() {
           <div className="hero-stats">
             <div>
               <p className="stat-value">
-                {t('mastersPage.statSharePrefix')} <Counter to={57} suffix="%" />
+                {t('mastersPage.statSharePrefix')} 57%
               </p>
               <p className="stat-label">{t('mastersPage.statShareLabel')}</p>
             </div>
@@ -159,7 +141,7 @@ export default function Masters() {
             </div>
             <div>
               <p className="stat-value">
-                <Counter to={3} suffix="–6" />
+                3–6
               </p>
               <p className="stat-label">{t('mastersPage.statOrdersLabel')}</p>
             </div>
@@ -195,92 +177,43 @@ export default function Masters() {
         </div>
       </section>
 
-      {/* ===== Калькулятор ===== */}
-      <section className="section" id="calc">
+      {/* ===== Заработок ===== */}
+      {/*
+        Здесь стоял калькулятор с двумя ползунками. Он показывал крупную сумму
+        и тут же забирал её обратно оговоркой — выглядело как обещание,
+        читалось как отговорка. Три карточки вместо него объясняют, из чего
+        доход складывается: сколько заявок, какая доля, когда деньги.
+      */}
+      <section className="section" id="money">
         <div className="wrap">
-          <div className="grid-2" style={{ alignItems: 'center' }}>
-            <div className="stack-lg" data-reveal>
-              <div className="section-head">
-                <p className="eyebrow">{t('mastersPage.calcEyebrow')}</p>
-                <h2 className="h2">{t('mastersPage.calcTitle')}</h2>
-                <p className="lead">{t('mastersPage.calcLead')}</p>
-              </div>
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('mastersPage.moneyEyebrow')}</p>
+            <h2 className="h2">{t('mastersPage.moneyTitle')}</h2>
+            <p className="lead">{t('mastersPage.moneyLead')}</p>
+          </div>
 
-              <div className="card stack-lg">
-                <div className="field">
-                  <label className="field-label" htmlFor="orders">
-                    {t('mastersPage.calcOrdersLabel')} <strong>{ordersPerDay}</strong>
-                  </label>
-                  <input
-                    id="orders"
-                    className="range"
-                    type="range"
-                    min={ORDERS_MIN}
-                    max={ORDERS_MAX}
-                    step={1}
-                    value={ordersPerDay}
-                    style={{ ['--range-pos' as string]: `${ordersPos}%` }}
-                    onChange={(e) => setOrdersPerDay(Number(e.target.value))}
-                  />
-                  <p className="field-hint">
-                    {t('mastersPage.calcOrdersHint', {
-                      orders: tn('mastersPage.ordersPerDay', ordersPerDay),
-                      days: WORK_DAYS,
-                    })}
-                  </p>
-                </div>
+          <div className="grid grid-3">
+            {MONEY.map((m, i) => (
+              <article
+                key={m.title}
+                className="card card-lift stack-sm"
+                data-reveal
+                style={revealDelay(i)}
+              >
+                <h3 className="h3">{t(m.title)}</h3>
+                <p className="muted">{t(m.text)}</p>
+              </article>
+            ))}
+          </div>
 
-                <div className="field">
-                  <label className="field-label" htmlFor="check">
-                    {t('mastersPage.calcCheckLabel')}{' '}
-                    <strong>
-                      {formatSum(check, locale.tag)} {t('unit.sum')}
-                    </strong>
-                  </label>
-                  <input
-                    id="check"
-                    className="range"
-                    type="range"
-                    min={CHECK_MIN}
-                    max={CHECK_MAX}
-                    step={10_000}
-                    value={check}
-                    style={{ ['--range-pos' as string]: `${checkPos}%` }}
-                    onChange={(e) => setCheck(Number(e.target.value))}
-                  />
-                  <p className="field-hint">{t('mastersPage.calcCheckHint')}</p>
-                </div>
-              </div>
-            </div>
+          <p className="small muted" style={{ marginTop: 'var(--s24)', maxWidth: '68ch' }}>
+            {t('mastersPage.moneyHonest')}
+          </p>
 
-            <div className="result stack" data-reveal>
-              <div className="stack-sm">
-                <p className="muted">{t('mastersPage.calcResultLead')}</p>
-                <p className="result-value" aria-live="polite">
-                  {t('mastersPage.calcResultValue', { sum: formatSum(monthly, locale.tag) })}
-                </p>
-              </div>
-              <dl className="result-rows">
-                <div className="result-row">
-                  <span>{t('mastersPage.calcRowShare')}</span>
-                  <span>{Math.round(SHARE * 100)}%</span>
-                </div>
-                <div className="result-row">
-                  <span>{t('mastersPage.calcRowOrders')}</span>
-                  <span>{ordersPerDay * WORK_DAYS}</span>
-                </div>
-                <div className="result-row">
-                  <span>{t('mastersPage.calcRowPayouts')}</span>
-                  <span>{t('mastersPage.calcRowPayoutsValue')}</span>
-                </div>
-              </dl>
-              <p className="small muted">{t('mastersPage.calcNote')}</p>
-              <div className="btn-row">
-                <Link to="/apply" className="btn">
-                  {t('mastersPage.applyCta')}
-                </Link>
-              </div>
-            </div>
+          <div className="btn-row" style={{ marginTop: 'var(--s24)' }}>
+            <Link to="/apply" className="btn btn-auto">
+              {t('mastersPage.applyCta')}
+            </Link>
           </div>
         </div>
       </section>
@@ -319,7 +252,7 @@ export default function Masters() {
                 <AppRow
                   title={t('mastersPage.weekEarnings')}
                   sub={t('mastersPage.payoutMonday')}
-                  badge={t('mastersPage.weekEarningsValue')}
+                  badge={t('mastersPage.appWeekSum')}
                 />
                 <AppRow
                   title={t('mastersPage.appNewOrderTitle')}

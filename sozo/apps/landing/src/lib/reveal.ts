@@ -3,17 +3,32 @@ import { useEffect } from 'react';
 /**
  * Появление блоков при скролле.
  *
- * Один IntersectionObserver на страницу вместо обработчика scroll: браузер сам
- * считает пересечения, главный поток свободен. Элемент помечается атрибутом
- * `data-reveal`, класс `.is-in` включает переход из styles.css.
+ * **Текст виден всегда, анимация — украшение.** Раньше было наоборот:
+ * `[data-reveal]` прятался в CSS, а показывал его скрипт. Стоило наблюдателю
+ * не сработать — и секция навсегда оставалась пустым белым прямоугольником,
+ * в котором виден только тот элемент, которому забыли поставить `data-reveal`.
+ * На узком экране, где секции складываются в длинные колонки, так и выходило.
  *
- * Уважает prefers-reduced-motion: там CSS сразу показывает всё, наблюдение не нужно.
+ * Поэтому прятать разрешено только после того, как скрипт подтвердил, что
+ * умеет показать обратно: класс `js-reveal` на `<html>` ставит `main.tsx` до
+ * первого рендера, а правило `opacity: 0` в styles.css написано под этот
+ * класс. Нет скрипта, упал бандл, старый браузер — страница показывается
+ * целиком.
+ *
+ * Уважает prefers-reduced-motion: там наблюдение не нужно вовсе.
  */
+
+/** Через сколько показать всё, что наблюдатель так и не показал */
+const SAFETY_MS = 2500;
+
 export function useReveal(deps: unknown[] = []): void {
   useEffect(() => {
+    const root = document.documentElement;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const nodes = Array.from(document.querySelectorAll<HTMLElement>('[data-reveal]:not(.is-in)'));
+
     if (reduced || !('IntersectionObserver' in window)) {
+      root.classList.remove('js-reveal');
       nodes.forEach((n) => n.classList.add('is-in'));
       return;
     }
@@ -26,11 +41,25 @@ export function useReveal(deps: unknown[] = []): void {
           io.unobserve(entry.target); // анимация одноразовая — не дёргаем при обратном скролле
         }
       },
-      { rootMargin: '0px 0px -12% 0px', threshold: 0.08 },
+      // threshold 0, а не доля площади: секция на узком экране бывает выше
+      // экрана в разы, и требование «видно 8% блока» она может не выполнить
+      // никогда — блок так и останется невидимым
+      { rootMargin: '0px 0px -10% 0px', threshold: 0 },
     );
 
     nodes.forEach((n) => io.observe(n));
-    return () => io.disconnect();
+
+    // Страховка. Что бы ни случилось с наблюдателем — через SAFETY_MS
+    // непоказанное показывается. Пустой страницы у посетителя быть не может
+    const safety = window.setTimeout(() => {
+      for (const n of nodes) n.classList.add('is-in');
+      io.disconnect();
+    }, SAFETY_MS);
+
+    return () => {
+      window.clearTimeout(safety);
+      io.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

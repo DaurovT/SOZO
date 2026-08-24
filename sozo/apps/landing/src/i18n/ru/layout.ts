@@ -1,8 +1,8 @@
 /** Шапка, подвал и переключатель языка — одинаковы на всех страницах. */
 export const layout = {
-  'nav.private': 'Частным',
+  'nav.private': 'Клиентам',
   'nav.business': 'Бизнесу',
-  'nav.operators': 'Домам',
+  'nav.operators': 'Управляющим',
   'nav.masters': 'Мастерам',
   'nav.sections': 'Разделы',
   'nav.home': 'SOZO — на главную',
@@ -13,15 +13,15 @@ export const layout = {
   'nav.chooseLanguage': 'Выбрать язык',
 
   'footer.about':
-    'Технический сервис для дома и бизнеса в Ташкенте. Сантехника, электрика, кондиционеры, мелкий ремонт.',
+    'Ремонт и обслуживание в Ташкенте: сантехника, электрика, кондиционеры, мелкий ремонт. Для квартир, для бизнеса и для управляющих компаний.',
   'footer.emergency': 'Аварийные заявки принимаем круглосуточно.',
-  'footer.privateTitle': 'Частным',
+  'footer.privateTitle': 'Клиентам',
   'footer.privateAria': 'Частным клиентам',
   'footer.howItWorks': 'Как это работает',
   'footer.whatWeFix': 'Что чиним',
   'footer.app': 'Приложение',
-  'footer.businessTitle': 'Бизнесу и мастерам',
-  'footer.businessAria': 'Бизнесу и мастерам',
+  'footer.businessTitle': 'Организациям и мастерам',
+  'footer.businessAria': 'Организациям и мастерам',
   'footer.sitesService': 'Обслуживание точек',
   'footer.managingCompanies': 'Управляющим компаниям',
   'footer.calcSubscription': 'Рассчитать абонентку',

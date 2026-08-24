@@ -33,15 +33,20 @@ export default function MasterRail(props: { masters: Master[] }) {
   const tn = useTn();
   return (
     <div className="masters-rail" role="list">
-      {props.masters.map((m) => {
+      {props.masters.map((m, i) => {
         const name = t(m.nameKey);
         const role = t(m.roleKey);
+        // Первые три карточки видны сразу — их грузим обычным порядком.
+        // Остальные уезжают вправо за край экрана, им отложенная загрузка
+        // и нужна. Фон карточки тёмный, поэтому незагруженное фото читается
+        // как чёрная заглушка: там, где карточка видна, откладывать нельзя
+        const eager = i < 3;
         return (
           <article className="master" key={m.id} role="listitem">
             <img
               src={m.photo}
               alt={t('components.masterRail.photoAlt', { name, role: role.toLowerCase() })}
-              loading="lazy"
+              loading={eager ? undefined : 'lazy'}
               decoding="async"
               width={760}
               height={950}

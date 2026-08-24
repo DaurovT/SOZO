@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import Counter from '../components/Counter';
 import Faq from '../components/Faq';
 import { AppRow, AppTabbar, Phone } from '../components/Phone';
 import { useT, useTn } from '../i18n';
@@ -19,19 +18,14 @@ const SEGMENTS = [
   'business.segmentHotels',
 ];
 
-const PAINS = [
-  { title: 'business.painStaffTitle', text: 'business.painStaffText' },
-  { title: 'business.painRandomTitle', text: 'business.painRandomText' },
-  { title: 'business.painMoneyTitle', text: 'business.painMoneyText' },
-];
-
+/* Четыре пункта, а не шесть: шесть равнозначных обещаний означают, что
+   главного среди них нет. Осмотры и список отложенных работ съехались в один
+   пункт — это одно и то же обещание с двух сторон. */
 const OFFER = [
-  { title: 'business.offerContractTitle', text: 'business.offerContractText' },
   { title: 'business.offerSlaTitle', text: 'business.offerSlaText' },
+  { title: 'business.offerPreventTitle', text: 'business.offerPreventText' },
   { title: 'business.offerPhotoTitle', text: 'business.offerPhotoText' },
   { title: 'business.offerBudgetTitle', text: 'business.offerBudgetText' },
-  { title: 'business.offerInspectionTitle', text: 'business.offerInspectionText' },
-  { title: 'business.offerBacklogTitle', text: 'business.offerBacklogText' },
 ];
 
 const CABINET_POINTS = [
@@ -122,13 +116,13 @@ export default function Business() {
           <div className="hero-stats">
             <div>
               <p className="stat-value">
-                <Counter to={60} format={(v) => t('business.unitMin', { n: v })} />
+                {t('business.unitMin', { n: 60 })}
               </p>
               <p className="stat-label">{t('business.statDaySla')}</p>
             </div>
             <div>
               <p className="stat-value">
-                <Counter to={120} format={(v) => t('business.unitMin', { n: v })} />
+                {t('business.unitMin', { n: 120 })}
               </p>
               <p className="stat-label">{t('business.statNightSla')}</p>
             </div>
@@ -156,30 +150,6 @@ export default function Business() {
               <span className="chip" key={key}>
                 {t(key)}
               </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ===== Боли ===== */}
-      <section className="section">
-        <div className="wrap">
-          <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('business.painsEyebrow')}</p>
-            <h2 className="h2">{t('business.painsTitle')}</h2>
-          </div>
-          <div className="grid grid-3">
-            {PAINS.map((p, i) => (
-              <article
-                key={p.title}
-                className="card card-lift stack-sm"
-                data-reveal
-                style={revealDelay(i)}
-              >
-                <p className="usp-num">0{i + 1}</p>
-                <h3 className="h3">{t(p.title)}</h3>
-                <p className="muted">{t(p.text)}</p>
-              </article>
             ))}
           </div>
         </div>

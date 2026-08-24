@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ConsentCheckbox, Done, Field, Honeypot, PhoneField, SubmitError } from '../components/form';
-import { useLocale, useT } from '../i18n';
+import { useT } from '../i18n';
 import { DISPATCH_TEL_DISPLAY, DISPATCH_TEL_HREF } from '../lib/contacts';
-import { formatSum } from '../lib/format';
 import { isPhoneValid, toE164 } from '../lib/phone';
+import Faq from '../components/Faq';
 import { revealDelay } from '../lib/reveal';
 import { useLeadSubmit } from '../lib/useLeadSubmit';
 
@@ -24,6 +24,13 @@ import { useLeadSubmit } from '../lib/useLeadSubmit';
  *  переводится только подпись (ключи словаря рядом). */
 const SEGMENTS = [
   {
+    key: 'hoa',
+    api: 'УК и ТСЖ',
+    tabKey: 'operators.segmentHoaTab',
+    headlineKey: 'operators.segmentHoaHeadline',
+    textKey: 'operators.segmentHoaText',
+  },
+  {
     key: 'bc',
     api: 'Бизнес-центр',
     tabKey: 'operators.segmentBcTab',
@@ -38,13 +45,6 @@ const SEGMENTS = [
     textKey: 'operators.segmentInhouseText',
   },
   {
-    key: 'hoa',
-    api: 'УК и ТСЖ',
-    tabKey: 'operators.segmentHoaTab',
-    headlineKey: 'operators.segmentHoaHeadline',
-    textKey: 'operators.segmentHoaText',
-  },
-  {
     key: 'fm',
     api: 'FM-подрядчик',
     tabKey: 'operators.segmentFmTab',
@@ -54,12 +54,36 @@ const SEGMENTS = [
 ];
 
 const FREE = [
-  'operators.freeAdmission',
   'operators.freeRequests',
   'operators.freeNotices',
+  'operators.freeAdmission',
   'operators.freePasses',
+  'operators.freeRegistry',
   'operators.freeFirstRight',
   'operators.freeFee',
+];
+
+/* Что управляющий получает — четыре вещи, названные словами жителя, а не
+   названиями экранов кабинета. Стоят сразу под первым экраном: страница
+   должна сказать, зачем пришла, прежде чем перечислять функции. */
+const VALUES = [
+  { titleKey: 'operators.valueContactTitle', textKey: 'operators.valueContactText' },
+  { titleKey: 'operators.valueTrustTitle', textKey: 'operators.valueTrustText' },
+  { titleKey: 'operators.valueControlTitle', textKey: 'operators.valueControlText' },
+  { titleKey: 'operators.valueToolTitle', textKey: 'operators.valueToolText' },
+];
+
+/* Вопросы. Сюда переехало возражение «вы заберёте работу у нашей службы»,
+   с которого страница начиналась: ответ на него нужен (PRD-06 §3.9), но
+   отвечать раньше, чем сказал, зачем пришёл, — значит признать, что тебя
+   боятся. */
+const FAQ = [
+  { qKey: 'operators.faqReplaceQ', aKey: 'operators.faqReplaceA' },
+  { qKey: 'operators.faqOwnMastersQ', aKey: 'operators.faqOwnMastersA' },
+  { qKey: 'operators.faqFreeQ', aKey: 'operators.faqFreeA' },
+  { qKey: 'operators.faqResidentsQ', aKey: 'operators.faqResidentsA' },
+  { qKey: 'operators.faqDataQ', aKey: 'operators.faqDataA' },
+  { qKey: 'operators.faqLeaveQ', aKey: 'operators.faqLeaveA' },
 ];
 
 const PRO = [
@@ -78,20 +102,10 @@ const STEPS = [
   { titleKey: 'operators.step4Title', textKey: 'operators.step4Text' },
 ];
 
-/** Ставка сбора по умолчанию — 5% (параметр 124) */
-const FEE_RATE = 0.05;
-/** Оценка среднего чека частной заявки, сум */
-const AVG_ORDER = 250_000;
-/** Оценка доли квартир, заказывающих работы в месяц */
-const ORDERS_PER_UNIT = 0.08;
-/** Тариф «Подписка», сум за объект в месяц */
-const SUBSCRIPTION_PRICE = 3_000_000;
 
 export default function Operators() {
   const t = useT();
-  const locale = useLocale();
   const [tab, setTab] = useState(0);
-  const [units, setUnits] = useState(300);
 
   const [company, setCompany] = useState('');
   const [name, setName] = useState('');
@@ -100,8 +114,6 @@ export default function Operators() {
   const [consent, setConsent] = useState(false);
   const [honeypot, setHoneypot] = useState('');
   const { pending, error, result, submit } = useLeadSubmit();
-
-  const monthly = Math.round(units * ORDERS_PER_UNIT * AVG_ORDER * FEE_RATE);
   const segment = SEGMENTS[tab];
 
   const canSubmit =
@@ -156,12 +168,38 @@ export default function Operators() {
               <a className="btn" href="#connect">{t('operators.heroCta')}</a>
               <a className="btn btn-ghost" href={DISPATCH_TEL_HREF}>{DISPATCH_TEL_DISPLAY}</a>
             </div>
+            <p className="hero-note" style={revealDelay(4)}>{t('operators.heroNote')}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="wrap stack-lg">
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('operators.valueEyebrow')}</p>
+          </div>
+          <div className="grid grid-4">
+            {VALUES.map((v, i) => (
+              <article
+                key={v.titleKey}
+                className="card card-lift stack-sm"
+                data-reveal
+                style={revealDelay(i)}
+              >
+                <h3 className="h3">{t(v.titleKey)}</h3>
+                <p className="muted">{t(v.textKey)}</p>
+              </article>
+            ))}
           </div>
         </div>
       </section>
 
       <section className="section section-alt">
         <div className="wrap stack-lg">
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('operators.segmentsEyebrow')}</p>
+            <h2 className="h2">{t('operators.segmentsTitle')}</h2>
+          </div>
           <div className="tabs" data-reveal>
             {SEGMENTS.map((s, i) => (
               <button
@@ -184,51 +222,10 @@ export default function Operators() {
       <section className="section section-soft">
         <div className="wrap stack-lg">
           <div className="section-head" data-reveal>
-            <p className="eyebrow">{t('operators.incomeEyebrow')}</p>
-            <h2 className="h2">{t('operators.incomeTitle')}</h2>
+            <p className="eyebrow">{t('operators.moneyEyebrow')}</p>
+            <h2 className="h2">{t('operators.moneyTitle')}</h2>
+            <p className="lead">{t('operators.moneyLead')}</p>
           </div>
-          <p className="lead">
-            {t('operators.incomeLead', { fee: Math.round(FEE_RATE * 100) })}
-          </p>
-
-          <div className="field">
-            <label className="field-label" htmlFor="units">
-              {t('operators.unitsLabel')} <b>{units}</b>
-            </label>
-            <input
-              id="units"
-              className="range"
-              type="range"
-              min={20}
-              max={1200}
-              step={10}
-              value={units}
-              onChange={(e) => setUnits(Number(e.target.value))}
-            />
-          </div>
-
-          <div className="result stack">
-            <div className="stack-sm">
-              <p className="muted">{t('operators.incomeCaption')}</p>
-              <p className="result-value">
-                {t('operators.incomeValue', { sum: formatSum(monthly, locale.tag) })}
-              </p>
-            </div>
-          </div>
-          <p className="small muted">
-            {t('operators.incomeNote', {
-              avg: formatSum(AVG_ORDER, locale.tag),
-              share: Math.round(ORDERS_PER_UNIT * 100),
-            })}
-          </p>
-          <p className="small muted">
-            {t('operators.subscriptionNote', { price: formatSum(SUBSCRIPTION_PRICE, locale.tag) })}
-          </p>
-        </div>
-      </section>
-
-      <section className="section">
-        <div className="wrap stack-lg">
           <div className="grid grid-2" data-reveal>
             <article className="card stack">
               <h3 className="h3">{t('operators.freeTitle')}</h3>
@@ -241,6 +238,7 @@ export default function Operators() {
               <ul className="split-list">
                 {PRO.map((f) => <li key={f}>{t(f)}</li>)}
               </ul>
+              <p className="small muted">{t('operators.proPriceNote')}</p>
             </article>
           </div>
         </div>
@@ -249,6 +247,7 @@ export default function Operators() {
       <section className="section section-alt">
         <div className="wrap stack-lg">
           <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('operators.stepsEyebrow')}</p>
             <h2 className="h2">{t('operators.stepsTitle')}</h2>
           </div>
           <ol className="stack" data-reveal>
@@ -258,6 +257,16 @@ export default function Operators() {
               </li>
             ))}
           </ol>
+        </div>
+      </section>
+
+      <section className="section section-soft">
+        <div className="wrap stack-lg">
+          <div className="section-head" data-reveal>
+            <p className="eyebrow">{t('operators.faqEyebrow')}</p>
+            <h2 className="h2">{t('operators.faqTitle')}</h2>
+          </div>
+          <Faq items={FAQ.map((f) => ({ q: t(f.qKey), a: t(f.aKey) }))} />
         </div>
       </section>
 
