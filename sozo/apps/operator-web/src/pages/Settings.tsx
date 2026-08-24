@@ -5,6 +5,7 @@ import { getOrgId } from '../auth';
 import { useFetch } from '../useFetch';
 import { ConnectionBadge } from '../components/Badges';
 import { Empty, ErrorState, Loading } from '../components/States';
+import { SetupWizard } from '../components/SetupWizard';
 import type { ConnectionStatus, Dashboard } from '../types';
 
 /**
@@ -97,6 +98,11 @@ export function Settings() {
         <Loading />
       ) : (
         <>
+          {/* Мастер настройки: чек-лист, который ведёт к своему экрану.
+              Назвать пробел мало — человек, открывший кабинет впервые,
+              ищет нужный экран по семнадцати пунктам меню и не находит */}
+          <SetupWizard buildingId={b.id} emergencyPhone={b.emergencyPhone} isActive={b.connectionStatus === 'active'} />
+
           {/* Чек-лист готовности: что мешает активации и почему это важно */}
           <div
             className="card"
@@ -106,22 +112,16 @@ export function Settings() {
               background: gaps.length ? 'rgba(240,140,30,.05)' : 'var(--surface)',
             }}
           >
-            <h2 className="h2" style={{ fontSize: 17, marginBottom: 'var(--s12)' }}>
-              {gaps.length ? 'Что нужно для активации' : 'Объект готов'}
+            <h2 className="h2" style={{ fontSize: 17, marginBottom: 'var(--s8)' }}>
+              {gaps.length ? 'Объект пока не активирован' : 'Объект готов'}
             </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s8)' }}>
-              <Item ok={approvers.length > 0} text={
-                approvers.length > 0 ? `Согласующий доступ — ${approvers[0].fullName}` : 'Не назначен согласующий доступ'
-              } />
-              <Item ok={approvers.some((a) => a.isBackup)} text={
-                approvers.some((a) => a.isBackup) ? 'Назначен резервный согласующий' : 'Не назначен резервный согласующий'
-              } />
-              <Item ok={Boolean(b.emergencyPhone)} text={
-                b.emergencyPhone ? `Аварийный телефон — ${b.emergencyPhone}` : 'Не указан круглосуточный аварийный телефон'
-              } />
-              <Item ok={!gaps.some((g) => g.includes('реестр'))} text={
-                gaps.some((g) => g.includes('реестр')) ? 'Не заполнен реестр помещений' : 'Реестр помещений заполнен'
-              } />
+            {/* Перечень пробелов переехал в мастер настройки выше — он не
+                только называет их, но и ведёт к нужному экрану. Здесь
+                осталось само действие и то, что мешает его сделать */}
+            <div className="dense cap">
+              {gaps.length
+                ? `Осталось: ${gaps.join('; ')}.`
+                : 'Заявки жителей, наряды-допуски и оповещения об отключениях работают.'}
             </div>
 
             {b.connectionStatus !== 'active' && (
@@ -192,22 +192,6 @@ export function Settings() {
   );
 }
 
-function Item({ ok, text }: { ok: boolean; text: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s8)' }}>
-      {ok ? (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5">
-          <path d="M20 6L9 17l-5-5" />
-        </svg>
-      ) : (
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
-          <circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" />
-        </svg>
-      )}
-      <div className="dense" style={{ color: ok ? undefined : 'var(--error)' }}>{text}</div>
-    </div>
-  );
-}
 
 function Field({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
