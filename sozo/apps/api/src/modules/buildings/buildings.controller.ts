@@ -23,6 +23,30 @@ export class BuildingsController {
     return this.buildings.addUnit('t0', id, body);
   }
 
+  /**
+   * U-06. Импорт реестра помещений и жителей.
+   *
+   * Принимается текст файла целиком (`text`) — кабинет читает его в браузере
+   * и присылает как есть, не разбирая. Разделители, кавычки и BOM разбирает
+   * сервер: правило «12а и 12А — одно помещение» не должно существовать в
+   * двух редакциях, а кодировку всё равно приходится определять в браузере,
+   * потому что Excel сохраняет CSV и в UTF-8, и в windows-1251.
+   *
+   * `rows` — тот же импорт уже разобранной таблицей: нужен прогонам и
+   * будущей выгрузке из 1С, которая придёт не файлом.
+   *
+   * `apply: false` — то же самое без записи: человек видит, сколько
+   * помещений заведётся и какие строки не прошли, и правит файл. Импорт
+   * реестра в тысячу строк вслепую не делают дважды.
+   */
+  @Post(':id/units/import')
+  importUnits(
+    @Param('id') id: string,
+    @Body() body: { rows?: string[][]; text?: string; apply?: boolean },
+  ) {
+    return this.buildings.importUnits('t0', id, body, body.apply === true);
+  }
+
   @Post('units/:unitId/residents')
   addResident(
     @Param('unitId') unitId: string,

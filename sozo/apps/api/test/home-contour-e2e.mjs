@@ -94,6 +94,9 @@ async function setupBuilding(token, { name, address, org, plan, kind, fee }) {
 async function main() {
   console.log(`\nКонтур «Дом»: ${ROOT}\n${'='.repeat(60)}`);
   const t = await login(ADMIN);
+  // Адреса уникальны на прогон: набор идёт и по живой базе, где объект с
+  // тем же адресом уже мог остаться от прошлого раза
+  const tag = Date.now().toString().slice(-5);
 
   // ---------------------------------------------------------------
   group('1. Подключение объекта');
@@ -115,6 +118,54 @@ async function main() {
   const uk = await setupBuilding(t, { name: 'ЖК Сокол', address: 'Амира Темура 15', org: 'uk1', plan: 'free', kind: 'hoa' });
   const bc = await setupBuilding(t, { name: 'БЦ Пойтахт', address: 'Шота Руставели 4', org: 'bc1', plan: 'pro', kind: 'bc' });
   check('объекты активированы', Boolean(uk && bc));
+
+  // ---------------------------------------------------------------
+  // Самая дорогая часть подключения дома — не настройка, а перенос реестра
+  // (DEV-15 §14.1: 2–8 часов на объект). Проверяем не «файл прочитался», а
+  // поведение на настоящем реестре: с дублями, пустыми строками и
+  // телефонами в разных форматах
+  group('1.1. U-06 — импорт реестра помещений');
+  const impBuilding = (await call('/buildings', { token: t, body: { name: 'ЖК Импорт', address: `Импортная ${tag}` } })).body;
+  const impRows = [
+    ['Номер', 'Подъезд', 'Этаж', 'Тип', 'Стояки', 'Телефон', 'ФИО', 'Роль'],
+    ['1', '1', '1', 'Квартира', 'R1', '901234567', 'Иванов Иван', 'Собственник'],
+    ['2', '1', '1', 'Квартира', 'R1', '+998 90 765-43-21', 'Петров Пётр', 'Арендатор'],
+    ['3', '1', '2', 'Квартира', 'R1', '', '', ''],
+    ['3', '1', '2', 'Квартира', 'R1', '', '', ''],
+    ['', '1', '2', 'Квартира', 'R1', '', 'Без номера', ''],
+    ['5', '1', '2', 'Ангар', 'R1', '', '', ''],
+    ['6', '1', '2', 'Квартира', 'R1', '12345', 'Кривой телефон', ''],
+  ];
+
+  const preview = (await call(`/buildings/${impBuilding.id}/units/import`, { token: t, body: { rows: impRows } })).body;
+  check('предпросмотр ничего не записывает', preview.applied === false, JSON.stringify(preview).slice(0, 80));
+  check('считает, сколько помещений заведётся', preview.willCreateUnits === 3, String(preview.willCreateUnits));
+  check('считает, сколько жителей привяжется', preview.willCreateResidents === 2, String(preview.willCreateResidents));
+  check('кривые строки названы по номеру', preview.problems.length === 4, JSON.stringify(preview.problems));
+  check('дубль внутри файла отличён от прочих ошибок',
+    preview.problems.some((p) => p.code === 'DUPLICATE_IN_FILE'), JSON.stringify(preview.problems.map((p) => p.code)));
+  const unitsBefore = (await call(`/buildings/${impBuilding.id}/units`, { token: t })).body;
+  check('после предпросмотра в объекте по-прежнему пусто', unitsBefore.length === 0, String(unitsBefore.length));
+
+  const applied = (await call(`/buildings/${impBuilding.id}/units/import`, { token: t, body: { rows: impRows, apply: true } })).body;
+  check('импорт заводит ровно то, что обещал предпросмотр',
+    applied.createdUnits === 3 && applied.createdResidents === 2,
+    `${applied.createdUnits}/${applied.createdResidents}`);
+  const unitsAfter = (await call(`/buildings/${impBuilding.id}/units`, { token: t })).body;
+  check('помещения появились', unitsAfter.length === 3, String(unitsAfter.length));
+  // Телефон, записанный как «+998 90 765-43-21», обязан стать адресатом
+  // оповещения — иначе при отключении воды он его не получит
+  const imported = unitsAfter.find((u) => u.number === '2');
+  const res2 = (await call(`/buildings/units/${imported.id}/residents`, { token: t })).body;
+  check('телефон приведён к единому виду', res2[0]?.userPhone === '+998907654321', JSON.stringify(res2[0]?.userPhone));
+  check('роль из файла сохранена', res2[0]?.residentRole === 'tenant', res2[0]?.residentRole);
+
+  // Повторная загрузка того же файла — обычное дело: оператор дослал строки
+  const reimport = (await call(`/buildings/${impBuilding.id}/units/import`, { token: t, body: { rows: impRows, apply: true } })).body;
+  check('повторный импорт не удваивает помещения', reimport.createdUnits === 0, String(reimport.createdUnits));
+  check('и объясняет, что строки уже заведены', reimport.alreadyExists === 3, String(reimport.alreadyExists));
+  const unitsFinal = (await call(`/buildings/${impBuilding.id}/units`, { token: t })).body;
+  check('в объекте по-прежнему три помещения', unitsFinal.length === 3, String(unitsFinal.length));
 
   // ---------------------------------------------------------------
   group('2. Справочник зон A-41');

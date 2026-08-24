@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { uuidv7 } from '@sozo/kernel';
+import { buildImport, parseDelimited, uuidv7 } from '@sozo/kernel';
 import { maintenanceRegulation } from '@sozo/contracts';
 import { SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
 import { EventBus } from '../../common/event-bus';
@@ -134,6 +134,60 @@ export class BuildingsService {
     };
     this.repo.saveUnit(rec);
     return rec;
+  }
+
+  /**
+   * Импорт реестра помещений (U-06, DEV-15 §14.1).
+   *
+   * Две вещи, ради которых он написан именно так.
+   *
+   * Первое — строка с ошибкой не отменяет файл. Реестр в тысячу строк
+   * всегда содержит десяток кривых: пустой номер, телефон с опечаткой,
+   * «Ангар» в колонке типа. Импорт «всё или ничего» на таком файле не
+   * проходит никогда, и оператор возвращается к ручному вводу.
+   *
+   * Второе — предварительный просмотр. `apply: false` считает то же самое,
+   * ничего не записывая: человек видит, сколько заведётся и что не прошло.
+   * Без этого первый импорт в реестр дома делают вслепую, а второго не
+   * делают вовсе.
+   *
+   * Житель заводится только вместе со своим помещением и только если в
+   * строке есть телефон: жилец без номера — это строка в таблице, а не
+   * адресат оповещения об отключении.
+   */
+  importUnits(
+    tenantId: string,
+    buildingId: string,
+    input: { rows?: string[][]; text?: string },
+    apply: boolean,
+  ) {
+    this.get(tenantId, buildingId);
+    const rows = input.rows ?? (input.text ? parseDelimited(input.text) : []);
+    const existing = this.repo.listUnits(tenantId, buildingId).map((u) => u.number);
+    const report = buildImport(rows, existing);
+    if (!apply) return { ...report, applied: false };
+
+    let units = 0;
+    let residents = 0;
+    for (const r of report.rows) {
+      const unit = this.addUnit(tenantId, buildingId, {
+        number: r.number,
+        entrance: r.entrance ?? undefined,
+        floor: r.floor ?? undefined,
+        unitType: r.unitType,
+        riserIds: r.riserIds,
+      });
+      units += 1;
+      if (r.residentPhone) {
+        this.addResident(tenantId, unit.id, {
+          userPhone: r.residentPhone,
+          fullName: r.residentName ?? undefined,
+          residentRole: r.residentRole,
+        });
+        residents += 1;
+      }
+    }
+    return { ...report, applied: true, createdUnits: units, createdResidents: residents };
   }
 
   addZone(

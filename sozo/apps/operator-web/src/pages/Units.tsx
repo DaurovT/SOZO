@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { getOrgId } from '../auth';
 import { useFetch } from '../useFetch';
 import { BuildingPicker, useSelectedBuilding } from '../components/BuildingPicker';
 import { Empty, ErrorState, Loading } from '../components/States';
+import { UnitImport } from '../components/UnitImport';
 import type { Dashboard } from '../types';
 
 /**
@@ -36,6 +38,7 @@ export function Units() {
   const dash = useFetch<Dashboard>(org ? `/operator/${org}/dashboard` : null);
   const buildingId = useSelectedBuilding(dash.data);
   const data = useFetch<Summary>(buildingId ? `/buildings/${buildingId}/residents-summary` : null, [buildingId]);
+  const [importing, setImporting] = useState(false);
 
   if (dash.loading || data.loading) return <Loading />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={dash.reload} />;
@@ -56,7 +59,20 @@ export function Units() {
           </div>
         </div>
         <BuildingPicker dash={dash.data} />
+        <button type="button" onClick={() => setImporting((v) => !v)} disabled={!buildingId}>
+          {importing ? 'Скрыть импорт' : 'Импорт из файла'}
+        </button>
       </div>
+
+      {importing && buildingId && (
+        <UnitImport
+          buildingId={buildingId}
+          onDone={() => {
+            data.reload();
+            dash.reload();
+          }}
+        />
+      )}
 
       {withoutRiser > 0 && (
         <div className="card" style={{ padding: 'var(--s16)', background: 'rgba(240,140,30,.06)', border: '1px solid rgba(240,140,30,.3)' }}>

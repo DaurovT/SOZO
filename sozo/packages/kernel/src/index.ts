@@ -4,6 +4,7 @@ export * from './state-machine.js';
 export * from './permit-machine.js';
 export * from './guards.js';
 export * from './outbox.js';
+export * from './unit-import.js';
 export { GRAPHS } from './graphs/index.js';
 
 import { OrderStateMachine } from './state-machine.js';
