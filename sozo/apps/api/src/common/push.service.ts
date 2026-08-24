@@ -222,7 +222,25 @@ export class FcmPushSender implements PushSender {
         const data = (await res.json()) as { name?: string };
         return { sent: true, channel: this.channel, providerId: data.name };
       }
-      const detail = (await res.text()).slice(0, 300);
+      const raw = await res.text();
+      /**
+       * Ответ поставщика — многострочный JSON, и в журнале от него видно
+       * только первую строку с открывающей скобкой. Вытаскиваем то, ради
+       * чего в этот журнал и смотрят: причину словами и код ошибки.
+       *
+       * Разница здесь не косметическая. THIRD_PARTY_AUTH_ERROR означает, что
+       * отказала Apple, а не Google, — чинится он в ключе APNs, а не в
+       * ключе Firebase, и перепутать эти два места стоит вечера.
+       */
+      const detail = ((): string => {
+        try {
+          const e = (JSON.parse(raw) as { error?: { message?: string; status?: string; details?: Array<{ errorCode?: string }> } }).error;
+          const code = e?.details?.find((d) => d.errorCode)?.errorCode;
+          return [e?.message, e?.status, code].filter(Boolean).join(' · ') || raw.slice(0, 300);
+        } catch {
+          return raw.slice(0, 300);
+        }
+      })();
       /**
        * 404 UNREGISTERED и 400 с невалидным токеном означают одно: приложение
        * на этом устройстве больше не живёт. Такую строку нужно снять, иначе
@@ -235,7 +253,9 @@ export class FcmPushSender implements PushSender {
       const gone = res.status === 404 || (res.status === 400 && /registration token|INVALID_ARGUMENT/i.test(detail));
       if (res.status === 401) this.expiresAt = 0;
       if (!gone) this.log.error(`FCM отказал ${res.status}: ${detail}`);
-      return { sent: false, channel: this.channel, gone, error: `HTTP ${res.status}` };
+      // Причина едет дальше целиком: в журнале доставки «HTTP 401» не
+      // отличается от протухшего ключа Firebase, а это разные починки
+      return { sent: false, channel: this.channel, gone, error: `HTTP ${res.status}: ${detail}` };
     } catch (e) {
       this.log.error(`FCM недоступен: ${(e as Error).message}`);
       return { sent: false, channel: this.channel, error: (e as Error).message };
