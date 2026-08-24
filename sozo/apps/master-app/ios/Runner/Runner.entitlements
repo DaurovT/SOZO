@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Разрешение на APNs. Без него Xcode не впишет aps-environment в профиль
+	     подписи, и запрос токена на устройстве вернёт отказ — независимо от
+	     того, что ключ APNs загружен в Firebase: тот отвечает за путь
+	     «сервер → Apple», а этот — за право приложения вообще принимать push.
+
+	     development — для сборок на устройство и TestFlight; при выкладке в
+	     App Store Xcode подменяет значение на production сам. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
