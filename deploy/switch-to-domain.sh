@@ -7,7 +7,7 @@
 #      потратит попытку и упрётся в лимит Let's Encrypt;
 #   2. поднять временный HTTP-конфиг: сертификата ещё нет, а блок с
 #      ssl_certificate на несуществующий файл не даст nginx стартовать;
-#   3. выпустить сертификат сразу на три имени;
+#   3. выпустить сертификат сразу на все имена, которые резолвятся;
 #   4. вернуть панели в корень своих хостов (подпути были обходом
 #      закрытых портов) и разложить боевой конфиг;
 #   5. переписать адреса и пересобрать.
@@ -20,6 +20,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IP="$(curl -s --max-time 10 https://api.ipify.org || true)"
 # Корень и www — лендинг и веб-карточка; поддомены — API и панели
 NAMES=("$DOMAIN" "www.$DOMAIN" "api.$DOMAIN" "admin.$DOMAIN" "dispatch.$DOMAIN")
+# Имена, без которых система работает: презентация продукта. Если записи нет,
+# имя молча выпадает из сертификата, а не роняет весь переезд. Перечислять его
+# здесь обязательно: certbot с --cert-name выпускает ровно тот список, который
+# ему дали, поэтому забытое имя тихо пропадёт из сертификата при следующем
+# запуске — и TLS на нём сломается.
+OPTIONAL=("deck.$DOMAIN")
 
 echo "== 1. Проверка DNS (адрес машины: ${IP:-неизвестен})"
 # Спрашиваем авторитетные серверы, а не локальный резолвер: у записи TTL
@@ -33,6 +39,14 @@ for n in "${NAMES[@]}"; do
   if [ -z "$got" ]; then echo "  ✗ $n не резолвится на $AUTH_NS — добавьте запись"; exit 1; fi
   if [ -n "$IP" ] && [ "$got" != "$IP" ]; then echo "  ✗ $n → $got, а машина $IP"; exit 1; fi
   echo "  ✓ $n → $got"
+done
+for n in "${OPTIONAL[@]}"; do
+  got="$(dig +short "@$AUTH_NS" "$n" A | tail -1)"
+  if [ -z "$got" ] || { [ -n "$IP" ] && [ "$got" != "$IP" ]; }; then
+    echo "  ~ $n не указывает сюда — пропускаю, сертификат выпущу без него"
+    continue
+  fi
+  echo "  ✓ $n → $got"; NAMES+=("$n")
 done
 
 echo "== 2. Временный HTTP-конфиг для проверки Let's Encrypt"
@@ -48,7 +62,7 @@ EOF
 sudo ln -sf /etc/nginx/sites-available/sozo /etc/nginx/sites-enabled/sozo
 sudo nginx -t >/dev/null && sudo systemctl reload nginx && echo "  ✓ nginx принял"
 
-echo "== 3. Сертификат на три имени"
+echo "== 3. Сертификат на все имена, которые резолвятся"
 sudo certbot certonly --webroot -w /var/www/html \
   --cert-name "api.$DOMAIN" \
   $(printf -- '-d %s ' "${NAMES[@]}") \
@@ -80,6 +94,8 @@ echo "== 6. Адреса и пересборка"
 "$ROOT/deploy/set-address.sh" "$DOMAIN"
 
 echo "== 7. Проверка"
-for u in "https://$DOMAIN/" "https://api.$DOMAIN/v1/health" "https://admin.$DOMAIN/" "https://dispatch.$DOMAIN/"; do
+CHECK=("https://$DOMAIN/" "https://api.$DOMAIN/v1/health" "https://admin.$DOMAIN/" "https://dispatch.$DOMAIN/")
+printf '%s\n' "${NAMES[@]}" | grep -qx "deck.$DOMAIN" && CHECK+=("https://deck.$DOMAIN/")
+for u in "${CHECK[@]}"; do
   printf "  %-40s " "$u"; curl -s -o /dev/null -w "HTTP %{http_code}\n" --max-time 15 "$u"
 done

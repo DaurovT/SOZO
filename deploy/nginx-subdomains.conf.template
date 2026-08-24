@@ -46,6 +46,15 @@ server {
         try_files $uri $uri/ /operator/index.html;
     }
 
+    # Презентация продукта. Статическая страница без сборки, поэтому отдаётся
+    # прямо из репозитория. Здесь — короткая ссылка: она работает и тогда,
+    # когда DNS поддомена ещё не заведён. Основной адрес — deck.__DOMAIN__.
+    location ^~ /deck/ {
+        alias /home/azureuser/SOZO/sozo/apps/deck/;
+        index index.html;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+
     location / { try_files $uri $uri/ /index.html; }
 }
 
@@ -105,6 +114,41 @@ server {
     root /home/azureuser/SOZO/sozo/apps/dispatcher-web/dist;
     index index.html;
     location / { try_files $uri $uri/ /index.html; }
+}
+
+# --- Презентация продукта ---------------------------------------------------
+server {
+    listen 80;
+    server_name deck.__DOMAIN__;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name deck.__DOMAIN__;
+    ssl_certificate     /etc/letsencrypt/live/__CERT__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__CERT__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    root /home/azureuser/SOZO/sozo/apps/deck;
+    index index.html;
+
+    # Страница закрыта от поисковиков заголовком, а не только мета-тегом:
+    # ссылку рассылают адресно, и в выдаче ей делать нечего. Снять — когда
+    # презентацию решат сделать публичной.
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    # Короткие адреса языков: deck.__DOMAIN__/uz/ и /en/.
+    # Нужны для рассылки: англоязычному собеседнику уходит ссылка, которая
+    # сразу открывается по-английски, а не «переключите вверху справа».
+    # Отдельных файлов под языки нет — страница одна, язык выбирает скрипт.
+    location = /uz/ { return 302 /?lang=uz; }
+    location = /en/ { return 302 /?lang=en; }
+    location = /ru/ { return 302 /?lang=ru; }
+    location = /uz  { return 302 /?lang=uz; }
+    location = /en  { return 302 /?lang=en; }
+    location = /ru  { return 302 /?lang=ru; }
+
+    location / { try_files $uri $uri/ =404; }
 }
 
 # --- Всё, что пришло не на наши имена: не отвечаем ---------------------------
