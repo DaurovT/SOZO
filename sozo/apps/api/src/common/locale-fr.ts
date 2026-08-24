@@ -505,6 +505,8 @@ export const FR: Record<string, string> = {
   'Этого района нет в списке обслуживаемых': "Ce district ne figure pas parmi les districts desservis",
   'Этой услуги нет в действующем прайсе — выберите работу заново': "Ce service ne figure plus dans le tarif en vigueur — choisissez de nouveau le travail",
   'Этот допуск у вас уже есть': "Vous avez déjà cette habilitation",
+  "Доступ к заявкам закрыт администратором. Свяжитесь с диспетчером.": "L'accès aux commandes a été fermé par un administrateur. Adressez-vous au répartiteur.",
+  "Доступ к заявкам ещё не открыт. Его открывает администратор — позвоните диспетчеру.": "L'accès aux commandes n'est pas encore ouvert. Un administrateur l'ouvre — appelez le répartiteur.",
   'Этот номер не привязан к карточке мастера. Обратитесь к диспетчеру.': "Ce numéro n'est lié à aucune fiche de technicien. Adressez-vous au répartiteur.",
   'Юнусабад, ул. Амира Темура 88': "Yunusabad, rue Amir Temur 88",
   'Я задерживаюсь': "Je suis en retard",

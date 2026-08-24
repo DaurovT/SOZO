@@ -25,6 +25,21 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * Ответ переводится целиком, а не только там, где позвали `tr`.
+ *
+ * `I18nExceptionFilter` прогоняет через словарь каждую строку ответа короче
+ * 400 знаков — в том числе `message` у выброшенного исключения, где `tr` не
+ * вызывают никогда. Пока эталон собирался только по вызовам `tr(...)`, такие
+ * сообщения были невидимы: 173 строки отказов уходили пользователю
+ * по-русски на всех девяти языках, и ни один прогон об этом не говорил.
+ *
+ * Поэтому берём и литералы `message:` внутри `throw new …Exception({…})`.
+ * Условия те же, что у фильтра: строка не длиннее 400 знаков и содержит
+ * кириллицу — английский код ошибки переводить нечего.
+ */
+const MAX_TRANSLATED_LEN = 400;
+
 /** Первый аргумент `tr('…')` — только строковый литерал: `tr(x)` статически не виден */
 function fromCode() {
   const text = new Set();
@@ -35,6 +50,16 @@ function fromCode() {
     for (const m of src.matchAll(/\btr\(\s*'((?:[^'\\]|\\.)*)'/g)) text.add(m[1].replace(/\\'/g, "'"));
     for (const m of src.matchAll(/\btr\(\s*"((?:[^"\\]|\\.)*)"/g)) text.add(m[1].replace(/\\"/g, '"'));
     for (const m of src.matchAll(/\btrValue\(\s*'((?:[^'\\]|\\.)*)'/g)) values.add(m[1].replace(/\\'/g, "'"));
+    for (const t of src.matchAll(/throw new \w*Exception\(\s*\{[\s\S]{0,600}?\}/g)) {
+      for (const m of t[0].matchAll(/message:\s*'((?:[^'\\]|\\.)*)'/g)) {
+        const v = m[1].replace(/\\'/g, "'");
+        if (/[А-Яа-яЁё]/.test(v) && v.length <= MAX_TRANSLATED_LEN) text.add(v);
+      }
+      for (const m of t[0].matchAll(/message:\s*"((?:[^"\\]|\\.)*)"/g)) {
+        const v = m[1].replace(/\\"/g, '"');
+        if (/[А-Яа-яЁё]/.test(v) && v.length <= MAX_TRANSLATED_LEN) text.add(v);
+      }
+    }
   }
   return { text, values };
 }

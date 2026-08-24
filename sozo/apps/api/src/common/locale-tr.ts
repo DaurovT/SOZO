@@ -514,6 +514,10 @@ export const TR: Record<string, string> = {
   'Этого района нет в списке обслуживаемых': "Bu ilçe hizmet verilenler listesinde yok",
   'Этой услуги нет в действующем прайсе — выберите работу заново': "Bu hizmet geçerli fiyat listesinde yok — işi yeniden seçin",
   'Этот допуск у вас уже есть': "Bu yetki sizde zaten var",
+  "Доступ к заявкам закрыт администратором. Свяжитесь с диспетчером.":
+    "Taleplere erişim yönetici tarafından kapatıldı. Dispeçerle iletişime geçin.",
+  "Доступ к заявкам ещё не открыт. Его открывает администратор — позвоните диспетчеру.":
+    "Taleplere erişim henüz açılmadı. Erişimi yönetici açar — dispeçeri arayın.",
   'Этот номер не привязан к карточке мастера. Обратитесь к диспетчеру.': "Bu numara bir usta kartına bağlı değil. Operatöre başvurun.",
   'Юнусабад, ул. Амира Темура 88': "Yunusabad, Amir Temur sok. 88",
   'Я задерживаюсь': "Gecikiyorum",

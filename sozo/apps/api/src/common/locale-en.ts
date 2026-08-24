@@ -518,6 +518,10 @@ export const EN: Record<string, string> = {
   'Этого района нет в списке обслуживаемых': "This district is not on the serviced list",
   'Этой услуги нет в действующем прайсе — выберите работу заново': "This service is no longer in the active price list — pick the work again",
   'Этот допуск у вас уже есть': "You already have this permit",
+  "Доступ к заявкам закрыт администратором. Свяжитесь с диспетчером.":
+    "Access to orders has been closed by an administrator. Contact the dispatcher.",
+  "Доступ к заявкам ещё не открыт. Его открывает администратор — позвоните диспетчеру.":
+    "Access to orders is not open yet. An administrator opens it — call the dispatcher.",
   'Этот номер не привязан к карточке мастера. Обратитесь к диспетчеру.': "This number is not linked to a technician card. Contact the dispatcher.",
   'Юнусабад, ул. Амира Темура 88': "Yunusabad, 88 Amir Temur St",
   'Я задерживаюсь': "I am running late",
@@ -544,6 +548,352 @@ export const EN: Record<string, string> = {
   'фото набора инструмента': "photo of the tool set",
   'чек: {0}': "receipt: {0}",
   'шильдик': "nameplate",
+  "Объект обслуживает другая эксплуатирующая организация":
+    "The property is served by another operating company",
+  "Наряды-допуски и пропуска ведут диспетчерская, служба объекта и мастер на заявке":
+    "Work permits and visitor passes are handled by the dispatch desk, the site service and the technician on the order",
+  "Помещение не найдено":
+    "Unit not found",
+  "Житель должен понять, зачем к нему идут":
+    "The resident has to understand why someone is coming",
+  "Окно доступа: конец должен быть позже начала":
+    "Access window: the end must be later than the start",
+  "Запрос не найден":
+    "Request not found",
+  "Укажите причину — мастеру надо понять, что делать дальше":
+    "Give a reason — the technician needs to know what to do next",
+  "Предложите окно: конец позже начала":
+    "Propose a window: the end later than the start",
+  "Окно пропуска: конец должен быть позже начала":
+    "Pass window: the end must be later than the start",
+  "Пропуск выписывается не больше чем на неделю":
+    "A pass is issued for no more than a week",
+  "Укажите, кого ждёте — охране надо кого-то встретить":
+    "Say who you are expecting — security has to meet someone",
+  "Пропуск не найден":
+    "Pass not found",
+  "Отозвать можно только свой пропуск":
+    "You can only revoke your own pass",
+  "Подходящих мастеров нет — см. причины отсева":
+    "No suitable technicians — see the filtering reasons",
+  "Ручная проводка требует двойного подтверждения (PRD-04 §1.3)":
+    "A manual entry requires double confirmation (PRD-04 §1.3)",
+  "Сторно требует двойного подтверждения (PRD-04 §1.3)":
+    "A reversal requires double confirmation (PRD-04 §1.3)",
+  "У организации нет абонентки":
+    "The organisation has no subscription",
+  "Закрытие периода требует двойного подтверждения":
+    "Closing a period requires double confirmation",
+  "Переоткрытие периода требует двойного подтверждения":
+    "Reopening a period requires double confirmation",
+  "Стартовые остатки требуют подтверждения админа и бухгалтера (A-32)":
+    "Opening balances require confirmation by an admin and an accountant (A-32)",
+  "Сумма проводки — целое число тийинов; дробь, NaN и бесконечность недопустимы":
+    "An entry amount is a whole number of tiyin; fractions, NaN and infinity are not allowed",
+  "Пени не предусмотрены договором этой организации":
+    "This organisation's contract provides for no late fees",
+  "Баланс-чекер красный — закрытие запрещено (A-22 блокер)":
+    "The balance checker is red — closing is blocked (A-22 blocker)",
+  "Стартовые остатки уже внесены (идемпотентность A-32)":
+    "Opening balances have already been entered (A-32 idempotency)",
+  "Комиссия провайдера — от 0 до 999 промилле (0–99,9%)":
+    "Provider fee — from 0 to 999 per mille (0–99.9%)",
+  "Контур «Дом» доступен персоналу эксплуатирующей организации и диспетчерской":
+    "The Home contour is available to operating company staff and the dispatch desk",
+  "На объект несколько заявок — решение принимается в очереди модерации A-39":
+    "There are several claims on this property — the decision is made in the A-39 moderation queue",
+  "Оборудование не найдено":
+    "Equipment not found",
+  "Сессия ТО не найдена":
+    "Maintenance session not found",
+  "ТО уже завершено — отметки не меняются":
+    "Maintenance is complete — the marks cannot be changed",
+  "Пункта нет в регламенте этого оборудования":
+    "This item is not in the regulation for this equipment",
+  "Эта точка не закреплена за вами":
+    "This site is not assigned to you",
+  "Заявка не привязана к точке":
+    "The order is not linked to a site",
+  "Мастер ещё не отправил работу на приёмку":
+    "The technician has not submitted the work for acceptance yet",
+  "Укажите, что именно не принято":
+    "Say what exactly was not accepted",
+  "Этот номер не закреплён ни за одной точкой. Обратитесь к своему менеджеру SOZO.":
+    "This number is not assigned to any site. Contact your SOZO manager.",
+  "Обслуживание организации приостановлено — операции недоступны.":
+    "Service to the organisation is suspended — operations are unavailable.",
+  "Сумма крупная — подтвердите, что это вы: введите последние 4 цифры своего номера":
+    "The amount is large — confirm it is you: enter the last 4 digits of your number",
+  "Опишите, что случилось":
+    "Describe what happened",
+  "Утверждение сметы не входит в ваши права — решение принимает руководитель":
+    "Approving an estimate is not within your rights — the decision is made by the head",
+  "Сумма выше вашего лимита — решение принимает уровень выше":
+    "The amount is above your limit — the decision is made one level up",
+  "Выберите вариант работ":
+    "Choose a work option",
+  "Финансы видит руководитель организации":
+    "Finances are visible to the head of the organisation",
+  "Раздел доступен руководителям":
+    "The section is available to heads",
+  "Укажите имя":
+    "Enter a name",
+  "Свой потолок утверждения менять нельзя — он задан договором":
+    "You cannot change your own approval limit — it is set by the contract",
+  "Себя снять нельзя":
+    "You cannot remove yourself",
+  "Решение по акту принимает руководитель":
+    "The decision on the report is made by the head",
+  "Сумма выбранных позиций выше вашего лимита — уберите часть или передайте выше":
+    "The selected items exceed your limit — remove some or pass it up",
+  "Это не ваша заявка":
+    "This is not your order",
+  "Приложите фотографию — без неё обращение не примут":
+    "Attach a photo — the request will not be accepted without one",
+  "Выберите, что случилось":
+    "Choose what happened",
+  "Укажите, как к вам обращаться":
+    "Tell us how to address you",
+  "Слишком длинное имя":
+    "The name is too long",
+  "Введите код приглашения":
+    "Enter the invitation code",
+  "Укажите улицу и дом":
+    "Enter the street and building",
+  "Выберите работу или опишите проблему словами":
+    "Choose a job or describe the problem in words",
+  "Введите промокод":
+    "Enter a promo code",
+  "Выбор запчасти уже сделан":
+    "The part has already been chosen",
+  "Выберите вариант":
+    "Choose an option",
+  "План визитов ещё не составлен":
+    "The visit plan has not been drawn up yet",
+  "Неизвестный вид решения":
+    "Unknown decision type",
+  "Выберите причину отмены":
+    "Choose a cancellation reason",
+  "Перенести уже нельзя — можно только отменить":
+    "Rescheduling is no longer possible — only cancellation",
+  "Выберите новое время":
+    "Choose a new time",
+  "До визита меньше двух часов — мастер уже планирует день. Позвоните диспетчеру, он решит на месте":
+    "Less than two hours until the visit — the technician has already planned the day. Call the dispatcher, they will sort it out",
+  "Заявку уже переносили дважды. Дальше — только через диспетчера, чтобы не потерять ваше время":
+    "The order has already been rescheduled twice. Anything further goes through the dispatcher, so your time is not wasted",
+  "Работа ещё не завершена":
+    "The work is not finished yet",
+  "Поставьте оценку от 1 до 5":
+    "Give a rating from 1 to 5",
+  "Расскажите, что случилось — разберёмся и перезвоним":
+    "Tell us what happened — we will look into it and call you back",
+  "Опишите, что случилось снова":
+    "Describe what happened again",
+  "Гарантийный срок истёк":
+    "The warranty period has expired",
+  "Выберите причину":
+    "Choose a reason",
+  "Опишите, в чём проблема":
+    "Describe the problem",
+  "Приложение сжимает снимок перед отправкой":
+    "The app compresses the photo before sending",
+  "Отозвать согласие на обработку данных можно только через поддержку":
+    "Consent to personal data processing can only be withdrawn through support",
+  "Выберите тип жалобы":
+    "Choose the type of complaint",
+  "Опишите, что случилось — хотя бы пару предложений":
+    "Describe what happened — a couple of sentences at least",
+  "Неизвестный способ оплаты":
+    "Unknown payment method",
+  "Расторжение договора требует двойного подтверждения":
+    "Terminating the contract requires double confirmation",
+  "Вы не в этой организации":
+    "You are not in this organisation",
+  "Приглашать можно только на свою точку":
+    "You can only invite to your own site",
+  "Потолок приглашённого не может быть выше вашего":
+    "The invitee's limit cannot be higher than yours",
+  "Приглашение уже принято":
+    "The invitation has already been accepted",
+  "Приглашение отозвано":
+    "The invitation has been revoked",
+  "Приглашение уже использовано":
+    "The invitation has already been used",
+  "Срок приглашения истёк — попросите новый код":
+    "The invitation has expired — ask for a new code",
+  "Телефон ответственного: +998XXXXXXXXX":
+    "Contact person's phone: +998XXXXXXXXX",
+  "Этот номер уже закреплён за точкой":
+    "This number is already assigned to a site",
+  "Итог звонка обязателен: «обзвонили» без результата неотличимо от «закрыли, чтобы не мозолило»":
+    "A call result is required: “called” with no outcome is indistinguishable from “closed to clear the list”",
+  "Отказ по отпуску объясняется: иначе мастер не знает, подавать ли заново":
+    "A refused leave request is explained: otherwise the technician does not know whether to apply again",
+  "Решение по апелляции объясняется — его читает человек, которого оно касается":
+    "An appeal decision is explained — it is read by the person it concerns",
+  "Напишите, чем закончилось":
+    "Write how it ended",
+  "Есть несданная смена — примите её сначала":
+    "There is an unhanded-over shift — accept it first",
+  "Этот документ не ваш":
+    "This document is not yours",
+  "Акт осмотра не найден":
+    "Inspection report not found",
+  "Акт уже отправлен ответственному — правки только через новый осмотр":
+    "The report has been sent to the responsible person — changes only through a new inspection",
+  "Чек-лист осмотра не заполнен":
+    "The inspection checklist is not filled in",
+  "У точки нет ответственного — акт подписывать некому. Сообщите диспетчеру.":
+    "The site has no responsible person — there is nobody to sign the report. Tell the dispatcher.",
+  "По акту уже принято решение":
+    "A decision on the report has already been made",
+  "Полный отказ по акту требует причины":
+    "A full rejection of the report requires a reason",
+  "Формат: +998XXXXXXXXX":
+    "Format: +998XXXXXXXXX",
+  "Доступ закрыт. Обратитесь к администратору":
+    "Access is closed. Contact an administrator",
+  "Слишком много запросов кода. Попробуйте через час":
+    "Too many code requests. Try again in an hour",
+  "Не удалось отправить код. Попробуйте ещё раз":
+    "The code could not be sent. Try again",
+  "Причина блокировки обязательна":
+    "A blocking reason is required",
+  "Вход по коду временно недоступен: SMS-провайдер не подключён":
+    "Sign-in by code is temporarily unavailable: the SMS provider is not connected",
+  "Нельзя снять роль у последнего администратора":
+    "You cannot remove the role from the last administrator",
+  "Терминальный исход — только с причиной (лид-контур PRD-06 §4.1)":
+    "A terminal outcome requires a reason (lead flow, PRD-06 §4.1)",
+  "Вы не в штате службы этого объекта":
+    "You are not on the staff of this site's service",
+  "Этот мастер уже числится за оператором":
+    "This technician is already registered with the operator",
+  "Договор не может кончаться раньше, чем начался":
+    "A contract cannot end before it starts",
+  "Причина приостановки обязательна: человек должен знать, что исправить":
+    "A suspension reason is required: the person must know what to fix",
+  "Договор прекращён — вернуть можно только новым оформлением":
+    "The contract is terminated — the only way back is a new one",
+  "Мастер за этим оператором не числится":
+    "The technician is not registered with this operator",
+  "Мастер в офбординге: доступ возвращается только отменой офбординга":
+    "The technician is in offboarding: access returns only by cancelling the offboarding",
+  "Не передан токен устройства":
+    "No device token supplied",
+  "Приложение: client или master":
+    "App: client or master",
+  "Платформа: android, ios или web":
+    "Platform: android, ios or web",
+  "Укажите телефон человека":
+    "Give the person's phone number",
+  "Телефон мастера: +998XXXXXXXXX":
+    "Technician's phone: +998XXXXXXXXX",
+  "Имя мастера обязательно":
+    "The technician's name is required",
+  "Заявка не на вашем объекте":
+    "The order is not on your property",
+  "Частная заявка жителя достаётся вам только по праву первой руки":
+    "A resident's private order reaches you only by right of first refusal",
+  "Мастер за вами не числится или его договор приостановлен":
+    "The technician is not registered with you or their contract is suspended",
+  "Заявка ещё не оценена — назначить мастера можно после оценки":
+    "The order has not been estimated yet — a technician can be assigned after the estimate",
+  "Кабинет принадлежит другой эксплуатирующей организации":
+    "The cabinet belongs to another operating company",
+  "Выберите мастера":
+    "Choose a technician",
+  "Телефон клиента: +998XXXXXXXXX":
+    "Customer's phone: +998XXXXXXXXX",
+  "Оценка — целое неотрицательное число тийинов":
+    "The estimate is a whole non-negative number of tiyin",
+  "По этой заявке окна первой руки нет":
+    "There is no first-refusal window on this order",
+  "Окно истекло, заявка ушла в общий пул":
+    "The window expired and the order went to the general pool",
+  "Заявка принадлежит другому человеку":
+    "The order belongs to another person",
+  "Конкурирующий переход: обновите заявку и повторите":
+    "Competing transition: refresh the order and try again",
+  "Для назначения укажите мастера":
+    "To assign, specify a technician",
+  "Работы по общему имуществу выполняет только служба эксплуатирующей организации. ":
+    "Work on common property is carried out only by the operating company's own service. ",
+  "Материалы вносятся в статусах «В работе» … «Выполнена»":
+    "Materials are entered in the statuses “In progress” … “Completed”",
+  "Сумма материала — целое положительное число тийинов":
+    "A material amount is a whole positive number of tiyin",
+  "Запчасть — всегда с чеком; без чека только расходники «сумки» (ТЗ 8.4)":
+    "A spare part always comes with a receipt; without one only “bag” consumables are allowed (TZ 8.4)",
+  "Запчасть дороже 200 000 сум — укажите вилку эконом/стандарт/премиум (ТЗ 8.4.3)":
+    "A spare part above 200,000 soums — give the economy/standard/premium range (TZ 8.4.3)",
+  "Переназначение возможно на статусах «Назначена»…«Доп-согласование» (ТЗ 4.5)":
+    "Reassignment is possible in the statuses “Assigned”…“Extra approval” (TZ 4.5)",
+  "Причина переназначения обязательна (справочник D-15)":
+    "A reassignment reason is required (directory D-15)",
+  "Заявку уже переназначили: обновите карточку и повторите":
+    "The order has already been reassigned: refresh the card and try again",
+  "Ожидается изображение в формате data:image/...;base64,...":
+    "An image in the form data:image/...;base64,... is expected",
+  "Файл больше 6 МБ; приложение мастера сжимает до ~500 КБ (PRD-05 §9)":
+    "The file is over 6 MB; the technician app compresses to ~500 KB (PRD-05 §9)",
+  "Снимок относится к чужой заявке":
+    "The photo belongs to another order",
+  "Передайте строки прайса (CSV/Excel → JSON)":
+    "Supply the price list rows (CSV/Excel → JSON)",
+  "Черновик уже существует — активируйте или удалите его":
+    "A draft already exists — activate or delete it",
+  "Правки только в черновике (ТЗ 3.7)":
+    "Edits only in the draft (TZ 3.7)",
+  "Удалить можно только черновик; откат боевого — новым релизом (ТЗ 3.7)":
+    "Only a draft can be deleted; rolling back the live one is a new release (TZ 3.7)",
+  "Обход валидатора требует комментария (уходит в аудит)":
+    "Bypassing the validator requires a comment (it goes into the audit log)",
+  "Крупный релиз (>20% позиций или рост цены >30%): требуется подтверждение второго админа":
+    "A large release (>20% of items or a price rise >30%): a second admin's confirmation is required",
+  "Промокод не найден или отключён":
+    "The promo code was not found or is disabled",
+  "Лимит использований промокода исчерпан":
+    "The promo code's usage limit is exhausted",
+  "Скидка 1–50%":
+    "Discount 1–50%",
+  "Требуется согласие на обработку персональных данных (ЗРУ-547)":
+    "Consent to personal data processing is required (ZRU-547)",
+  "Телефон в формате +998XXXXXXXXX":
+    "Phone in the format +998XXXXXXXXX",
+  "Диспетчер не судит собственные заявки — эскалируйте старшему смены (ТЗ 4.2)":
+    "A dispatcher does not judge their own orders — escalate to the shift senior (TZ 4.2)",
+  "По заявке уже открыт спор":
+    "A dispute is already open on this order",
+  "Окно спора 72 ч после «Выполнена» истекло (ТЗ 4.2)":
+    "The 72-hour dispute window after “Completed” has expired (TZ 4.2)",
+  "Спор уже в работе — его нельзя убрать":
+    "The dispute is in progress — it cannot be removed",
+  "Комментарий резолюции обязателен (уходит в аудит)":
+    "A resolution comment is required (it goes into the audit log)",
+  "Для резолюции в пользу клиента или компромисса укажите сумму возврата":
+    "For a resolution in the customer's favour or a compromise, give the refund amount",
+  "Возврат больше суммы заявки":
+    "The refund is larger than the order amount",
+  "Выплата из фонда ущербов требует двойного подтверждения":
+    "A payout from the damage fund requires double confirmation",
+  "У мастера уже есть смена на эту дату":
+    "The technician already has a shift on this date",
+  "В смене есть брони — сначала переназначьте заявки":
+    "The shift has bookings — reassign the orders first",
+  "У мастера нет смены на эту дату":
+    "The technician has no shift on this date",
+  "Заявка уже забронирована — сначала снимите бронь":
+    "The order is already booked — release the booking first",
+  "Дежурный держится под аварии — плановые работы на него не бронируются (ТЗ 17.3)":
+    "The duty technician is kept for emergencies — planned work is not booked onto them (TZ 17.3)",
+  "Ночь 22:00–07:00 — плановые работы не бронируются (ТЗ 17.3); аварийные ставятся с подтверждением":
+    "Night 22:00–07:00 — planned work is not booked (TZ 17.3); emergencies are placed with confirmation",
+  "Продажа мастеру: нужны мастер и цена":
+    "Sale to a technician: a technician and a price are required",
+  "Цена тарифа не задана (параметр 138) — активация платного плана невозможна":
+    "The plan price is not set (parameter 138) — a paid plan cannot be activated",
 };
 
 /**

@@ -483,6 +483,10 @@ export const UZ: Record<string, string> = {
   'Это долг перед компанией, сдаётся в кассу': 'Bu kompaniya oldidagi qarz, kassaga topshiriladi',
   'Это мой доход': 'Bu mening daromadim',
   'Этот допуск у вас уже есть': 'Bu ruxsat sizda allaqachon bor',
+  "Доступ к заявкам закрыт администратором. Свяжитесь с диспетчером.":
+    "Arizalarga kirish administrator tomonidan yopilgan. Dispetcher bilan bogʻlaning.",
+  "Доступ к заявкам ещё не открыт. Его открывает администратор — позвоните диспетчеру.":
+    "Arizalarga kirish hali ochilmagan. Uni administrator ochadi — dispetcherga qoʻngʻiroq qiling.",
   'Этот номер не привязан к карточке мастера. Обратитесь к диспетчеру.':
     'Bu raqam usta kartasiga biriktirilmagan. Dispetcherga murojaat qiling.',
   'Юнусабад, ул. Амира Темура 88': 'Yunusobod, Amir Temur ko‘ch. 88',
@@ -596,6 +600,352 @@ export const UZ: Record<string, string> = {
   'Заявка изменилась — обновите экран': 'Buyurtma o‘zgardi — ekranni yangilang',
   'Код не найден — проверьте написание': 'Kod topilmadi — yozilishini tekshiring',
   'Не найдено': 'Topilmadi',
+  "Объект обслуживает другая эксплуатирующая организация":
+    "Obyektga boshqa ekspluatatsiya tashkiloti xizmat koʻrsatadi",
+  "Наряды-допуски и пропуска ведут диспетчерская, служба объекта и мастер на заявке":
+    "Ish ruxsatnomalari va oʻtish varaqalarini dispetcherlik, obyekt xizmati va arizadagi usta yuritadi",
+  "Помещение не найдено":
+    "Xona topilmadi",
+  "Житель должен понять, зачем к нему идут":
+    "Yashovchi nima uchun kelayotganini tushunishi kerak",
+  "Окно доступа: конец должен быть позже начала":
+    "Kirish oynasi: tugashi boshlanishidan keyin boʻlishi kerak",
+  "Запрос не найден":
+    "Soʻrov topilmadi",
+  "Укажите причину — мастеру надо понять, что делать дальше":
+    "Sababini koʻrsating — usta keyin nima qilishni bilishi kerak",
+  "Предложите окно: конец позже начала":
+    "Oyna taklif qiling: tugashi boshlanishidan keyin",
+  "Окно пропуска: конец должен быть позже начала":
+    "Oʻtish oynasi: tugashi boshlanishidan keyin boʻlishi kerak",
+  "Пропуск выписывается не больше чем на неделю":
+    "Oʻtish varaqasi bir haftadan koʻpga berilmaydi",
+  "Укажите, кого ждёте — охране надо кого-то встретить":
+    "Kimni kutayotganingizni koʻrsating — qorovul kimnidir kutib olishi kerak",
+  "Пропуск не найден":
+    "Oʻtish varaqasi topilmadi",
+  "Отозвать можно только свой пропуск":
+    "Faqat oʻz oʻtish varaqangizni bekor qila olasiz",
+  "Подходящих мастеров нет — см. причины отсева":
+    "Mos usta yoʻq — saralash sabablariga qarang",
+  "Ручная проводка требует двойного подтверждения (PRD-04 §1.3)":
+    "Qoʻlda kiritilgan oʻtkazma ikki marta tasdiqlanishi kerak (PRD-04 §1.3)",
+  "Сторно требует двойного подтверждения (PRD-04 §1.3)":
+    "Storno ikki marta tasdiqlanishi kerak (PRD-04 §1.3)",
+  "У организации нет абонентки":
+    "Tashkilotda obuna yoʻq",
+  "Закрытие периода требует двойного подтверждения":
+    "Davrni yopish ikki marta tasdiqlanishi kerak",
+  "Переоткрытие периода требует двойного подтверждения":
+    "Davrni qayta ochish ikki marta tasdiqlanishi kerak",
+  "Стартовые остатки требуют подтверждения админа и бухгалтера (A-32)":
+    "Boshlangʻich qoldiqlar admin va buxgalter tasdigʻini talab qiladi (A-32)",
+  "Сумма проводки — целое число тийинов; дробь, NaN и бесконечность недопустимы":
+    "Oʻtkazma summasi — butun sondagi tiyin; kasr, NaN va cheksizlik mumkin emas",
+  "Пени не предусмотрены договором этой организации":
+    "Bu tashkilot shartnomasida penya koʻzda tutilmagan",
+  "Баланс-чекер красный — закрытие запрещено (A-22 блокер)":
+    "Balans-tekshirgich qizil — yopish taqiqlangan (A-22 blokeri)",
+  "Стартовые остатки уже внесены (идемпотентность A-32)":
+    "Boshlangʻich qoldiqlar allaqachon kiritilgan (A-32 idempotentligi)",
+  "Комиссия провайдера — от 0 до 999 промилле (0–99,9%)":
+    "Provayder komissiyasi — 0 dan 999 promillegacha (0–99,9%)",
+  "Контур «Дом» доступен персоналу эксплуатирующей организации и диспетчерской":
+    "«Uy» konturi ekspluatatsiya tashkiloti xodimlariga va dispetcherlikka ochiq",
+  "На объект несколько заявок — решение принимается в очереди модерации A-39":
+    "Obyektga bir nechta ariza bor — qaror A-39 moderatsiya navbatida qabul qilinadi",
+  "Оборудование не найдено":
+    "Jihoz topilmadi",
+  "Сессия ТО не найдена":
+    "Texnik xizmat seansi topilmadi",
+  "ТО уже завершено — отметки не меняются":
+    "Texnik xizmat tugallangan — belgilar oʻzgartirilmaydi",
+  "Пункта нет в регламенте этого оборудования":
+    "Bu jihoz reglamentida bunday band yoʻq",
+  "Эта точка не закреплена за вами":
+    "Bu nuqta sizga biriktirilmagan",
+  "Заявка не привязана к точке":
+    "Ariza nuqtaga bogʻlanmagan",
+  "Мастер ещё не отправил работу на приёмку":
+    "Usta ishni hali qabulga yubormagan",
+  "Укажите, что именно не принято":
+    "Aynan nima qabul qilinmaganini koʻrsating",
+  "Этот номер не закреплён ни за одной точкой. Обратитесь к своему менеджеру SOZO.":
+    "Bu raqam hech bir nuqtaga biriktirilmagan. SOZO menejeringizga murojaat qiling.",
+  "Обслуживание организации приостановлено — операции недоступны.":
+    "Tashkilotga xizmat koʻrsatish toʻxtatilgan — amallar mavjud emas.",
+  "Сумма крупная — подтвердите, что это вы: введите последние 4 цифры своего номера":
+    "Summa katta — bu siz ekanligingizni tasdiqlang: raqamingizning oxirgi 4 raqamini kiriting",
+  "Опишите, что случилось":
+    "Nima boʻlganini yozing",
+  "Утверждение сметы не входит в ваши права — решение принимает руководитель":
+    "Smetani tasdiqlash sizning huquqlaringizga kirmaydi — qarorni rahbar qabul qiladi",
+  "Сумма выше вашего лимита — решение принимает уровень выше":
+    "Summa sizning limitingizdan yuqori — qarorni yuqori daraja qabul qiladi",
+  "Выберите вариант работ":
+    "Ish variantini tanlang",
+  "Финансы видит руководитель организации":
+    "Moliyani tashkilot rahbari koʻradi",
+  "Раздел доступен руководителям":
+    "Boʻlim rahbarlarga ochiq",
+  "Укажите имя":
+    "Ismni koʻrsating",
+  "Свой потолок утверждения менять нельзя — он задан договором":
+    "Oʻz tasdiqlash chegarangizni oʻzgartirib boʻlmaydi — u shartnomada belgilangan",
+  "Себя снять нельзя":
+    "Oʻzingizni olib tashlay olmaysiz",
+  "Решение по акту принимает руководитель":
+    "Dalolatnoma boʻyicha qarorni rahbar qabul qiladi",
+  "Сумма выбранных позиций выше вашего лимита — уберите часть или передайте выше":
+    "Tanlangan bandlar summasi limitingizdan yuqori — bir qismini olib tashlang yoki yuqoriga uzating",
+  "Это не ваша заявка":
+    "Bu sizning arizangiz emas",
+  "Приложите фотографию — без неё обращение не примут":
+    "Surat ilova qiling — usiz murojaat qabul qilinmaydi",
+  "Выберите, что случилось":
+    "Nima boʻlganini tanlang",
+  "Укажите, как к вам обращаться":
+    "Sizga qanday murojaat qilishni koʻrsating",
+  "Слишком длинное имя":
+    "Ism juda uzun",
+  "Введите код приглашения":
+    "Taklif kodini kiriting",
+  "Укажите улицу и дом":
+    "Koʻcha va uy raqamini koʻrsating",
+  "Выберите работу или опишите проблему словами":
+    "Ishni tanlang yoki muammoni soʻz bilan tavsiflang",
+  "Введите промокод":
+    "Promokodni kiriting",
+  "Выбор запчасти уже сделан":
+    "Ehtiyot qism allaqachon tanlangan",
+  "Выберите вариант":
+    "Variantni tanlang",
+  "План визитов ещё не составлен":
+    "Tashriflar rejasi hali tuzilmagan",
+  "Неизвестный вид решения":
+    "Nomaʼlum qaror turi",
+  "Выберите причину отмены":
+    "Bekor qilish sababini tanlang",
+  "Перенести уже нельзя — можно только отменить":
+    "Endi koʻchirib boʻlmaydi — faqat bekor qilish mumkin",
+  "Выберите новое время":
+    "Yangi vaqtni tanlang",
+  "До визита меньше двух часов — мастер уже планирует день. Позвоните диспетчеру, он решит на месте":
+    "Tashrifgacha ikki soatdan kam qoldi — usta kunini rejalashtirib boʻlgan. Dispetcherga qoʻngʻiroq qiling, u joyida hal qiladi",
+  "Заявку уже переносили дважды. Дальше — только через диспетчера, чтобы не потерять ваше время":
+    "Ariza ikki marta koʻchirilgan. Keyingisi — faqat dispetcher orqali, vaqtingiz yoʻqolmasligi uchun",
+  "Работа ещё не завершена":
+    "Ish hali tugallanmagan",
+  "Поставьте оценку от 1 до 5":
+    "1 dan 5 gacha baho qoʻying",
+  "Расскажите, что случилось — разберёмся и перезвоним":
+    "Nima boʻlganini ayting — koʻrib chiqamiz va qayta qoʻngʻiroq qilamiz",
+  "Опишите, что случилось снова":
+    "Yana nima boʻlganini yozing",
+  "Гарантийный срок истёк":
+    "Kafolat muddati tugagan",
+  "Выберите причину":
+    "Sababni tanlang",
+  "Опишите, в чём проблема":
+    "Muammo nimadaligini yozing",
+  "Приложение сжимает снимок перед отправкой":
+    "Ilova suratni yuborishdan oldin siqadi",
+  "Отозвать согласие на обработку данных можно только через поддержку":
+    "Shaxsiy maʼlumotlarga ishlov berishga rozilikni faqat qoʻllab-quvvatlash orqali qaytarib olish mumkin",
+  "Выберите тип жалобы":
+    "Shikoyat turini tanlang",
+  "Опишите, что случилось — хотя бы пару предложений":
+    "Nima boʻlganini yozing — hech boʻlmasa bir-ikki gap",
+  "Неизвестный способ оплаты":
+    "Nomaʼlum toʻlov usuli",
+  "Расторжение договора требует двойного подтверждения":
+    "Shartnomani bekor qilish ikki marta tasdiqlanishi kerak",
+  "Вы не в этой организации":
+    "Siz bu tashkilotda emassiz",
+  "Приглашать можно только на свою точку":
+    "Faqat oʻz nuqtangizga taklif qila olasiz",
+  "Потолок приглашённого не может быть выше вашего":
+    "Taklif qilinganning chegarasi sizningkidan yuqori boʻlishi mumkin emas",
+  "Приглашение уже принято":
+    "Taklif allaqachon qabul qilingan",
+  "Приглашение отозвано":
+    "Taklif qaytarib olingan",
+  "Приглашение уже использовано":
+    "Taklif allaqachon ishlatilgan",
+  "Срок приглашения истёк — попросите новый код":
+    "Taklif muddati tugagan — yangi kod soʻrang",
+  "Телефон ответственного: +998XXXXXXXXX":
+    "Masʼul shaxs telefoni: +998XXXXXXXXX",
+  "Этот номер уже закреплён за точкой":
+    "Bu raqam allaqachon nuqtaga biriktirilgan",
+  "Итог звонка обязателен: «обзвонили» без результата неотличимо от «закрыли, чтобы не мозолило»":
+    "Qoʻngʻiroq natijasi majburiy: natijasiz «qoʻngʻiroq qilindi» «koʻzga tashlanmasin deb yopildi»dan farq qilmaydi",
+  "Отказ по отпуску объясняется: иначе мастер не знает, подавать ли заново":
+    "Taʼtil boʻyicha rad javobi izohlanadi: aks holda usta qayta ariza berishni bilmaydi",
+  "Решение по апелляции объясняется — его читает человек, которого оно касается":
+    "Apellyatsiya boʻyicha qaror izohlanadi — uni qaror tegishli boʻlgan odam oʻqiydi",
+  "Напишите, чем закончилось":
+    "Nima bilan tugaganini yozing",
+  "Есть несданная смена — примите её сначала":
+    "Topshirilmagan smena bor — avval uni qabul qiling",
+  "Этот документ не ваш":
+    "Bu hujjat sizniki emas",
+  "Акт осмотра не найден":
+    "Koʻrik dalolatnomasi topilmadi",
+  "Акт уже отправлен ответственному — правки только через новый осмотр":
+    "Dalolatnoma masʼulga yuborilgan — tuzatishlar faqat yangi koʻrik orqali",
+  "Чек-лист осмотра не заполнен":
+    "Koʻrik chek-roʻyxati toʻldirilmagan",
+  "У точки нет ответственного — акт подписывать некому. Сообщите диспетчеру.":
+    "Nuqtada masʼul yoʻq — dalolatnomani imzolaydigan odam yoʻq. Dispetcherga xabar bering.",
+  "По акту уже принято решение":
+    "Dalolatnoma boʻyicha qaror allaqachon qabul qilingan",
+  "Полный отказ по акту требует причины":
+    "Dalolatnoma boʻyicha toʻliq rad javobi sabab talab qiladi",
+  "Формат: +998XXXXXXXXX":
+    "Format: +998XXXXXXXXX",
+  "Доступ закрыт. Обратитесь к администратору":
+    "Kirish yopiq. Administratorga murojaat qiling",
+  "Слишком много запросов кода. Попробуйте через час":
+    "Kod soʻrovlari juda koʻp. Bir soatdan keyin urinib koʻring",
+  "Не удалось отправить код. Попробуйте ещё раз":
+    "Kodni yuborib boʻlmadi. Yana urinib koʻring",
+  "Причина блокировки обязательна":
+    "Bloklash sababi majburiy",
+  "Вход по коду временно недоступен: SMS-провайдер не подключён":
+    "Kod boʻyicha kirish vaqtincha mavjud emas: SMS-provayder ulanmagan",
+  "Нельзя снять роль у последнего администратора":
+    "Oxirgi administratordan rolni olib boʻlmaydi",
+  "Терминальный исход — только с причиной (лид-контур PRD-06 §4.1)":
+    "Yakuniy natija — faqat sabab bilan (lid konturi PRD-06 §4.1)",
+  "Вы не в штате службы этого объекта":
+    "Siz bu obyekt xizmati xodimi emassiz",
+  "Этот мастер уже числится за оператором":
+    "Bu usta allaqachon operatorga biriktirilgan",
+  "Договор не может кончаться раньше, чем начался":
+    "Shartnoma boshlanganidan oldin tugay olmaydi",
+  "Причина приостановки обязательна: человек должен знать, что исправить":
+    "Toʻxtatib turish sababi majburiy: odam nimani tuzatish kerakligini bilishi shart",
+  "Договор прекращён — вернуть можно только новым оформлением":
+    "Shartnoma bekor qilingan — qaytarish faqat yangi rasmiylashtirish orqali",
+  "Мастер за этим оператором не числится":
+    "Usta bu operatorga biriktirilmagan",
+  "Мастер в офбординге: доступ возвращается только отменой офбординга":
+    "Usta ishdan boʻshatilmoqda: kirish faqat boʻshatishni bekor qilish orqali qaytariladi",
+  "Не передан токен устройства":
+    "Qurilma tokeni berilmagan",
+  "Приложение: client или master":
+    "Ilova: client yoki master",
+  "Платформа: android, ios или web":
+    "Platforma: android, ios yoki web",
+  "Укажите телефон человека":
+    "Odamning telefonini koʻrsating",
+  "Телефон мастера: +998XXXXXXXXX":
+    "Usta telefoni: +998XXXXXXXXX",
+  "Имя мастера обязательно":
+    "Usta ismi majburiy",
+  "Заявка не на вашем объекте":
+    "Ariza sizning obyektingizda emas",
+  "Частная заявка жителя достаётся вам только по праву первой руки":
+    "Yashovchining shaxsiy arizasi sizga faqat birinchi qoʻl huquqi boʻyicha tegadi",
+  "Мастер за вами не числится или его договор приостановлен":
+    "Usta sizga biriktirilmagan yoki uning shartnomasi toʻxtatilgan",
+  "Заявка ещё не оценена — назначить мастера можно после оценки":
+    "Ariza hali baholanmagan — ustani baholashdan keyin tayinlash mumkin",
+  "Кабинет принадлежит другой эксплуатирующей организации":
+    "Kabinet boshqa ekspluatatsiya tashkilotiga tegishli",
+  "Выберите мастера":
+    "Ustani tanlang",
+  "Телефон клиента: +998XXXXXXXXX":
+    "Mijoz telefoni: +998XXXXXXXXX",
+  "Оценка — целое неотрицательное число тийинов":
+    "Baho — butun manfiy boʻlmagan tiyin soni",
+  "По этой заявке окна первой руки нет":
+    "Bu ariza boʻyicha birinchi qoʻl oynasi yoʻq",
+  "Окно истекло, заявка ушла в общий пул":
+    "Oyna tugadi, ariza umumiy oqimga oʻtdi",
+  "Заявка принадлежит другому человеку":
+    "Ariza boshqa odamga tegishli",
+  "Конкурирующий переход: обновите заявку и повторите":
+    "Raqobatlashuvchi oʻtish: arizani yangilang va qaytaring",
+  "Для назначения укажите мастера":
+    "Tayinlash uchun ustani koʻrsating",
+  "Работы по общему имуществу выполняет только служба эксплуатирующей организации. ":
+    "Umumiy mulk boʻyicha ishlarni faqat ekspluatatsiya tashkiloti xizmati bajaradi. ",
+  "Материалы вносятся в статусах «В работе» … «Выполнена»":
+    "Materiallar «Ishda» … «Bajarilgan» holatlarida kiritiladi",
+  "Сумма материала — целое положительное число тийинов":
+    "Material summasi — butun musbat tiyin soni",
+  "Запчасть — всегда с чеком; без чека только расходники «сумки» (ТЗ 8.4)":
+    "Ehtiyot qism — doim chek bilan; cheksiz faqat «sumka» sarf materiallari (TZ 8.4)",
+  "Запчасть дороже 200 000 сум — укажите вилку эконом/стандарт/премиум (ТЗ 8.4.3)":
+    "Ehtiyot qism 200 000 soʻmdan qimmat — ekonom/standart/premium oraligʻini koʻrsating (TZ 8.4.3)",
+  "Переназначение возможно на статусах «Назначена»…«Доп-согласование» (ТЗ 4.5)":
+    "Qayta tayinlash «Tayinlangan»…«Qoʻshimcha kelishuv» holatlarida mumkin (TZ 4.5)",
+  "Причина переназначения обязательна (справочник D-15)":
+    "Qayta tayinlash sababi majburiy (D-15 maʼlumotnomasi)",
+  "Заявку уже переназначили: обновите карточку и повторите":
+    "Ariza allaqachon qayta tayinlangan: kartani yangilang va qaytaring",
+  "Ожидается изображение в формате data:image/...;base64,...":
+    "data:image/...;base64,... koʻrinishidagi tasvir kutilmoqda",
+  "Файл больше 6 МБ; приложение мастера сжимает до ~500 КБ (PRD-05 §9)":
+    "Fayl 6 MB dan katta; usta ilovasi ~500 KB gacha siqadi (PRD-05 §9)",
+  "Снимок относится к чужой заявке":
+    "Surat boshqa arizaga tegishli",
+  "Передайте строки прайса (CSV/Excel → JSON)":
+    "Prays satrlarini uzating (CSV/Excel → JSON)",
+  "Черновик уже существует — активируйте или удалите его":
+    "Qoralama allaqachon mavjud — uni faollashtiring yoki oʻchiring",
+  "Правки только в черновике (ТЗ 3.7)":
+    "Tuzatishlar faqat qoralamada (TZ 3.7)",
+  "Удалить можно только черновик; откат боевого — новым релизом (ТЗ 3.7)":
+    "Faqat qoralamani oʻchirish mumkin; amaldagini qaytarish — yangi reliz bilan (TZ 3.7)",
+  "Обход валидатора требует комментария (уходит в аудит)":
+    "Validatorni chetlab oʻtish izoh talab qiladi (auditga tushadi)",
+  "Крупный релиз (>20% позиций или рост цены >30%): требуется подтверждение второго админа":
+    "Yirik reliz (bandlarning >20% yoki narx oʻsishi >30%): ikkinchi admin tasdigʻi kerak",
+  "Промокод не найден или отключён":
+    "Promokod topilmadi yoki oʻchirilgan",
+  "Лимит использований промокода исчерпан":
+    "Promokoddan foydalanish chegarasi tugagan",
+  "Скидка 1–50%":
+    "Chegirma 1–50%",
+  "Требуется согласие на обработку персональных данных (ЗРУ-547)":
+    "Shaxsiy maʼlumotlarga ishlov berishga rozilik talab qilinadi (OʻzR-547)",
+  "Телефон в формате +998XXXXXXXXX":
+    "Telefon +998XXXXXXXXX koʻrinishida",
+  "Диспетчер не судит собственные заявки — эскалируйте старшему смены (ТЗ 4.2)":
+    "Dispetcher oʻz arizalarini hal qilmaydi — smena kattasiga eskalatsiya qiling (TZ 4.2)",
+  "По заявке уже открыт спор":
+    "Ariza boʻyicha nizo allaqachon ochilgan",
+  "Окно спора 72 ч после «Выполнена» истекло (ТЗ 4.2)":
+    "«Bajarilgan»dan keyingi 72 soatlik nizo oynasi tugagan (TZ 4.2)",
+  "Спор уже в работе — его нельзя убрать":
+    "Nizo ishda — uni olib tashlab boʻlmaydi",
+  "Комментарий резолюции обязателен (уходит в аудит)":
+    "Rezolyutsiya izohi majburiy (auditga tushadi)",
+  "Для резолюции в пользу клиента или компромисса укажите сумму возврата":
+    "Mijoz foydasiga yoki murosa rezolyutsiyasi uchun qaytariladigan summani koʻrsating",
+  "Возврат больше суммы заявки":
+    "Qaytarish summasi ariza summasidan katta",
+  "Выплата из фонда ущербов требует двойного подтверждения":
+    "Zarar fondidan toʻlov ikki marta tasdiqlanishi kerak",
+  "У мастера уже есть смена на эту дату":
+    "Ustada bu sanaga smena allaqachon bor",
+  "В смене есть брони — сначала переназначьте заявки":
+    "Smenada bronlar bor — avval arizalarni qayta tayinlang",
+  "У мастера нет смены на эту дату":
+    "Ustada bu sanaga smena yoʻq",
+  "Заявка уже забронирована — сначала снимите бронь":
+    "Ariza allaqachon bron qilingan — avval bronni oling",
+  "Дежурный держится под аварии — плановые работы на него не бронируются (ТЗ 17.3)":
+    "Navbatchi avariyalar uchun saqlanadi — unga rejali ishlar bron qilinmaydi (TZ 17.3)",
+  "Ночь 22:00–07:00 — плановые работы не бронируются (ТЗ 17.3); аварийные ставятся с подтверждением":
+    "Tun 22:00–07:00 — rejali ishlar bron qilinmaydi (TZ 17.3); avariyalilar tasdiq bilan qoʻyiladi",
+  "Продажа мастеру: нужны мастер и цена":
+    "Ustaga sotish: usta va narx kerak",
+  "Цена тарифа не задана (параметр 138) — активация платного плана невозможна":
+    "Tarif narxi belgilanmagan (parametr 138) — pullik rejani faollashtirib boʻlmaydi",
 };
 
 /**
