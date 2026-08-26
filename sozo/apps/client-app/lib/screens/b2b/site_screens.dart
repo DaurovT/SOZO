@@ -77,7 +77,7 @@ class DebtScreen extends StatelessWidget {
                   ),
                   Text(
                     // Дефект старше 60 дней — отдельная подсветка (DEV-08 C-37)
-                    t('c37.age', {'days': plural((d['ageDays'] as num?)?.toInt() ?? 0, 'день', 'дня', 'дней')}),
+                    t('c37.age', {'days': plural((d['ageDays'] as num?)?.toInt() ?? 0, 'plural.days')}),
                     style: TextStyle(
                       fontSize: 12,
                       color: ((d['ageDays'] as num?) ?? 0) > 60 ? SozoColors.error : SozoColors.textSecondary,

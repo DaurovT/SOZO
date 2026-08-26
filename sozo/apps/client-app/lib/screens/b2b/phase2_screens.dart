@@ -72,7 +72,7 @@ class _DefectPackageScreenState extends State<DefectPackageScreen> {
                           ),
                           Text(
                             t('c42.summary', {
-                              'n': plural(items.length, 'дефект', 'дефекта', 'дефектов'),
+                              'n': plural(items.length, 'plural.defects'),
                               'sum': soums(act['totalTiyin']),
                             }),
                             style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
@@ -334,7 +334,7 @@ class OrgDebtScreen extends StatelessWidget {
                               ],
                             ),
                             Text(
-                              t('c43.count', {'n': plural((l['count'] as num?)?.toInt() ?? 0, 'дефект', 'дефекта', 'дефектов')}),
+                              t('c43.count', {'n': plural((l['count'] as num?)?.toInt() ?? 0, 'plural.defects')}),
                               style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
                             ),
                             // Старше 60 дней — отдельной строкой: это уже риск, а не список
@@ -343,7 +343,7 @@ class OrgDebtScreen extends StatelessWidget {
                                 icon: 'clock',
                                 tone: BannerTone.danger,
                                 text: t('c43.old', {
-                                  'n': plural((l['olderThan60'] as num?)?.toInt() ?? 0, 'дефект', 'дефекта', 'дефектов'),
+                                  'n': plural((l['olderThan60'] as num?)?.toInt() ?? 0, 'plural.defects'),
                                   'sum': soums(l['olderThan60Tiyin']),
                                 }),
                               ),
@@ -421,7 +421,7 @@ class InspectionsScreen extends StatelessWidget {
                               Text(
                                 t('c46.last', {
                                   'date': dayMonth(u['lastAt']),
-                                  'n': plural((u['lastDefects'] as num?)?.toInt() ?? 0, 'дефект', 'дефекта', 'дефектов'),
+                                  'n': plural((u['lastDefects'] as num?)?.toInt() ?? 0, 'plural.defects'),
                                 }),
                                 style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
                               ),
@@ -455,7 +455,7 @@ class InspectionsScreen extends StatelessWidget {
                               Text(
                                 t('c46.found', {
                                   'date': dayMonth(h['at']),
-                                  'n': plural((h['defects'] as num?)?.toInt() ?? 0, 'дефект', 'дефекта', 'дефектов'),
+                                  'n': plural((h['defects'] as num?)?.toInt() ?? 0, 'plural.defects'),
                                 }),
                                 style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
                               ),

@@ -13,6 +13,31 @@ import 'dart:typed_data';
 /// подменяет его на время одного снимка, когда экрану нужны свои поля.
 Map<String, dynamic> responseBody = fixture;
 
+/// Ответы по маршрутам. Ключ — кусок пути, значение — тело именно этого ответа.
+///
+/// **Зачем это здесь.** Заглушка отвечает одним телом на любой URL: в нём
+/// собраны поля всех экранов сразу, поэтому экран получает нужное поле, даже
+/// если настоящий обработчик его не отдаёт. Расхождение модели клиента с
+/// ответом сервера такой фикстурой не поймать в принципе — тест зелёный,
+/// приложение падает на живом сервере.
+///
+/// По умолчанию карта пуста, и заглушка ведёт себя ровно как прежде: девять
+/// наборов тестов написаны под общее тело, а прогнать их на этой машине
+/// нечем — ни Dart, ни Flutter здесь не установлены. Поэтому маршруты
+/// включаются явно, тестом, которому нужна честная развязка:
+///
+/// ```dart
+/// setUp(() => responseByPath = clientRoutes);
+/// tearDown(() => responseByPath = {});
+/// ```
+///
+/// Тела в [clientRoutes] списаны с настоящих обработчиков
+/// (`client-b2c.controller.ts`, `client-orders.controller.ts`). Когда у
+/// кого-нибудь появится тулчейн — стоит сделать их поведением по умолчанию
+/// и починить то, что от этого покраснеет: покраснеет ровно то, что и
+/// должно было.
+Map<String, Map<String, dynamic>> responseByPath = {};
+
 /// Код ответа заглушки: 500 нужен, чтобы снять экран ошибки
 int responseStatus = 200;
 
@@ -578,6 +603,196 @@ final fixture = <String, dynamic>{
   'accessToken': 'test',
 };
 
+/// Карточка заявки — то, что отдаёт `ClientViewService.card()`.
+/// Общая часть списка и полной карточки: `full()` начинается со `...card()`.
+const _orderCard = <String, dynamic>{
+  'id': 'o-1',
+  'number': 'Z-2026-000042',
+  'status': 'assigned',
+  'statusLabel': 'Мастер назначен',
+  'urgency': 'normal',
+  'address': 'Чиланзар, 12-1',
+  'description': 'течёт труба под раковиной',
+  'category': 'Замена смесителя',
+  'totalFromTiyin': 8000000,
+  'totalToTiyin': 15000000,
+  'masterName': 'Азиз Рахимов',
+  'window': {
+    'from': '2026-08-24T16:00:00',
+    'to': '2026-08-24T18:00:00',
+    'label': '16:00–18:00',
+  },
+  'rating': null,
+  'warrantyUntil': null,
+  'createdAt': '2026-08-24T09:00:00',
+  'needsDecision': false,
+  'decision': null,
+};
+
+/// Ответы, списанные с настоящих обработчиков, — для [responseByPath].
+///
+/// Четыре маршрута, на которых держится основной путь клиента: каталог,
+/// список заявок, карточка заявки, оплата. Тела сверены с
+/// `client-b2c.controller.ts` (`list`, `one`, `catalog`),
+/// `client-view.service.ts` (`card`, `full`) и `client-orders.controller.ts`
+/// (`pay`) — поле в поле, включая те, что появились последними:
+/// `visitPriceTiyin`, `urgentSurchargePercent`, `acceptanceFixed`.
+///
+/// Отличие от общего [fixture] принципиальное: там в одном теле собраны поля
+/// всех экранов сразу, и экран получает нужное поле, даже когда настоящий
+/// обработчик его не отдаёт. Здесь каждый маршрут отвечает только тем, что
+/// действительно отдаёт, — поэтому лишнее чтение видно тестом.
+const clientRoutes = <String, Map<String, dynamic>>{
+  // GET /v1/app/catalog
+  'app/catalog': {
+    'releaseNumber': 'PR-2026-07',
+    'visitPriceTiyin': 12000000,
+    'urgentSurchargePercent': 30,
+    'categories': [
+      {
+        'name': 'ВЫЕЗД, ДИАГНОСТИКА',
+        'label': 'Не знаю, что сломалось',
+        'hint': 'Мастер приедет и разберётся',
+        'icon': 'help-circle',
+        'popular': true,
+        'order': 0,
+        'priceFromTiyin': 12000000,
+        'items': [
+          {
+            'id': 'item-diag',
+            'name': 'Выезд и диагностика',
+            'unit': 'выезд',
+            'category': 'ВЫЕЗД, ДИАГНОСТИКА',
+            'priceFromTiyin': 12000000,
+            'priceToTiyin': 12000000,
+            'normHours': 1,
+            'isPaired': false,
+            'isStaged': false,
+            'requiresEquipment': false,
+            'note': null,
+          },
+        ],
+      },
+      {
+        'name': 'САНТЕХНИКА',
+        'label': 'Сантехника',
+        'hint': 'Трубы, краны, унитазы и др.',
+        'icon': 'droplet',
+        'popular': true,
+        'order': 1,
+        'priceFromTiyin': 8000000,
+        'items': [
+          {
+            'id': 'item-tap',
+            'name': 'Замена смесителя',
+            'unit': 'шт',
+            'category': 'САНТЕХНИКА',
+            'priceFromTiyin': 8000000,
+            'priceToTiyin': 15000000,
+            'normHours': 2,
+            'isPaired': false,
+            'isStaged': false,
+            'requiresEquipment': false,
+            'note': null,
+          },
+        ],
+      },
+    ],
+    'note': 'Цена «от» — типовой случай, не оферта. Точную стоимость мастер называет до начала работ.',
+  },
+
+  // GET /v1/app/orders — список и всё, что живёт на главной
+  'app/orders': {
+    'orders': [_orderCard],
+    'awaiting': <Map<String, dynamic>>[],
+    'activeOrder': _orderCard,
+    'repeatable': null,
+    'postponedRecommendations': <Map<String, dynamic>>[],
+    'warranty': {'count': 0, 'nextUntil': null, 'nextTitle': null},
+    'equipmentDue': <Map<String, dynamic>>[],
+    'firstRun': null,
+    'empty': 'Пока нет заявок',
+  },
+
+  // GET /v1/app/orders/:id — карточка заявки (`ClientViewService.full`)
+  'app/orders/o-1': {
+    ..._orderCard,
+    'graphType': 'b2c',
+    'lines': [
+      {
+        'priceItemId': 'item-tap',
+        'name': 'Замена смесителя',
+        'unit': 'шт',
+        'qty': 1,
+        'fromTiyin': 8000000,
+        'toTiyin': 15000000,
+      },
+    ],
+    'materials': <Map<String, dynamic>>[],
+    'totalMaterialTiyin': 0,
+    'promoCode': null,
+    'promoDiscountPercent': 0,
+    'approvedTiyin': null,
+    'quotes': <Map<String, dynamic>>[],
+    'photos': <Map<String, dynamic>>[],
+    'pause': null,
+    'master': {
+      'name': 'Азиз Рахимов',
+      'rating': 4.8,
+      'jobsDone': 214,
+      'geo': null,
+      'eta': null,
+    },
+    'acceptance': null,
+    'acceptanceCode': null,
+    'addressDetails': null,
+    'timeline': [
+      {'status': 'new', 'label': 'Новая', 'at': '2026-08-24T09:00:00', 'done': true, 'current': false},
+      {'status': 'assigned', 'label': 'Мастер назначен', 'at': '2026-08-24T09:30:00', 'done': true, 'current': true},
+    ],
+    'pending': {
+      'estimate': null,
+      'spareTier': null,
+      'addwork': null,
+      'recommendation': null,
+      'stagePlan': null,
+      'addressDetails': false,
+    },
+    'can': {
+      'cancel': true,
+      'reschedule': true,
+      'pay': false,
+      'rate': false,
+      'dispute': false,
+      'warranty': false,
+    },
+    'payment': null,
+    'dispute': null,
+    'statusLog': [
+      {'to': 'new', 'label': 'Новая', 'at': '2026-08-24T09:00:00'},
+    ],
+  },
+
+  // POST /v1/app/orders/:id/pay
+  //
+  // `acceptanceFixed` — то, ради чего этот маршрут здесь. Оплата больше не
+  // проставляет приёмку, и приложение обязано читать это поле, а не считать
+  // приёмку сделанной по факту успешного платежа
+  'pay': {
+    'ok': true,
+    'payment': {
+      'provider': 'payme',
+      'amountTiyin': 12895000,
+      'status': 'succeeded',
+      'at': '2026-08-24T15:00:00',
+    },
+    'promoCode': null,
+    'discountTiyin': 0,
+    'acceptanceFixed': false,
+    'message': 'Оплата прошла',
+  },
+};
+
 class FixtureHttpOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) => _FixtureClient();
@@ -636,10 +851,10 @@ class _FixtureRequest implements HttpClientRequest {
   Encoding encoding = utf8;
 
   @override
-  Future<HttpClientResponse> close() async => _FixtureResponse();
+  Future<HttpClientResponse> close() async => _FixtureResponse(uri);
 
   @override
-  Future<HttpClientResponse> get done async => _FixtureResponse();
+  Future<HttpClientResponse> get done async => _FixtureResponse(uri);
 
   @override
   void add(List<int> data) {}
@@ -655,7 +870,21 @@ class _FixtureRequest implements HttpClientRequest {
 }
 
 class _FixtureResponse extends Stream<List<int>> implements HttpClientResponse {
-  final List<int> _body = utf8.encode(jsonEncode(responseBody));
+  _FixtureResponse(Uri uri) : _body = utf8.encode(jsonEncode(_bodyFor(uri)));
+
+  /// Тело для этого маршрута, иначе общее. Совпадение по куску пути, а не по
+  /// точному равенству: в путях стоят идентификаторы заявок.
+  ///
+  /// Из подошедших берём самый длинный ключ. Иначе `app/orders` — префикс
+  /// `app/orders/o-1` — перехватывал бы карточку заявки и отдавал ей список:
+  /// экран строился, тест был зелёный, а проверялось не то.
+  static Map<String, dynamic> _bodyFor(Uri uri) {
+    final matched = responseByPath.keys.where(uri.path.contains).toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    return matched.isEmpty ? responseBody : responseByPath[matched.first]!;
+  }
+
+  final List<int> _body;
 
   @override
   int get statusCode => responseStatus;

@@ -369,6 +369,12 @@ class SozoTabBar extends StatelessWidget {
     );
   }
 
+  /// Главная кнопка продукта. Подписана словом — как соседние вкладки.
+  ///
+  /// Безымянный жёлтый кружок в центре таббара понимает тот, кто уже знает,
+  /// что он делает. Человек, у которого течёт труба, читает экран сверху вниз
+  /// и находит на нём одну заметную вещь — красную аварийную плашку. Подпись
+  /// стоит десять точек по высоте и снимает ровно этот вопрос.
   Widget _createButton() {
     return SizedBox(
       width: 70,
@@ -383,14 +389,33 @@ class SozoTabBar extends StatelessWidget {
           label: t('tab.create'),
           child: Material(
             color: Colors.transparent,
-            shape: const CircleBorder(),
+            borderRadius: BorderRadius.circular(SozoRadius.tile),
             child: InkWell(
-              customBorder: const CircleBorder(),
+              borderRadius: BorderRadius.circular(SozoRadius.tile),
               onTap: onCreate,
-              child: const SizedBox(
-                width: 52,
-                height: 52,
-                child: FigmaIcon('plus-circle', size: 52),
+              child: Padding(
+                padding: const EdgeInsets.only(top: SozoSpace.s4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: FigmaIcon('plus-circle', size: 48),
+                    ),
+                    const SizedBox(height: SozoSpace.s4),
+                    Text(
+                      t('tab.call'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: authInk,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -445,8 +470,10 @@ class SozoTabBar extends StatelessWidget {
                   tab.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  // 11, а не 10 из макета: подпись вкладки — единственное, что
+                  // отличает четыре одинаковых значка друг от друга
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                     color: active ? authInk : authHint,
                   ),

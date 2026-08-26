@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../design_tokens.dart';
 import '../format.dart';
 import '../i18n.dart';
@@ -46,7 +47,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await session.refreshMe();
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) showSozoToast(context, '$e');
+      if (mounted) showSozoToast(context, humanError(e));
     }
   }
 

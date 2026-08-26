@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../api/client.dart';
 import '../../design_tokens.dart';
+import '../../geo.dart';
 import '../../format.dart';
 import '../../i18n.dart';
 import '../../store/session.dart';
@@ -51,8 +52,17 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
   Map<String, dynamic>? _slots;
   List<Map<String, dynamic>> _addresses = [];
 
-  /// Всего шагов: у аварийной заявки шага выбора времени нет
-  int get _totalSteps => _draft.emergency ? 2 : 3;
+  /// Шагов всегда три.
+  ///
+  /// Раньше у аварийной заявки шаг «Где и когда» пропускался целиком, а адрес
+  /// брался только из сохранённых. У нового человека сохранённых адресов нет —
+  /// и самый срочный сценарий продукта уходил на сервер с пустым адресом:
+  /// на экране итога он показывался пустой строкой, «Изменить» вело на шаг 1,
+  /// где поля адреса нет, а отправка адрес не проверяла.
+  ///
+  /// Теперь шаг остаётся, но у аварии он урезан до адреса: выбирать окно
+  /// приезда человеку с прорывом трубы действительно нечего.
+  int get _totalSteps => 3;
 
   @override
   void initState() {
@@ -121,22 +131,12 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
     _draft.items.removeWhere((id, _) => !known.contains(id));
   }
 
-  void _restore(OrderDraft d) {
-    _draft.items = d.items;
-    _draft.category = d.category;
-    _draft.description = d.description;
-    _draft.photos = d.photos;
-    _draft.address = d.address;
-    _draft.lat = d.lat;
-    _draft.lng = d.lng;
-    _draft.floor = d.floor;
-    _draft.hasLift = d.hasLift;
-    _draft.timeMode = d.timeMode;
-    _draft.slotFrom = d.slotFrom;
-    _draft.slotTo = d.slotTo;
-    _draft.promoCode = d.promoCode;
-    _draft.promoDiscountPercent = d.promoDiscountPercent;
-  }
+  /// Перенос лежит в самом черновике (`OrderDraft.copyFrom`), а не здесь.
+  ///
+  /// Здесь он был списком присваиваний, который отставал от `toJson` на семь
+  /// полей и никак об этом не сообщал. Рядом с полями — единственное место,
+  /// где расхождение видно глазом, и его же проверяет тест.
+  void _restore(OrderDraft d) => _draft.copyFrom(d);
 
   void _applyRepeat(Map<String, dynamic> source) {
     for (final line in ((source['lines'] as List?) ?? const []).cast<Map<String, dynamic>>()) {
@@ -154,6 +154,21 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
       _categories.expand((c) => ((c['items'] as List?) ?? const []).cast<Map<String, dynamic>>()).toList();
 
   Map<String, dynamic>? _itemById(String id) => _allItems.where((i) => i['id'] == id).firstOrNull;
+
+  /// Цена выезда и диагностики — из того же прайса, откуда её берёт карточка
+  /// первого запуска на главной. Сервер отдаёт её отдельным полем каталога,
+  /// чтобы приложение не искало нужную позицию по русским словам в названии.
+  int? get _visitPriceTiyin {
+    final v = (_catalog?['visitPriceTiyin'] as num?)?.toInt();
+    return v != null && v > 0 ? v : null;
+  }
+
+  /// Наценка «Срочно» — параметр каталога, а не зашитые 30%
+  int get _urgentPercent => (_catalog?['urgentSurchargePercent'] as num?)?.toInt() ?? 30;
+
+  /// Категория, выбранная в шаге 1, — целиком, со значком и подписью
+  Map<String, dynamic>? get _selectedCategory =>
+      _categories.where((c) => c['name'] == _draft.category).firstOrNull;
 
   /// Подытог вилки: пересчитывается на лету при каждом изменении состава
   (int from, int to) get _subtotal {
@@ -176,8 +191,17 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
 
   bool get _hasStaged => _draft.items.keys.any((id) => _itemById(id)?['isStaged'] == true);
 
-  /// Категории, где работы затрагивают общие зоны дома — тогда чек-лист C-11
+  /// Категории, где работы затрагивают общие зоны дома — тогда чек-лист C-11.
+  ///
+  /// Опознаём по значку категории, который присылает сервер, а не по русским
+  /// подстрокам в названии: подстроки держатся ровно до первого релиза прайса
+  /// с другим написанием и до первого языка, на котором «сантехника» пишется
+  /// иначе. Названия при этом остаются запасным признаком — новая категория
+  /// приезжает без своего значка, с общим «wrench».
   bool get _needsAccessChecklist {
+    const iconsWithRisers = {'droplet', 'zap', 'flame'};
+    final icon = _selectedCategory?['icon'] as String?;
+    if (icon != null && iconsWithRisers.contains(icon)) return true;
     final c = (_draft.category ?? '').toLowerCase();
     return c.contains('сантех') || c.contains('электр') || c.contains('отоплен');
   }
@@ -213,7 +237,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
               Expanded(
                 child: switch (_step) {
                   0 => _stepWhat(),
-                  1 when !_draft.emergency => _stepWhere(),
+                  1 => _stepWhere(),
                   _ => _stepReview(),
                 },
               ),
@@ -256,7 +280,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                     Text(
                       switch (_step) {
                         0 => t('c07.title'),
-                        1 when !_draft.emergency => t('c10.title'),
+                        1 => _draft.emergency ? t('c10.titleEmergency') : t('c10.title'),
                         _ => t('c13.title'),
                       },
                       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: authInk),
@@ -298,6 +322,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
   }
 
   Future<void> _close() async {
+    _saveTimer?.cancel();
     if (_draft.isEmpty) {
       if (mounted) Navigator.of(context).pop();
       return;
@@ -315,12 +340,53 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  /// Сохранение черновика с задержкой.
+  ///
+  /// Раньше черновик писался только на переходе вперёд и на закрытии — а шаг 3
+  /// последний, «вперёд» после него не бывает. Промокод, этаж и лифт человек
+  /// вводил, приложение выгружали из памяти, и введённое пропадало вместе с
+  /// ним. Пишем на каждое изменение, но не на каждую букву: в черновике лежат
+  /// фотографии, и запись в SharedPreferences на каждый символ адреса —
+  /// мегабайты на пустом месте.
+  Timer? _saveTimer;
+
+  void _saveDraftSoon() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 700), () => unawaited(_draft.save()));
+  }
+
   Future<void> _next() async {
+    _saveTimer?.cancel();
     await _draft.save();
     unawaited(session.api.track('order_step_complete', {'step': _step + 1}));
     setState(() => _step += 1);
     unawaited(session.api.track('order_step_view', {'step': _step + 1}));
+    // У аварии окон не спрашиваем — незачем и грузить
     if (_step == 1 && !_draft.emergency) await _loadSlots();
+    if (_step == 1) unawaited(_centerOnMeIfAllowed());
+  }
+
+  /// Открыть карту там, где человек стоит, — молча и только если он уже
+  /// разрешал доступ.
+  ///
+  /// Системного запроса здесь нет намеренно: диалог, которого человек не
+  /// просил, он закрывает не читая, а второго раза Android не даёт. Тем, кто
+  /// разрешения не давал, карта по-прежнему открывается в центре Ташкента —
+  /// и рядом стоит «Найти меня», где вопрос будет задан по нажатию.
+  ///
+  /// Адрес не подставляем: человек ещё не сказал, что он именно здесь.
+  /// Карта просто показывает его двор вместо площади Независимости.
+  Future<void> _centerOnMeIfAllowed() async {
+    // Адрес уже выбран из сохранённых или набран — не перебиваем
+    if (_draft.address.trim().isNotEmpty || _draft.addressId != null) return;
+    final place = await currentPlaceIfAllowed();
+    if (!mounted || !place.ok) return;
+    final point = LatLng(place.latitude!, place.longitude!);
+    _mapCenter = point;
+    _draft.lat = point.latitude;
+    _draft.lng = point.longitude;
+    _moveMap(point, 17);
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadSlots() async {
@@ -344,7 +410,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
     final selectedCategory = _draft.category;
     final items = _query.trim().isNotEmpty
         ? _allItems
-            .where((i) => (i['name'] as String).toLowerCase().contains(_query.toLowerCase()))
+            .where((i) => ((i['name'] as String?) ?? '').toLowerCase().contains(_query.toLowerCase()))
             .toList()
         : (selectedCategory == null
             ? const <Map<String, dynamic>>[]
@@ -416,13 +482,24 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                   itemCount: _categories.length,
                   itemBuilder: (context, i) {
                     final c = _categories[i];
+                    // Подпись и значок — клиентские, с сервера: в прайсе
+                    // категория называется «ВЫЕЗД, ДИАГНОСТИКА», а человек
+                    // ищет глазами «Не знаю, что сломалось»
                     return CategoryTile(
-                      name: (c['name'] as String?) ?? '',
+                      name: (c['label'] as String?) ?? (c['name'] as String?) ?? '',
+                      iconKey: c['name'] as String?,
+                      icon: c['icon'] as String?,
                       priceFromTiyin: (c['priceFromTiyin'] as num?)?.toInt() ?? 0,
                       onTap: () => setState(() => _draft.category = c['name'] as String?),
                     );
                   },
                 ),
+                // Выход для того, кто не может назвать работу, — здесь же,
+                // а не только после выбора категории. Раньше он показывался
+                // ниже списка работ, то есть за действием, которое человек
+                // как раз и не может совершить
+                const SizedBox(height: SozoSpace.s16),
+                Center(child: InlineLink(t('c07.dontKnow'), align: TextAlign.center, onTap: _enableDontKnow)),
               ] else ...[
                 // Выбранная категория — пилюля с обводкой (223:30)
                 if (selectedCategory != null && _query.trim().isEmpty)
@@ -443,11 +520,17 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                FigmaIcon(CategoryTile.iconFor(selectedCategory) ?? 'wrench', size: 14, color: authInk),
+                                FigmaIcon(
+                                  (_selectedCategory?['icon'] as String?) ??
+                                      CategoryTile.iconFor(selectedCategory) ??
+                                      'wrench',
+                                  size: 16,
+                                  color: authInk,
+                                ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  selectedCategory.toUpperCase(),
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: authInk),
+                                  (_selectedCategory?['label'] as String?) ?? selectedCategory,
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: authInk),
                                 ),
                               ],
                             ),
@@ -470,22 +553,9 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                 ],
                 const SizedBox(height: 10),
                 // Подчёркнутая ссылка, а не кнопка (223:92): это выход для
-                // того, кто не может назвать работу, а не равнозначный выбор
-                Center(
-                  child: GestureDetector(
-                    onTap: _enableDontKnow,
-                    child: Text(
-                      t('c07.dontKnow'),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: SozoColors.accent,
-                        decoration: TextDecoration.underline,
-                        decorationColor: SozoColors.accent,
-                      ),
-                    ),
-                  ),
-                ),
+                // того, кто не может назвать работу, а не равнозначный выбор.
+                // Янтарь на белом здесь не годится — 1,75:1
+                Center(child: InlineLink(t('c07.dontKnow'), align: TextAlign.center, onTap: _enableDontKnow)),
               ],
 
               if (!_draft.emergency) ...[
@@ -527,6 +597,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                 onChanged: (v) => setState(() {
                   _draft.description = v;
                   _touchedDescription = true;
+                  _saveDraftSoon();
                 }),
               ),
             ],
@@ -539,13 +610,24 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
           value: _draft.items.isEmpty ? null : range(from, to),
           action: t('common.next'),
           onTap: canNext ? _next : null,
+          hint: _dontKnow ? t('c07.needDescription') : t('c07.needWork'),
         ),
       ],
     );
   }
 
-  /// Нижняя панель визарда (223:113)
-  Widget _wizardFooter({required String label, String? value, required String action, VoidCallback? onTap}) {
+  /// Нижняя панель визарда (223:113).
+  ///
+  /// `hint` — причина, по которой кнопка серая. Серый прямоугольник без
+  /// объяснения посреди воронки человек читает как поломку приложения:
+  /// он сделал всё, что видел, а дальше не пускают и не говорят почему.
+  Widget _wizardFooter({
+    required String label,
+    String? value,
+    required String action,
+    VoidCallback? onTap,
+    String? hint,
+  }) {
     final inset = MediaQuery.paddingOf(context).bottom;
     return Container(
       decoration: const BoxDecoration(
@@ -553,53 +635,80 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         border: Border(top: BorderSide(color: authCardDivider)),
       ),
       padding: EdgeInsets.fromLTRB(SozoSpace.s16, SozoSpace.s16, SozoSpace.s16, inset < 16 ? 16 : inset),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: const TextStyle(fontSize: 12, color: authHint)),
-                const SizedBox(height: 2),
-                Text(
-                  value ?? '—',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: authInk,
-                    fontFeatures: moneyFeatures,
-                  ),
+          if (onTap == null && hint != null) ...[
+            _footerHint(hint),
+            const SizedBox(height: SozoSpace.s12),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: const TextStyle(fontSize: 14, color: authHint)),
+                    const SizedBox(height: 2),
+                    Text(
+                      value ?? '—',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: authInk,
+                        fontFeatures: moneyFeatures,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: SozoSpace.s12),
-          Material(
-            color: onTap == null ? authDisabledBg : SozoColors.accent,
-            borderRadius: BorderRadius.circular(14),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
-                child: Text(
-                  action,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: onTap == null ? authDisabledFg : authInk,
+              ),
+              const SizedBox(width: SozoSpace.s12),
+              Material(
+                color: onTap == null ? authDisabledBg : SozoColors.accent,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    child: Text(
+                      action,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: onTap == null ? authDisabledFg : authInk,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ],
       ),
     );
   }
 
+  /// Строка «Осталось: …» над серой кнопкой
+  Widget _footerHint(String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const FigmaIcon('info', size: 16, color: SozoColors.textSecondary),
+        const SizedBox(width: SozoSpace.s8),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 14, height: 1.3, color: SozoColors.textSecondary),
+          ),
+        ),
+      ],
+    );
+  }
+
   /// Нижняя панель с одной кнопкой во всю ширину (231:103)
-  Widget _wizardWideFooter(String label, {VoidCallback? onTap, bool busy = false}) {
+  Widget _wizardWideFooter(String label, {VoidCallback? onTap, bool busy = false, String? hint}) {
     final inset = MediaQuery.paddingOf(context).bottom;
     return Container(
       width: double.infinity,
@@ -608,32 +717,43 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         border: Border(top: BorderSide(color: authCardDivider)),
       ),
       padding: EdgeInsets.fromLTRB(SozoSpace.s16, SozoSpace.s16, SozoSpace.s16, inset < 16 ? 16 : inset),
-      child: Material(
-        color: onTap == null ? authDisabledBg : SozoColors.accent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: SizedBox(
-            height: 48,
-            child: Center(
-              child: busy
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: authInk),
-                    )
-                  : Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: onTap == null ? authDisabledFg : authInk,
-                      ),
-                    ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (onTap == null && !busy && hint != null) ...[
+            _footerHint(hint),
+            const SizedBox(height: SozoSpace.s12),
+          ],
+          Material(
+            color: onTap == null ? authDisabledBg : SozoColors.accent,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: onTap,
+              child: SizedBox(
+                height: SozoSize.buttonPrimary,
+                width: double.infinity,
+                child: Center(
+                  child: busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: authInk),
+                        )
+                      : Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: onTap == null ? authDisabledFg : authInk,
+                          ),
+                        ),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -676,7 +796,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
           // честнее сказать заранее, чем удивить потом
           if (day['holiday'] != null) ...[
             const SizedBox(height: SozoSpace.s8),
-            TagChip(day['holiday'] as String, bg: softWarnBg, fg: softWarnFg),
+            TagChip((day['holiday'] as String?) ?? '', bg: softWarnBg, fg: softWarnFg),
           ],
           const SizedBox(height: SozoSpace.s12),
           for (var r = 0; r < (windows.length + 1) ~/ 2; r++) ...[
@@ -809,8 +929,8 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${item['unit']} · ${t('common.from')} ${soums(item['priceFromTiyin'])}',
-                    style: const TextStyle(fontSize: 12, color: authHint, fontFeatures: moneyFeatures),
+                    '${item['unit']} · ${priceFrom(item['priceFromTiyin'])}',
+                    style: const TextStyle(fontSize: 14, color: authHint, fontFeatures: moneyFeatures),
                   ),
                 ],
               ),
@@ -877,8 +997,10 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
 
     final days = ((_slots?['days'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final urgentAvailable = _slots?['urgentAvailable'] == true;
-    final timeChosen = _draft.timeMode != 'slot' || _draft.slotFrom != null;
-    final canNext = _draft.address.trim().isNotEmpty && timeChosen;
+    final hasAddress = _draft.address.trim().isNotEmpty;
+    // У аварийной заявки времени нет: мастер выезжает ближайший
+    final timeChosen = _draft.emergency || _draft.timeMode != 'slot' || _draft.slotFrom != null;
+    final canNext = hasAddress && timeChosen;
 
     return Column(
       children: [
@@ -919,6 +1041,42 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
 
                   _map(),
 
+                  // Карта раньше только записывала координаты в черновик и с
+                  // полем адреса связана не была: человек двигал её на свой
+                  // дом, видел пин на своём подъезде — и «Далее» оставалась
+                  // серой, потому что переход требует непустой текст.
+                  //
+                  // Теперь карта заполняет поле: «Найти меня» ведёт к месту
+                  // человека и подставляет название, «Я здесь» — то же самое
+                  // для точки, которую он навёл сам. Когда геокодер молчит
+                  // (а на аппаратах без сервисов Google его нет вовсе),
+                  // в поле остаются координаты: мастеру точка полезнее строки,
+                  // а человек видит, что именно уйдёт с заявкой
+                  Text(
+                    t('c10.mapHint'),
+                    style: const TextStyle(fontSize: 14, height: 1.3, color: SozoColors.textSecondary),
+                  ),
+                  // «Найти меня» — первым и заметнее: это короткий путь, а
+                  // «Я здесь» подтверждает точку, которую человек навёл сам
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SecondaryButton(
+                          t('c10.findMe'),
+                          icon: 'navigation',
+                          busy: _locating,
+                          onTap: _locating ? null : _findMe,
+                        ),
+                      ),
+                      const SizedBox(width: SozoSpace.s8),
+                      SmallButton(
+                        t('c10.iAmHere'),
+                        icon: 'crosshair',
+                        onTap: _locating ? null : _useMapPin,
+                      ),
+                    ],
+                  ),
+
                   SozoField(
                     flat: true,
                     label: t('c10.addressLabel'),
@@ -931,6 +1089,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                       _draft.addressId = null;
                       _addressTouched = true;
                       _checkCoverage(v);
+                      _saveDraftSoon();
                     }),
                   ),
 
@@ -948,20 +1107,29 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                       label: t('c10.floor'),
                       controller: _floor,
                       keyboardType: TextInputType.number,
-                      onChanged: (v) => _draft.floor = v,
+                      onChanged: (v) {
+                        _draft.floor = v;
+                        _saveDraftSoon();
+                      },
                     ),
                     SwitchRow(
                       title: t('c10.lift'),
                       subtitle: t('c10.liftHelp'),
                       value: _draft.hasLift ?? false,
-                      onChanged: (v) => setState(() => _draft.hasLift = v),
+                      onChanged: (v) => setState(() {
+                        _draft.hasLift = v;
+                        _saveDraftSoon();
+                      }),
                     ),
                   ],
 
                   SwitchRow(
                     title: t('c10.saveAddress'),
                     value: _draft.saveAddress,
-                    onChanged: (v) => setState(() => _draft.saveAddress = v),
+                    onChanged: (v) => setState(() {
+                      _draft.saveAddress = v;
+                      _saveDraftSoon();
+                    }),
                   ),
 
                   if (_needsAccessChecklist)
@@ -976,54 +1144,170 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
               ),
 
               const SizedBox(height: SozoSpace.s16),
-              // Время в своей карточке (231:46): сначала день лентой, потом
-              // его окна сеткой в две колонки. Раньше дни шли друг под другом
-              // со своими наборами окон — экран уезжал на три листа вниз
-              if (days.isEmpty)
-                SozoBanner(icon: 'clock', text: t('c10.noWindows'))
-              else
-                _timeCard(days),
-              const SizedBox(height: SozoSpace.s16),
 
-              if (_hasStaged) ...[
-                SozoBanner(icon: 'calendar', text: t('c10.stagedNote')),
+              // У аварийной заявки выбора времени нет — только адрес.
+              // Спрашивать окно приезда у человека, у которого прорвало трубу,
+              // не нужно; пропускать из-за этого весь шаг — тем более
+              if (_draft.emergency)
+                SozoBanner(icon: 'bolt', tone: BannerTone.danger, text: t('c10.emergencyNow'))
+              else ...[
+                // Время в своей карточке (231:46): сначала день лентой, потом
+                // его окна сеткой в две колонки. Раньше дни шли друг под другом
+                // со своими наборами окон — экран уезжал на три листа вниз
+                if (days.isEmpty)
+                  SozoBanner(icon: 'clock', text: t('c10.noWindows'))
+                else
+                  _timeCard(days),
+                const SizedBox(height: SozoSpace.s16),
+
+                if (_hasStaged) ...[
+                  SozoBanner(icon: 'calendar', text: t('c10.stagedNote')),
+                  const SizedBox(height: SozoSpace.s12),
+                ],
+
+                // Выбор времени взаимоисключающий: окно, «Срочно» или лист ожидания
+                if (urgentAvailable)
+                  RadioCard(
+                    icon: 'bolt',
+                    iconColor: SozoColors.accent,
+                    title: t('c10.urgentTitle'),
+                    subtitle: t('c10.urgentText'),
+                    selected: _draft.timeMode == 'urgent',
+                    onTap: () => setState(() {
+                      _draft.timeMode = 'urgent';
+                      _draft.slotFrom = null;
+                    }),
+                  ),
                 const SizedBox(height: SozoSpace.s12),
-              ],
-
-              // Выбор времени взаимоисключающий: окно, «Срочно» или лист ожидания
-              if (urgentAvailable)
                 RadioCard(
-                  icon: 'bolt',
-                  iconColor: SozoColors.accent,
-                  title: t('c10.urgentTitle'),
-                  subtitle: t('c10.urgentText'),
-                  selected: _draft.timeMode == 'urgent',
+                  icon: 'hourglass',
+                  title: t('c10.waitlistTitle'),
+                  subtitle: t('c10.waitlistText'),
+                  selected: _draft.timeMode == 'waitlist',
                   onTap: () => setState(() {
-                    _draft.timeMode = 'urgent';
+                    _draft.timeMode = 'waitlist';
                     _draft.slotFrom = null;
                   }),
                 ),
-              const SizedBox(height: SozoSpace.s12),
-              RadioCard(
-                icon: 'hourglass',
-                title: t('c10.waitlistTitle'),
-                subtitle: t('c10.waitlistText'),
-                selected: _draft.timeMode == 'waitlist',
-                onTap: () => setState(() {
-                  _draft.timeMode = 'waitlist';
-                  _draft.slotFrom = null;
-                }),
-              ),
+              ],
             ],
           ),
         ),
-        _wizardWideFooter(t('common.next'), onTap: canNext ? _next : null),
+        _wizardWideFooter(
+          t('common.next'),
+          onTap: canNext ? _next : null,
+          hint: !hasAddress ? t('c10.needAddress') : t('c10.needTime'),
+        ),
       ],
     );
   }
 
+  /// Куда сейчас смотрит центр карты — под кнопкой «Я здесь».
+  /// Обновляется и без жеста: карта могла встать по сохранённому адресу
+  LatLng? _mapCenter;
+
+  /// Управление картой: нужно, чтобы увести её к найденному месту
+  final _mapCtl = MapController();
+
+  /// Увести карту к точке.
+  ///
+  /// В try не для красоты: `MapController` до того, как к нему прицепится
+  /// `FlutterMap`, падает на позднем поле. Место человека может приехать
+  /// раньше первого кадра карты — тогда двигать нечего, и точка всё равно
+  /// доедет через `initialCenter`, который читает тот же `_mapCenter`.
+  void _moveMap(LatLng point, double zoom) {
+    try {
+      _mapCtl.move(point, zoom);
+    } catch (_) {
+      // карта ещё не построена — центр возьмётся из `_mapCenter`
+    }
+  }
+
+  /// Идёт поиск места или названия — кнопки в это время заняты
+  bool _locating = false;
+
+  /// «Найти меня»: место человека → карта → адрес словами.
+  ///
+  /// Разрешение спрашивается здесь, по нажатию, а не при запуске приложения:
+  /// вопрос про геолокацию, заданный на первом экране, человек отклоняет не
+  /// глядя, и второго раза система не даёт.
+  ///
+  /// Отказ ничего не ломает: карта остаётся там, где была, поле — тоже,
+  /// а человек читает строкой, что именно случилось и что делать.
+  Future<void> _findMe() async {
+    setState(() => _locating = true);
+    final place = await currentPlace();
+    if (!mounted) return;
+    if (!place.ok) {
+      setState(() => _locating = false);
+      showSozoToast(context, geoFailureText(place.failure!));
+      return;
+    }
+    final point = LatLng(place.latitude!, place.longitude!);
+    _mapCenter = point;
+    // 17 — масштаб «виден двор и подъезды»: на 13 человек не отличит свой дом
+    // от соседнего и подтвердит не ту точку
+    _moveMap(point, 17);
+    setState(() {
+      _draft.lat = point.latitude;
+      _draft.lng = point.longitude;
+      _draft.addressId = null;
+      _addressTouched = true;
+    });
+    await _fillAddressFrom(point, overwrite: false);
+    if (mounted) setState(() => _locating = false);
+  }
+
+  /// Отметить дом пином — тем, что сейчас в центре карты.
+  ///
+  /// Пин полезен и сам по себе: мастеру точка нужнее строки. Название места
+  /// подставляем поверх, когда геокодер отвечает; когда молчит — в поле
+  /// остаются координаты, и человек дописывает подъезд словами.
+  /// Готовый адрес не затираем: человек мог сначала напечатать, потом уточнить
+  Future<void> _useMapPin() async {
+    final c = _mapCenter ?? LatLng(_draft.lat ?? 41.311, _draft.lng ?? 69.279);
+    setState(() {
+      _draft.lat = c.latitude;
+      _draft.lng = c.longitude;
+      _draft.addressId = null;
+      _addressTouched = true;
+      _locating = true;
+    });
+    await _fillAddressFrom(c, overwrite: false);
+    if (mounted) setState(() => _locating = false);
+  }
+
+  /// Записать в поле название точки, а если его нет — координаты.
+  ///
+  /// `overwrite: false` — не трогаем то, что человек уже набрал руками:
+  /// он мог указать «второй подъезд, домофон 12», и геокодер этого не знает.
+  Future<void> _fillAddressFrom(LatLng point, {required bool overwrite}) async {
+    final typed = _address.text.trim().isNotEmpty;
+    if (typed && !overwrite) {
+      if (mounted) showSozoToast(context, t('c10.pinSaved'));
+      return;
+    }
+    final name = await placeName(point.latitude, point.longitude);
+    if (!mounted) return;
+    setState(() {
+      _draft.address = name ??
+          t('c10.pinAddress', {
+            'lat': point.latitude.toStringAsFixed(5),
+            'lng': point.longitude.toStringAsFixed(5),
+          });
+      _address.text = _draft.address;
+      _addressTouched = true;
+    });
+    _saveDraftSoon();
+    _checkCoverage(_draft.address);
+    showSozoToast(context, name == null ? t('c10.pinSaved') : t('c10.addressFound'));
+  }
+
   Widget _map() {
-    final center = LatLng(_draft.lat ?? 41.311, _draft.lng ?? 69.279);
+    // `_mapCenter` — то, куда карту уже увели: место человека или пин.
+    // Читаем его первым, иначе карта, построенная после ответа геолокации,
+    // снова открылась бы в центре Ташкента
+    final center = _mapCenter ?? LatLng(_draft.lat ?? 41.311, _draft.lng ?? 69.279);
     return ClipRRect(
       borderRadius: BorderRadius.circular(SozoRadius.card),
       child: SizedBox(
@@ -1031,12 +1315,14 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         child: Stack(
           children: [
             FlutterMap(
+              mapController: _mapCtl,
               options: MapOptions(
                 initialCenter: center,
                 initialZoom: 13,
                 // Пин остаётся в центре: двигается карта, а не маркер —
                 // так палец не закрывает точку, которую ставишь
                 onPositionChanged: (pos, hasGesture) {
+                  _mapCenter = pos.center;
                   if (!hasGesture) return;
                   _draft.lat = pos.center.latitude;
                   _draft.lng = pos.center.longitude;
@@ -1164,10 +1450,17 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
   Widget _stepReview() {
     final (from, to) = _subtotal;
     final urgent = _draft.timeMode == 'urgent';
-    final urgentAdd = urgent ? (from * 30 ~/ 100) : 0;
+    // Наценка считается от каждой границы своей, а не «тридцать процентов от
+    // нижней — к обеим». Сервер (orders.service, `withUrgency`) делает именно
+    // так, и человек, посчитавший по экрану итога, получал при оплате другую
+    // сумму — ровно тот случай, из-за которого пишут жалобы
+    final urgentAddFrom = urgent ? (from * _urgentPercent ~/ 100) : 0;
+    final urgentAddTo = urgent ? (to * _urgentPercent ~/ 100) : 0;
     final discount = _draft.promoDiscountPercent;
-    final totalFrom = ((from + urgentAdd) * (100 - discount)) ~/ 100;
-    final totalTo = ((to + urgentAdd) * (100 - discount)) ~/ 100;
+    final discountFrom = ((from + urgentAddFrom) * discount) ~/ 100;
+    final discountTo = ((to + urgentAddTo) * discount) ~/ 100;
+    final totalFrom = from + urgentAddFrom - discountFrom;
+    final totalTo = to + urgentAddTo - discountTo;
 
     return Column(
       children: [
@@ -1182,7 +1475,12 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (_draft.items.isEmpty)
-                      Text(t('c13.diagnostics'), style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary))
+                      Text(
+                        _visitPriceTiyin != null
+                            ? t('c13.diagnosticsPriced', {'sum': soums(_visitPriceTiyin)})
+                            : t('c13.diagnostics'),
+                        style: const TextStyle(fontSize: 15, height: 1.4, color: SozoColors.textSecondary),
+                      )
                     else
                       // Между работами — черта (231:310): без неё длинные
                       // названия в две строки сливаются в один абзац
@@ -1202,7 +1500,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                       const SizedBox(height: SozoSpace.s8),
                       Text(
                         _draft.description,
-                        style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
+                        style: const TextStyle(fontSize: 15, color: SozoColors.textSecondary),
                       ),
                     ],
                   ],
@@ -1218,11 +1516,16 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
 
               _summary(
                 title: t('c13.address'),
-                onEdit: () => setState(() => _step = _draft.emergency ? 0 : 1),
-                child: Text(
-                  _draft.address,
-                  style: const TextStyle(fontSize: 15, color: SozoColors.text),
-                ),
+                onEdit: () => setState(() => _step = 1),
+                child: _draft.address.trim().isEmpty
+                    ? Text(
+                        t('c13.addressMissing'),
+                        style: const TextStyle(fontSize: 15, color: SozoColors.error),
+                      )
+                    : Text(
+                        _draft.address,
+                        style: const TextStyle(fontSize: 16, color: SozoColors.text),
+                      ),
               ),
 
               if (!_draft.emergency)
@@ -1237,7 +1540,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                           ? '—'
                           : '${relativeDay('${_draft.slotFrom?.split(':').first}T00:00:00')} ${_draft.slotTo}',
                     },
-                    style: const TextStyle(fontSize: 15, color: SozoColors.text),
+                    style: const TextStyle(fontSize: 16, color: SozoColors.text),
                   ),
                 ),
 
@@ -1250,17 +1553,29 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                 padding: const EdgeInsets.all(SozoSpace.s16),
                 child: Column(
                   children: [
-                    MoneyRow(label: t('c13.worksLine'), amount: range(from, to), labelMuted: true),
-                    if (urgent)
-                      MoneyRow(label: t('c13.urgentLine'), amount: '+${soums(urgentAdd)}', labelMuted: true),
-                    if (discount > 0)
+                    // Пустой состав — не строка счёта на ноль, а объяснение:
+                    // «Итого: от 0 сум» перед кнопкой «Отправить заявку»
+                    // человек в панике читает как обещание, которое никто не
+                    // собирается выполнять, и уходит звонить конкурентам
+                    if (_draft.items.isEmpty)
                       MoneyRow(
-                        label: t('c13.promoLine', {'percent': discount}),
-                        amount: '−${soums(((from + urgentAdd) * discount) ~/ 100)}',
-                        color: SozoColors.success,
-                      ),
-                    const SozoDivider(),
-                    MoneyRow(label: t('c13.total'), amount: range(totalFrom, totalTo), bold: true),
+                        label: t('c13.visitLine'),
+                        amount: _visitPriceTiyin != null ? soums(_visitPriceTiyin) : t('c13.priceOnSite'),
+                        bold: true,
+                      )
+                    else ...[
+                      MoneyRow(label: t('c13.worksLine'), amount: range(from, to), labelMuted: true),
+                      if (urgent)
+                        MoneyRow(label: t('c13.urgentLine'), amount: '+${soums(urgentAddFrom)}', labelMuted: true),
+                      if (discount > 0)
+                        MoneyRow(
+                          label: t('c13.promoLine', {'percent': discount}),
+                          amount: '−${soums(discountFrom)}',
+                          color: SozoColors.success,
+                        ),
+                      const SozoDivider(),
+                      MoneyRow(label: t('c13.total'), amount: range(totalFrom, totalTo), bold: true),
+                    ],
                   ],
                 ),
               ),
@@ -1268,15 +1583,10 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
               const SizedBox(height: 14),
               if (!_promoOpen)
                 Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: SozoSpace.s8),
-                    child: GestureDetector(
-                      onTap: () => setState(() => _promoOpen = true),
-                      child: Text(
-                        t('c13.havePromo'),
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.accent),
-                      ),
-                    ),
+                  child: InlineLink(
+                    t('c13.havePromo'),
+                    align: TextAlign.center,
+                    onTap: () => setState(() => _promoOpen = true),
                   ),
                 )
               else
@@ -1324,7 +1634,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                     Expanded(
                       child: Text(
                         t('c13.priceNote'),
-                        style: const TextStyle(fontSize: 13, height: 1.4, color: authHint),
+                        style: const TextStyle(fontSize: 14, height: 1.4, color: authHint),
                       ),
                     ),
                   ],
@@ -1358,13 +1668,7 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
                   title,
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: authInk),
                 ),
-                GestureDetector(
-                  onTap: onEdit,
-                  child: Text(
-                    t('common.change'),
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.accent),
-                  ),
-                ),
+                InlineLink(t('common.change'), onTap: onEdit),
               ],
             ),
             const SizedBox(height: SozoSpace.s16),
@@ -1387,12 +1691,28 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         _draft.promoCode = _promoOk ? code : null;
         _draft.promoDiscountPercent = _promoOk ? ((r['discountPercent'] as num?)?.toInt() ?? 0) : 0;
       });
+      // Шаг 3 последний — если не сохранить здесь, промокод не переживёт
+      // выгрузку процесса
+      _saveDraftSoon();
     } on ApiError catch (e) {
       if (mounted) setState(() { _promoOk = false; _promoStatus = e.message; });
     }
   }
 
   Future<void> _submit() async {
+    // Последний рубеж: заявка без адреса ехать не должна ни при каких
+    // обстоятельствах. Проверка на шаге 2 могла не сработать — черновик
+    // восстановился из прошлого запуска, человек стёр строку и вернулся
+    // «Изменить», аварийный переключатель включили на шаге 1
+    if (_draft.address.trim().isEmpty) {
+      setState(() {
+        _step = 1;
+        _addressTouched = true;
+        _error = null;
+      });
+      showSozoToast(context, t('c10.addressError'));
+      return;
+    }
     setState(() {
       _sending = true;
       _error = null;
@@ -1439,8 +1759,11 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
         'source': widget.repeatOrderId != null
             ? 'repeat'
             : (_draft.emergency ? 'emergency' : (_query.isNotEmpty ? 'search' : 'category')),
-      });
+      }, idempotencyKey: _draft.idempotencyKey);
       await OrderDraft.clear();
+      // Заявка создана — следующая отправка должна считаться новой заявкой,
+      // а не повтором этой
+      _draft.renewIdempotencyKey();
       unawaited(session.api.track('order_submitted', {
         'source': widget.repeatOrderId != null ? 'repeat' : (_draft.emergency ? 'emergency' : 'category'),
       }));
@@ -1461,6 +1784,8 @@ class _CreateOrderFlowState extends State<CreateOrderFlow> {
 
   @override
   void dispose() {
+    _saveTimer?.cancel();
+    _mapCtl.dispose();
     _search.dispose();
     _description.dispose();
     _address.dispose();

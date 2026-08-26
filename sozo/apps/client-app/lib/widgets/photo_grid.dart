@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../design_tokens.dart';
@@ -313,15 +313,35 @@ Future<String?> pickPhoto(BuildContext context) async {
   );
   if (source == null) return null;
   try {
-    // Сжатие до ~1600 px делает сам image_picker: клиент не должен ждать
-    // выгрузки мегабайтов на мобильном интернете (DEV-08 C-07)
-    final file = await ImagePicker().pickImage(source: source, maxWidth: 1600, imageQuality: 70);
+    // Сжатие делает сам image_picker: клиент не должен ждать выгрузки
+    // мегабайтов на мобильном интернете (DEV-08 C-07).
+    //
+    // 1280/60, а не 1600/70: снимки уходят одним POST в base64 (плюс треть
+    // к весу) и тем же массивом ложатся в черновик в SharedPreferences.
+    // Пять кадров по прежним настройкам — это 3–5 МБ тела, то есть «сервер
+    // не ответил» и повтор с тем же результатом. Мастеру нужно разглядеть
+    // подтёк под раковиной, а не печатать плакат: 1280 для этого хватает
+    // с запасом, а тело худеет вдвое.
+    final file = await ImagePicker().pickImage(source: source, maxWidth: 1280, imageQuality: 60);
     if (file == null) return null;
     final bytes = await file.readAsBytes();
     final mime = file.mimeType ?? (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
     return 'data:$mime;base64,${base64Encode(bytes)}';
+  } on PlatformException catch (e) {
+    // Отказ в доступе — не ошибка приложения, но и не «ничего не произошло».
+    // Молчаливый catch выглядел как поломка: человек жал «Снять на камеру»,
+    // не происходило ничего, и так каждый раз — разрешение-то он не давал,
+    // а система второй раз о нём не спрашивает
+    if (!context.mounted) return null;
+    showSozoToast(
+      context,
+      e.code == 'camera_access_denied'
+          ? t('photo.cameraDenied')
+          : (e.code == 'photo_access_denied' ? t('photo.galleryDenied') : t('photo.failed')),
+    );
+    return null;
   } catch (_) {
-    // Отказ в доступе к камере — не ошибка приложения, экран просто не получает фото
+    if (context.mounted) showSozoToast(context, t('photo.failed'));
     return null;
   }
 }

@@ -423,7 +423,7 @@ await startApi({ PUSH_PROVIDER: '' });
   check('заявка ждёт оплаты', waiting.body?.status === 'awaiting_payment', JSON.stringify(waiting.body).slice(0, 160));
 
   // Сдвигаем время планировщика на трое суток: напоминание T+72 наступает
-  const simulated = await req('POST', '/admin/scheduler/simulate', { token: adminToken, body: { days: 3 } });
+  const simulated = await req('POST', '/admin/scheduler/simulate', { token: adminToken, body: { days: 3, apply: true } });
   check('планировщик прогнал трое суток', simulated.status === 200 || simulated.status === 201, JSON.stringify(simulated.body).slice(0, 120));
   await settle();
 
@@ -489,7 +489,7 @@ await startApi({ PUSH_PROVIDER: '' });
 
   // Демо-данные содержат закрытые заявки; прогоняем месяц вперёд, чтобы
   // наступили и касание «как дела» (10 дней), и конец гарантии (30 − 7)
-  await req('POST', '/admin/scheduler/simulate', { token: adminToken, body: { days: 30 } });
+  await req('POST', '/admin/scheduler/simulate', { token: adminToken, body: { days: 30, apply: true } });
   await settle();
   const first = await events();
 

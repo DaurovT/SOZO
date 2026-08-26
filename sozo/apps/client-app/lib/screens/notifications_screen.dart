@@ -125,7 +125,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   if ((n['body'] as String?)?.isNotEmpty ?? false) ...[
                     const SizedBox(height: 2),
                     Text(
-                      n['body'] as String,
+                      (n['body'] as String?) ?? '',
                       style: const TextStyle(fontSize: 13, height: 1.35, color: authHint),
                     ),
                   ],

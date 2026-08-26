@@ -80,7 +80,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen> {
             ),
             const SizedBox(width: SozoSpace.s8),
             Text(
-              t('c41.waiting', {'h': plural(hours, 'час', 'часа', 'часов')}),
+              t('c41.waiting', {'h': plural(hours, 'plural.hours')}),
               style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
             ),
           ],

@@ -113,9 +113,14 @@ class _LoginFlowState extends State<LoginFlow> {
     });
     try {
       final token = await session.api.verify(_e164, _code.text);
-      // Сессия фиксируется только после согласий, поэтому код не сгорает
+      // Сессия фиксируется только после согласий, поэтому код не сгорает.
+      //
+      // Токен на эти два запроса передаётся явно и в сессию не попадает:
+      // раньше `verify` присваивал его живому клиенту, и между проверкой кода
+      // и входом приложение уже было авторизовано, а `signedIn` отвечал «да»
+      // на несохранённой сессии
       _pendingToken = token;
-      final me = await session.api.me();
+      final me = await session.api.me(authToken: token);
       final consents = (me['consents'] as Map?) ?? const {};
       // Давнему клиенту согласия не переписываем: галочка «новости» на этом
       // экране пустая по умолчанию, и повторная запись молча отписала бы его
@@ -124,7 +129,7 @@ class _LoginFlowState extends State<LoginFlow> {
           'personalData': true,
           'marketing': _consentMarketing,
           'locale': l10n.code,
-        });
+        }, authToken: token);
       }
       await _finish();
     } on ApiError catch (e) {
@@ -159,12 +164,12 @@ class _LoginFlowState extends State<LoginFlow> {
       } else {
         setState(() => _error = e.message);
       }
-      session.api.token = null;
+      _pendingToken = null;
     } catch (e) {
       // Любая другая ошибка тоже должна быть видна: молчаливый отказ на экране
       // кода выглядит как «приложение зависло» и не даёт понять, что случилось
-      if (mounted) setState(() => _error = '$e');
-      session.api.token = null;
+      if (mounted) setState(() => _error = humanError(e));
+      _pendingToken = null;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -358,31 +363,46 @@ class _LoginFlowState extends State<LoginFlow> {
               const SizedBox(height: SozoSpace.s8),
               _PhoneInput(controller: _phone, onChanged: (_) => setState(() {})),
               const SizedBox(height: SozoSpace.s8),
-              Text(t('c02.phoneHint'), style: const TextStyle(fontSize: 13, color: authLabel)),
+              Text(t('c02.phoneHint'), style: const TextStyle(fontSize: 14, color: authLabel)),
               const SizedBox(height: 20),
               Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: SozoSpace.s12),
-                  child: GestureDetector(
-                    onTap: _supportSheet,
-                    child: Text(
-                      t('c02.cantSignIn'),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: SozoColors.accent,
-                      ),
-                    ),
-                  ),
+                child: InlineLink(
+                  t('c02.cantSignIn'),
+                  align: TextAlign.center,
+                  fontSize: 16,
+                  onTap: _supportSheet,
                 ),
               ),
             ],
           ),
         ),
-        bottom: _AuthButton(
-          _resendIn > 0 ? t('c02.retryIn', {'time': _mmss(_resendIn)}) : t('c02.getCode'),
-          busy: _busy,
-          onTap: _phoneValid && _resendIn == 0 ? _requestOtp : null,
+        // Подпись кнопки не меняется на «Повторно через 0:47»: человек,
+        // впервые дошедший до этого экрана, читал её как «кнопка сломалась».
+        // Кнопка остаётся собой, а таймер объясняет, почему она сейчас серая
+        bottom: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_resendIn > 0) ...[
+              Text(
+                t('c02.retryIn', {'time': _mmss(_resendIn)}),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: authHint),
+              ),
+              const SizedBox(height: SozoSpace.s8),
+            ] else if (!_phoneValid) ...[
+              Text(
+                t('c02.needPhone'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: authHint),
+              ),
+              const SizedBox(height: SozoSpace.s8),
+            ],
+            _AuthButton(
+              t('c02.getCode'),
+              busy: _busy,
+              onTap: _phoneValid && _resendIn == 0 ? _requestOtp : null,
+            ),
+          ],
         ),
       ),
     );
@@ -441,19 +461,12 @@ class _LoginFlowState extends State<LoginFlow> {
                 children: [
                   Text(
                     t('c03.sentTo', {'phone': maskedPhone(_e164)}),
-                    style: const TextStyle(fontSize: 14, color: authHint),
+                    style: const TextStyle(fontSize: 15, color: authHint),
                   ),
                   const SizedBox(height: SozoSpace.s8),
-                  GestureDetector(
+                  InlineLink(
+                    t('c03.changePhone'),
                     onTap: () => setState(() => _step = _Step.phone),
-                    child: Text(
-                      t('c03.changePhone'),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: SozoColors.accent,
-                      ),
-                    ),
                   ),
                   const SizedBox(height: 20),
                   // Боевого SMS-шлюза нет, код всегда «00000». Кнопки для
@@ -468,7 +481,7 @@ class _LoginFlowState extends State<LoginFlow> {
                     Text(
                       _error!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 13, color: SozoColors.error),
+                      style: const TextStyle(fontSize: 15, color: SozoColors.error),
                     ),
                   ],
                   const SizedBox(height: 20),
@@ -478,18 +491,13 @@ class _LoginFlowState extends State<LoginFlow> {
                         ? Text(
                             t('c03.resendIn', {'time': _mmss(_resendIn)}),
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 14, color: authHint),
+                            style: const TextStyle(fontSize: 15, color: authHint),
                           )
-                        : GestureDetector(
-                            onTap: _requestOtp,
-                            child: Text(
+                        : Center(
+                            child: InlineLink(
                               t('c03.resend'),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: SozoColors.accent,
-                              ),
+                              align: TextAlign.center,
+                              onTap: _requestOtp,
                             ),
                           ),
                   ),
@@ -500,10 +508,33 @@ class _LoginFlowState extends State<LoginFlow> {
             _consentSection(),
           ],
         ),
-        bottom: _AuthButton(
-          t('c03.submit'),
-          busy: _busy,
-          onTap: _code.text.length == 5 && _consentPersonal ? _submit : null,
+        // Строка «Без этого согласия войти не получится» лежала в словаре и
+        // на экран не выводилась: человек видел серую кнопку, обязательную
+        // галочку 24×24 и ни слова о связи между ними
+        bottom: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_code.text.length == 5 && !_consentPersonal) ...[
+              Text(
+                t('c04.required'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: authHint),
+              ),
+              const SizedBox(height: SozoSpace.s8),
+            ] else if (_code.text.length < 5) ...[
+              Text(
+                t('c03.needCode'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: authHint),
+              ),
+              const SizedBox(height: SozoSpace.s8),
+            ],
+            _AuthButton(
+              t('c03.submit'),
+              busy: _busy,
+              onTap: _code.text.length == 5 && _consentPersonal ? _submit : null,
+            ),
+          ],
         ),
       ),
     );
@@ -517,7 +548,7 @@ class _LoginFlowState extends State<LoginFlow> {
         children: [
           Text(
             t('c04.intro'),
-            style: const TextStyle(fontSize: 12, height: 22 / 12, color: authHint),
+            style: const TextStyle(fontSize: 14, height: 1.5, color: authHint),
           ),
           const SizedBox(height: SozoSpace.s12),
           Container(
@@ -549,7 +580,7 @@ class _LoginFlowState extends State<LoginFlow> {
                 ),
                 Text(
                   t('c04.marketingNote'),
-                  style: const TextStyle(fontSize: 13, height: 19 / 13, color: authHint),
+                  style: const TextStyle(fontSize: 14, height: 1.45, color: authHint),
                 ),
               ],
             ),
@@ -602,6 +633,10 @@ class _LoginFlowState extends State<LoginFlow> {
 
 /// Переключатель языка (макет 165:4): белая пилюля с янтарной рамкой.
 ///
+/// Высота 44, а не 28 из макета, и со значком глобуса: для узбекоязычного
+/// человека это первый элемент, который ему нужен на первом экране, — и
+/// двухбуквенный код 12 sp в углу он не находил.
+///
 /// Раньше здесь стояли три ячейки с переезжающей подсветкой — на трёх языках
 /// это читалось как вкладки. Языков стало десять: в шапку заставки они не
 /// помещаются ни в строку, ни в две, а горизонтальная лента из десяти кодов
@@ -611,7 +646,7 @@ class _LoginFlowState extends State<LoginFlow> {
 class _LanguageSelector extends StatelessWidget {
   const _LanguageSelector();
 
-  static const _height = 28.0;
+  static const _height = 44.0;
 
   @override
   Widget build(BuildContext context) {
@@ -620,7 +655,7 @@ class _LanguageSelector extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Container(
         height: _height,
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s8),
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s12),
         decoration: BoxDecoration(
           color: SozoColors.surface,
           borderRadius: BorderRadius.circular(SozoRadius.chip),
@@ -630,15 +665,17 @@ class _LanguageSelector extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const FigmaIcon('globe', size: 16, color: authInk),
+            const SizedBox(width: SozoSpace.s4),
             Text(
               L10n.shortNames[l10n.code] ?? l10n.code.toUpperCase(),
               style: const TextStyle(
-                fontSize: 12,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
                 color: authInk,
               ),
             ),
-            const SizedBox(width: 2),
+            const SizedBox(width: SozoSpace.s4),
             // Стрелка вниз рисуется треугольником, а не иконкой: набор
             // figma-иконок подходящей нет, а Material-иконки в экранах
             // запрещены (DEV-12 правило 3)
@@ -831,29 +868,35 @@ class _ConsentRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Строка целиком — тап-зона не ниже 48: обязательная галочка 24×24
+    // с текстом 12 sp промахивалась пальцем, а без неё войти нельзя
     return GestureDetector(
       onTap: () => onChanged(!value),
       behavior: HitTestBehavior.opaque,
-      child: Row(
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: value ? SozoColors.accent : SozoColors.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: value ? SozoColors.accent : authCheckboxBorder, width: 1.5),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: SozoSize.buttonSecondary),
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: value ? SozoColors.accent : SozoColors.surface,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: value ? SozoColors.accent : authCheckboxBorder, width: 1.5),
+              ),
+              child: value ? const Center(child: FigmaIcon('check-12', size: 14, color: authInk)) : null,
             ),
-            child: value ? const Center(child: FigmaIcon('check-12', size: 12, color: authInk)) : null,
-          ),
-          const SizedBox(width: SozoSpace.s12),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(fontSize: 12, height: 22 / 12, color: authBodyInk),
+            const SizedBox(width: SozoSpace.s12),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 15, height: 1.45, color: authBodyInk),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

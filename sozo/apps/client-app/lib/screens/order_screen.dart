@@ -33,20 +33,43 @@ class OrderScreen extends StatefulWidget {
   State<OrderScreen> createState() => _OrderScreenState();
 }
 
-class _OrderScreenState extends State<OrderScreen> {
+class _OrderScreenState extends State<OrderScreen> with WidgetsBindingObserver {
   final _key = GlobalKey<AsyncViewState<Map<String, dynamic>>>();
   Timer? _poll;
 
   @override
   void initState() {
     super.initState();
-    // Пуш-уведомлений пока нет (FCM не подключён) — держим экран живым
-    // опросом: клиент не должен гадать, выехал мастер или нет
+    WidgetsBinding.instance.addObserver(this);
+    _startPolling();
+  }
+
+  /// Опрос раз в двадцать секунд: канал push поднят, но приложение открыто не
+  /// у всех и не всегда, а «мастер выехал» человек ждёт глядя в экран.
+  ///
+  /// Таймер привязан к жизненному циклу: в свёрнутом приложении опрашивать
+  /// сервер незачем — это трафик и батарея за экран, которого никто не видит.
+  void _startPolling() {
+    _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 20), (_) => _key.currentState?.reload());
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Вернулись к экрану — сначала свежие данные, потом обычный ритм:
+      // за время в фоне заявка могла уехать на два статуса вперёд
+      _key.currentState?.reload();
+      _startPolling();
+    } else {
+      _poll?.cancel();
+      _poll = null;
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     super.dispose();
   }
@@ -210,7 +233,7 @@ class _OrderBody extends StatelessWidget {
                               const SizedBox(height: 2),
                               Text(
                                 _masterLine(master),
-                                style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
+                                style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary),
                               ),
                             ],
                           ),
@@ -220,10 +243,10 @@ class _OrderBody extends StatelessWidget {
                     if (window != null)
                       Text(
                         t('c14.window', {'window': '${relativeDay(window['from'])} ${window['label']}'}),
-                        style: const TextStyle(fontSize: 14, color: SozoColors.text),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: SozoColors.text),
                       ),
                     // Телефона мастера нет — связь только через диспетчера (ТЗ 14)
-                    Text(t('c14.noMasterPhone'), style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
+                    Text(t('c14.noMasterPhone'), style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary)),
                   ],
                 ),
                 const SizedBox(height: SozoSpace.s12),
@@ -323,9 +346,10 @@ class _OrderBody extends StatelessWidget {
                 const SizedBox(height: SozoSpace.s12),
               ],
               // Жалоба и отмена разведены по краям: это не пара равных кнопок,
-              // а два разных выхода, и попасть в них случайно не должно
+              // а два разных выхода, и попасть в них случайно не должно.
+              // Разведены — но не спрятаны: тап-зона у обеих 48, а не 26
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: SozoSpace.s8),
+                padding: const EdgeInsets.symmetric(vertical: SozoSpace.s4),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -369,7 +393,7 @@ class _OrderBody extends StatelessWidget {
     final jobs = master['jobsDone'] as num?;
     return [
       if (rating != null) '★ ${rating.toStringAsFixed(1)}',
-      if (jobs != null) plural(jobs.toInt(), 'работа', 'работы', 'работ'),
+      if (jobs != null) plural(jobs.toInt(), 'plural.works'),
     ].join(' · ');
   }
 
@@ -404,7 +428,7 @@ class _OrderBody extends StatelessWidget {
         title: verdict ?? t('c22.inWork'),
         text: [
           if (verdict == null) t('c22.inWorkText'),
-          if (dispute['comment'] != null) dispute['comment'] as String,
+          if (dispute['comment'] != null) '${dispute['comment']}',
           if (refund > 0) t('c22.refund', {'sum': soums(refund)}),
         ].join(' · '),
       ));
@@ -863,11 +887,19 @@ class _FooterLink extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(SozoRadius.badge),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s4, vertical: SozoSpace.s4),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: SozoSize.buttonSecondary),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s8, vertical: SozoSpace.s8),
         child: Text(
           label,
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color),
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: color,
+            decoration: TextDecoration.underline,
+            decorationColor: color,
+          ),
         ),
       ),
     );

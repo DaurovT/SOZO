@@ -30,7 +30,27 @@ class PushService {
 
   /// Куда вести человека по тапу. Ставится приложением при старте: сам слой
   /// не знает ни про экраны, ни про навигацию.
-  void Function(String deepLink)? onDeepLink;
+  ///
+  /// Ссылка из холодного старта приходит **внутри** `init()`, то есть до того,
+  /// как приложение успевает сюда что-то присвоить: `_startPush` ставит колбэк
+  /// строкой ниже `await init()`. Из-за этого тап по «смета готова,
+  /// подтвердите» при убитом приложении открывал главную. Поэтому ссылка не
+  /// теряется, а ждёт получателя — и уходит ему в момент присваивания.
+  void Function(String deepLink)? get onDeepLink => _onDeepLink;
+
+  set onDeepLink(void Function(String deepLink)? handler) {
+    _onDeepLink = handler;
+    final pending = _pendingDeepLink;
+    if (handler != null && pending != null) {
+      _pendingDeepLink = null;
+      handler(pending);
+    }
+  }
+
+  void Function(String deepLink)? _onDeepLink;
+
+  /// Ссылка из холодного старта, для которой ещё нет получателя
+  String? _pendingDeepLink;
 
   /// Уведомление пришло, пока приложение открыто. Экран решает сам — показать
   /// плашку, обновить карточку заявки или промолчать.
@@ -143,7 +163,14 @@ class PushService {
 
   void _handleOpened(RemoteMessage m) {
     final deepLink = m.data['deepLink'] as String?;
-    if (deepLink != null && deepLink.isNotEmpty) onDeepLink?.call(deepLink);
+    if (deepLink == null || deepLink.isEmpty) return;
+    final handler = _onDeepLink;
+    if (handler != null) {
+      handler(deepLink);
+    } else {
+      // Получателя ещё нет — придержим до присваивания (см. `onDeepLink`)
+      _pendingDeepLink = deepLink;
+    }
   }
 
   void _handleForeground(RemoteMessage m) {

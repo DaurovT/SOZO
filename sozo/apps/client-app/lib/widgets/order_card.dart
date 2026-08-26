@@ -52,14 +52,22 @@ class OrderCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   (order['number'] as String?) ?? '',
-                  style: const TextStyle(fontSize: 13, color: authHint),
+                  style: const TextStyle(fontSize: 14, color: authHint),
                 ),
               ),
-              // Статус — цветным текстом, а не плашкой (248:2198): в списке из
-              // двадцати карточек плашки складываются в рябь
-              Text(
-                (order['statusLabel'] as String?) ?? status,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: statusColor(status)),
+              // Статус — плашкой, а не цветным текстом (в макете 248:2198 был
+              // текст). Причина простая: у «в работе» и «мастер выехал» цвет
+              // текста — тот же янтарь #FEB70F, то есть 1,75:1 на белом. Две
+              // самые частые строки списка были нечитаемы, а рябь от плашек —
+              // меньшая беда, чем невидимый статус
+              // Flexible, а не голый чип: длинная подпись статуса в Row
+              // получает бесконечную ширину и уезжает за карточку
+              Flexible(
+                child: TagChip(
+                  (order['statusLabel'] as String?) ?? status,
+                  bg: statusChipColors(status).bg,
+                  fg: statusChipColors(status).fg,
+                ),
               ),
             ],
           ),
@@ -69,7 +77,7 @@ class OrderCard extends StatelessWidget {
                 : ((order['description'] as String?) ?? '—'),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: authInk, height: 1.35),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: authInk, height: 1.35),
           ),
           // Порядок из макета (248:2203): деньги сразу под названием, метка
           // «ждёт решения» под ними, а адрес и мастер — в самом низу. Так
@@ -78,7 +86,7 @@ class OrderCard extends StatelessWidget {
             Text(
               range(order['totalFromTiyin'], order['totalToTiyin']),
               style: const TextStyle(
-                fontSize: 14,
+                fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: authInk,
                 fontFeatures: moneyFeatures,
@@ -99,16 +107,16 @@ class OrderCard extends StatelessWidget {
             ),
           Text(
             (order['address'] as String?) ?? '',
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, color: authHint),
+            style: const TextStyle(fontSize: 14, color: authHint),
           ),
           if (sub.isNotEmpty)
             Text(
               sub,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, color: authHint),
+              style: const TextStyle(fontSize: 14, color: authHint),
             ),
         ],
       ),
@@ -123,6 +131,7 @@ class CategoryTile extends StatelessWidget {
     required this.name,
     required this.priceFromTiyin,
     this.iconKey,
+    this.icon,
     this.onTap,
     this.selected = false,
   });
@@ -130,8 +139,13 @@ class CategoryTile extends StatelessWidget {
   /// Подпись для клиента: «Сантехника», а не «САНТЕХНИКА» из прайса
   final String name;
 
-  /// Исходное имя категории прайса — по нему подбирается иконка
+  /// Исходное имя категории прайса — по нему подбирается иконка,
+  /// если сервер своей не прислал
   final String? iconKey;
+
+  /// Значок категории с сервера. Он же решает, что показать: угадывание по
+  /// русским подстрокам держится до первого релиза прайса с другим написанием
+  final String? icon;
   final int priceFromTiyin;
   final VoidCallback? onTap;
   final bool selected;
@@ -168,7 +182,7 @@ class CategoryTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              if (iconFor(iconKey ?? name) case final icon?)
+              if (icon ?? iconFor(iconKey ?? name) case final glyph?)
                 Container(
                   width: 44,
                   height: 44,
@@ -176,7 +190,7 @@ class CategoryTile extends StatelessWidget {
                     color: SozoColors.accent.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(SozoRadius.tile),
                   ),
-                  child: Center(child: FigmaIcon(icon, size: 22, color: SozoColors.text)),
+                  child: Center(child: FigmaIcon(glyph, size: 22, color: SozoColors.text)),
                 )
               else
                 const SizedBox(height: 44),
@@ -185,14 +199,14 @@ class CategoryTile extends StatelessWidget {
                 _pretty(name),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.text),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: SozoColors.text),
               ),
               const SizedBox(height: 2),
               Text(
-                '${t('common.from')} ${soums(priceFromTiyin)}',
+                priceFrom(priceFromTiyin),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary, fontFeatures: moneyFeatures),
+                style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary, fontFeatures: moneyFeatures),
               ),
             ],
           ),

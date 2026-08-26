@@ -1,4 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Местоположение — только на шаге «куда ехать» и только по нажатию
+        «Найти меня». Фонового доступа не просим: приложение не следит за
+        человеком между заявками, и ACCESS_BACKGROUND_LOCATION здесь нет
+        намеренно — его наличие пришлось бы объяснять и Google Play, и людям.
+
+        COARSE рядом с FINE не запасной вариант, а честный минимум: на
+        Android 12+ человек может выдать только приблизительное место, и
+        приложение обязано с этим работать — для подъезда точности хватает.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
         android:label="SOZO"
         android:name="${applicationName}"

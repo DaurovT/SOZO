@@ -10,6 +10,7 @@ import '../store/session.dart';
 import '../widgets/app_chrome.dart';
 import '../widgets/blocks.dart';
 import '../widgets/photo_grid.dart';
+import 'complaints_screen.dart';
 
 /// C-15…C-18. Решения клиента по смете.
 ///
@@ -58,7 +59,17 @@ class _DecisionScreenState extends State<DecisionScreen> {
       showSozoToast(context, (r['message'] as String?) ?? t('common.done'));
       Navigator.of(context).pop();
     } on ApiError catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (!mounted) return;
+      // 409 — заявку успели поменять с другой стороны. Показывать «обновите
+      // экран» и оставлять человека с устаревшими данными нечестно: он не
+      // знает, что именно устарело. Закрываем экран, карточка заявки
+      // перечитает себя сама и покажет новое состояние
+      if (e.statusCode == 409) {
+        showSozoToast(context, e.message);
+        Navigator.of(context).pop();
+        return;
+      }
+      setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -277,7 +288,7 @@ class _DecisionScreenState extends State<DecisionScreen> {
               const SizedBox(height: SozoSpace.s8),
               Text(
                 t('c16.ifDecline'),
-                style: const TextStyle(fontSize: 13, height: 1.4, color: SozoColors.textSecondary),
+                style: const TextStyle(fontSize: 15, height: 1.4, color: SozoColors.textSecondary),
               ),
               _errorBox(),
             ],
@@ -354,7 +365,7 @@ class _DecisionScreenState extends State<DecisionScreen> {
                     Text(
                       '«${rec!['comment']}»',
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         height: 1.4,
                         fontStyle: FontStyle.italic,
                         color: SozoColors.text,
@@ -363,6 +374,26 @@ class _DecisionScreenState extends State<DecisionScreen> {
                   ],
                 ),
               ],
+              // «Пожаловаться на навязывание» лежала в словаре и на экран не
+              // выводилась: пожаловаться на давление было некуда — притом что
+              // единственное место, где давление вообще возможно, это оно
+              const SizedBox(height: SozoSpace.s8),
+              Center(
+                child: InlineLink(
+                  t('c17.complain'),
+                  align: TextAlign.center,
+                  onTap: _busy
+                      ? null
+                      : () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => ComplaintsScreen(
+                                orderId: widget.order['id'] as String?,
+                                orderNumber: widget.order['number'] as String?,
+                              ),
+                            ),
+                          ),
+                ),
+              ),
               _errorBox(),
             ],
           ),

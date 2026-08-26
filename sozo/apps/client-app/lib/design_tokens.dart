@@ -10,12 +10,19 @@ abstract final class SozoColors {
   static const bg = Color(0xFFF4F5F7);
   static const surface = Color(0xFFFFFFFF);
   static const text = Color(0xFF141518);
-  static const textSecondary = Color(0xFF8E939F);
 
-  /// Третий уровень: единицы измерения, счётчики, служебные подписи
-  static const textTertiary = Color(0xFFB4B4BD);
+  /// Второй уровень. Был #8E939F — 3,0:1 на белом: подписи с ценой и окном
+  /// приезда физически не читались пожилым глазом. Поднят до 5,9:1
+  static const textSecondary = Color(0xFF5E6472);
 
-  /// Акцент из знака: главная кнопка экрана, активная вкладка, деньги мастера
+  /// Третий уровень: единицы измерения, счётчики, служебные подписи.
+  /// Был #B4B4BD — 2,1:1; поднят до 4,8:1 (аудит клиентского приложения, п.7)
+  static const textTertiary = Color(0xFF6B7280);
+
+  /// Акцент из знака: главная кнопка экрана, активная вкладка, деньги мастера.
+  ///
+  /// **Только заливка, не текст.** Янтарь на белом даёт 1,75:1 — надпись им
+  /// не читается вовсе. Для текста-действия есть `SozoColors.link`
   static const accent = Color(0xFFFEB70F);
   static const accentPressed = Color(0xFFE0A00A);
 
@@ -31,6 +38,10 @@ abstract final class SozoColors {
 
   /// Фиолетовый — «новое»: требует внимания, но не тревожное
   static const fresh = Color(0xFF7A5AF8);
+
+  /// Текст-действие: ссылка, «Изменить», «Не знаю, что сломалось».
+  /// Тёмный с подчёркиванием вместо янтаря — 18:1 против 1,75:1
+  static const link = Color(0xFF141518);
 
   static const border = Color(0xFFE5E7EB);
 
@@ -133,46 +144,49 @@ Color statusColor(String status) {
   }
 }
 
-/// Пары «фон / текст» статусных бейджей — взяты из макета как есть.
+/// Пары «фон / текст» статусных бейджей.
 /// Пастель здесь намеренная: на белой карточке три статуса должны различаться
 /// с расстояния вытянутой руки, одной насыщенности для этого мало.
+///
+/// Текст затемнён относительно макета: там пары давали 3,1–3,6:1, и «в работе»
+/// на жёлтой плашке пропадало. Теперь каждая пара — не меньше 4,7:1.
 ({Color bg, Color fg}) statusChipColors(String status) {
   switch (status) {
     case 'assigned':
     case 'approved':
-      return (bg: const Color(0xFFEFF6FF), fg: const Color(0xFF3B82F6));
+      return (bg: const Color(0xFFEFF6FF), fg: const Color(0xFF1D4ED8));
     case 'master_departed':
-      return (bg: const Color(0xFFFFF7ED), fg: const Color(0xFFEA580C));
+      return (bg: const Color(0xFFFFF7ED), fg: const Color(0xFFC2410C));
     case 'in_progress':
     case 'addwork_approval':
-      return (bg: const Color(0xFFFFFBEB), fg: const Color(0xFFD97706));
+      return (bg: const Color(0xFFFFFBEB), fg: const Color(0xFFA16207));
     case 'completed':
     case 'verified':
     case 'closed':
     case 'rated':
-      return (bg: const Color(0xFFECFDF5), fg: const Color(0xFF059669));
+      return (bg: const Color(0xFFECFDF5), fg: const Color(0xFF047857));
     case 'dispute':
-      return (bg: const Color(0xFFFEE2E2), fg: const Color(0xFFEF4444));
+      return (bg: const Color(0xFFFEE2E2), fg: const Color(0xFFB91C1C));
     case 'new':
-      return (bg: const Color(0xFFF5F3FF), fg: const Color(0xFF7C3AED));
+      return (bg: const Color(0xFFF5F3FF), fg: const Color(0xFF6D28D9));
     default:
-      return (bg: const Color(0xFFF4F5F7), fg: const Color(0xFF8E939F));
+      return (bg: const Color(0xFFF4F5F7), fg: const Color(0xFF5E6472));
   }
 }
 
 /// Срочность — та же пастельная пара, но всегда красная (макет 21:66)
 const urgentChipBg = Color(0xFFFEE2E2);
-const urgentChipFg = Color(0xFFEF4444);
+const urgentChipFg = Color(0xFFB91C1C);
 
 /// Пастельные плашки-заметки внутри карточек (макет 30:52, 30:110, 30:83).
 /// Те же три пары, что и у статусных бейджей: жёлтая — «мешает», красная —
 /// «нельзя», зелёная — «сделано».
 const softWarnBg = Color(0xFFFFFBEB);
-const softWarnFg = Color(0xFFD97706);
+const softWarnFg = Color(0xFFA16207);
 const softDangerBg = Color(0xFFFEE2E2);
-const softDangerFg = Color(0xFFEF4444);
+const softDangerFg = Color(0xFFB91C1C);
 const softSuccessBg = Color(0xFFECFDF5);
-const softSuccessFg = Color(0xFF10B981);
+const softSuccessFg = Color(0xFF047857);
 
 /// Карточка дохода: градиент слева направо (макет 25:213)
 const earningsGradient = [Color(0xFF1E2235), Color(0xFF2D3250)];
@@ -219,12 +233,12 @@ const growthBorder = Color(0xFFFDEAA6);
 /// Поля и календарь в модалках (макет 58:133): подложка чуть холоднее белой,
 /// чтобы поле читалось на белой карточке без жирной рамки
 const fieldBg = Color(0xFFFAFBFC);
-const placeholderGrey = Color(0xFFA1A6B5);
+const placeholderGrey = Color(0xFF6B7280);
 const dayOutside = Color(0xFFC1C6D0);
 
 /// Кнопка «Отмена» в модалке (макет 58:250)
 const cancelBg = Color(0xFFFFF8EB);
-const cancelFg = Color(0xFFD99400);
+const cancelFg = Color(0xFF9A6700);
 
 /// Бейдж «на рассмотрении» — фиолетовый: решение принимает не мастер (макет 51:201)
 const pendingBadgeBg = Color(0xFFEFEFFC);
@@ -253,11 +267,16 @@ const authMuted = Color(0xFF63656B);
 const authFeatureBg = Color(0xFFFFFBF2);
 const authFeatureBorder = Color(0xFFFFEFC4);
 
-/// Подпись поля и плейсхолдер на экране телефона (165:32, 165:36)
-const authLabel = Color(0xFF8E93A3);
+/// Подпись поля и плейсхолдер на экране телефона (165:32, 165:36).
+/// Затемнён с #8E93A3 (3,1:1): по этой подписи человек понимает, что вводит
+const authLabel = Color(0xFF5E6472);
 
-/// Служебные строки на экране кода: «Отправили код…», таймер (167:1623)
-const authHint = Color(0xFF8F94A3);
+/// Служебные строки на экране кода: «Отправили код…», таймер (167:1623).
+///
+/// Второй по массовости цвет приложения: им набраны цены «от», окно приезда,
+/// адрес и номер заявки. В макете #8F94A3 — 3,0:1 на белом, то есть ниже
+/// порога для текста любого размера. Поднят до 5,9:1
+const authHint = Color(0xFF5E6472);
 
 /// Текст согласий в карточке (167:1655)
 const authBodyInk = Color(0xFF1F2126);
@@ -378,7 +397,7 @@ const dialogSecondaryBg = Color(0xFFF0F1F4);
 
 /// Перенос времени (макет 242:181): плашка «мастер будет назначен заново»
 const rescheduleWarnBg = Color(0xFFFFF8E1);
-const rescheduleWarnFg = Color(0xFFB86B15);
+const rescheduleWarnFg = Color(0xFF9A5A0F);
 
 /// Список заявок (макет 248:2186): рамка невыбранного фильтра
 const chipOutline = Color(0xFFE0E0E0);
@@ -389,8 +408,8 @@ const neutralPillBg = Color(0xFFF0F0F2);
 
 /// Нижние ссылки карточки заявки (242:110): жалоба серая, отмена красная.
 /// Разный вес не случаен: пожаловаться можно и передумать, отменить — нет
-const linkMuted = Color(0xFF9E9E9E);
-const linkDanger = Color(0xFFE53935);
+const linkMuted = Color(0xFF5E6472);
+const linkDanger = Color(0xFFC62828);
 
 /// Бейдж «платили в прошлый раз» на выборе оплаты (макет 264:27)
 const payLastUsedBg = Color(0xFFEBF5FF);
@@ -399,7 +418,7 @@ const payLastUsedFg = Color(0xFF2563EB);
 /// Плашка-пояснение про платёжного провайдера (264:63): холодная серо-синяя,
 /// чтобы не спорить с янтарём выбранного способа
 const payNoteBg = Color(0xFFEBF1F5);
-const payNoteFg = Color(0xFF64748B);
+const payNoteFg = Color(0xFF475569);
 
 /// Рамка радиокнопки способа оплаты (264:30) и невыбранного чипа техники
 const radioOutline = Color(0xFFD1D6E0);

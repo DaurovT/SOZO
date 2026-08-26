@@ -70,9 +70,11 @@ class EquipmentScreen extends StatelessWidget {
     final history = ((a['history'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final last = a['lastServiceAt'] as String?;
     final period = _periodDays(type);
-    final sinceDays = last == null
-        ? null
-        : DateTime.now().difference(DateTime.tryParse(last) ?? DateTime.now()).inDays;
+    // Через `tashkent`/`nowTashkent`, а не через `DateTime.now()`: строка с
+    // сервера может приехать со смещением, и разница по абсолютной шкале
+    // сдвигает счётчик дней на сутки у всех, кто смотрит вечером
+    final lastAt = last == null ? null : tashkent(last);
+    final sinceDays = lastAt == null ? null : nowTashkent().difference(lastAt).inDays;
     final due = sinceDays != null && sinceDays >= period;
     final linked = ((a['linkedWork'] as List?) ?? const []).cast<String>();
 
@@ -120,7 +122,7 @@ class EquipmentScreen extends StatelessWidget {
             icon: 'clock',
             tone: BannerTone.warn,
             title: t('c28.dueTitle'),
-            text: t('c28.dueText', {'days': plural(sinceDays, 'день', 'дня', 'дней')}),
+            text: t('c28.dueText', {'days': plural(sinceDays, 'plural.days')}),
             actionLabel: t('c28.book'),
             onAction: () async {
               await Navigator.of(context).push<String>(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +18,7 @@ class Session extends ChangeNotifier {
   static const _kBase = 'sozo_client_base';
   static const _kContext = 'sozo_client_context';
   static const _kRemember = 'sozo_client_remember_context';
+  static const _kMe = 'sozo_client_me';
 
   /// Адрес сервера. По умолчанию — боевой, поэтому обычная сборка без флагов
   /// уже ходит на него. Перекрывается при сборке: `--dart-define=SOZO_API=...`
@@ -24,7 +26,17 @@ class Session extends ChangeNotifier {
   /// меняется долгим нажатием по версии на первом экране.
   static const defaultBase = String.fromEnvironment('SOZO_API', defaultValue: 'https://api.sozo.uz');
 
-  late ApiClient api = ApiClient(baseUrl: defaultBase);
+  /// HTTP-клиент. **Один на всё время жизни приложения.**
+  ///
+  /// Раньше `load()` заменял его новым, и всё, что успело взять ссылку на
+  /// прежний, оставалось с клиентом без токена и с адресом по умолчанию.
+  /// Порядок вызовов в `main()` от этого спасал случайно: `PushService`
+  /// захватывает клиент в поле инициализации, то есть при первом обращении к
+  /// `session.push` — стоило тронуть push до `load()`, и регистрация
+  /// устройства навсегда уходила бы неавторизованной.
+  ///
+  /// Теперь `load()` меняет у клиента адрес и токен, а не сам клиент.
+  final ApiClient api = ApiClient(baseUrl: defaultBase);
 
   /// Канал push. Живёт рядом с сессией, потому что привязан к ней: токен
   /// устройства регистрируется за вошедшим человеком и снимается при выходе.
@@ -82,9 +94,25 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Предложение простого режима на главной уже отклоняли.
+  ///
+  /// Предлагаем его тому, у кого крупный системный шрифт, — и ровно один раз:
+  /// повторное предложение того же самого читается как «приложение считает
+  /// меня старым», а это худшее, что можно сделать с этим экраном.
+  bool _simpleModeDeclined = false;
+  bool get simpleModeDeclined => _simpleModeDeclined;
+
+  Future<void> declineSimpleMode() async {
+    _simpleModeDeclined = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sozo_simple_mode_declined', true);
+    notifyListeners();
+  }
+
   Future<void> loadSimpleMode() async {
     final prefs = await SharedPreferences.getInstance();
     _simpleMode = prefs.getBool('sozo_simple_mode') ?? false;
+    _simpleModeDeclined = prefs.getBool('sozo_simple_mode_declined') ?? false;
   }
 
   /// Заявки для простого режима: статус словами, без кодов и цветов
@@ -103,15 +131,68 @@ class Session extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    api = ApiClient(
-      baseUrl: prefs.getString(_kBase) ?? defaultBase,
-      token: prefs.getString(_kToken),
-    );
+    api.baseUrl = prefs.getString(_kBase) ?? defaultBase;
+    api.token = prefs.getString(_kToken);
+    // Протухший токен выбрасывает на вход из любого места приложения, а не
+    // только с экрана выбора контекста
+    api.onUnauthorized = _onUnauthorized;
     phone = prefs.getString(_kPhone);
+    // Профиль из кеша — до сети. Свежий приедет следом и заменит его; если не
+    // приедет, человек увидит вчерашний профиль вместо пустого приложения
+    if (api.token != null) _restoreMe(prefs);
     contextId = prefs.getString(_kContext);
     rememberContext = prefs.getBool(_kRemember) ?? false;
     contextChosen = rememberContext;
+    // Простой режим — тоже часть восстановления. Без этой строки он жил до
+    // первого закрытия приложения: человек, которому его включил сын,
+    // на следующий день открывал обычный интерфейс
+    await loadSimpleMode();
     notifyListeners();
+  }
+
+  /// Профиль в кеше.
+  ///
+  /// Без него холодный старт без сети давал пустое приложение: `me` остаётся
+  /// null, ошибка при офлайне сознательно не показывается («экраны покажут
+  /// кеш»), и оболочка строится ни на чём. Житель открывает приложение в
+  /// лифте — раздела «Мой дом» нет, имя пустое, долг ноль. Читается это не как
+  /// «нет сети», а как «у меня всё удалили».
+  ///
+  /// Кеша, о котором говорил тот комментарий, не существовало нигде: загрузка
+  /// сессии читала только токен, телефон, адрес сервера и контекст.
+  Future<void> _cacheMe() async {
+    final data = me;
+    if (data == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kMe, jsonEncode(data));
+    } catch (_) {
+      // Профиль не влез в хранилище — не повод ронять экран
+    }
+  }
+
+  void _restoreMe(SharedPreferences prefs) {
+    final raw = prefs.getString(_kMe);
+    if (raw == null) return;
+    try {
+      me = (jsonDecode(raw) as Map).cast<String, dynamic>();
+    } catch (_) {
+      // Кеш от старого формата — ведём себя так, будто его нет
+    }
+  }
+
+  /// Реакция на 401. Асинхронный выход запускаем, но не ждём: зовут нас из
+  /// разбора ответа, посреди чужого запроса, и блокировать его нечем.
+  ///
+  /// Повторные 401 (их прилетит столько, сколько экранов успело запросить
+  /// данные) гасим флагом: иначе выход зовётся десять раз подряд и десять раз
+  /// дёргает `notifyListeners`.
+  bool _signingOut = false;
+
+  void _onUnauthorized() {
+    if (_signingOut || api.token == null) return;
+    _signingOut = true;
+    unawaited(signOut().whenComplete(() => _signingOut = false));
   }
 
   Future<void> setBaseUrl(String url) async {
@@ -147,12 +228,16 @@ class Session extends ChangeNotifier {
     await prefs.remove(_kToken);
     await prefs.remove(_kContext);
     await prefs.remove(_kRemember);
+    // Профиль уходит вместе с сессией: следующий человек на этом аппарате не
+    // должен увидеть чужое имя и чужой долг
+    await prefs.remove(_kMe);
     notifyListeners();
   }
 
   /// Обновляет профиль. Ошибку не глотаем — экран решает, что показать.
   Future<void> refreshMe() async {
     me = await api.me();
+    unawaited(_cacheMe());
     // Контекст мог исчезнуть (403 «Доступ изменён») — тогда возвращаемся в личный
     if (contextId != null && currentContext == null) {
       contextId = null;
@@ -220,6 +305,30 @@ class OrderDraft {
   String? promoCode;
   int promoDiscountPercent = 0;
 
+  /// Ключ идемпотентности этой попытки создать заявку.
+  ///
+  /// Заводится вместе с черновиком и переживает его сохранение. Нужен ровно
+  /// для одного случая: запрос ушёл, сервер заявку создал, ответ не доехал
+  /// (12 секунд таймаута на мобильном интернете — обычное дело). Человек
+  /// видит «сервер не ответил», жмёт «Отправить» ещё раз — и без этого ключа
+  /// получает вторую заявку на тот же адрес. Проверка дубля за сутки ловит не
+  /// всё и требует ручного решения от человека, который только что испугался.
+  String idempotencyKey = newIdempotencyKey();
+
+  /// Свой генератор вместо пакета uuid: одна зависимость ради одной строки не
+  /// окупается. Времени и 64 случайных бит достаточно, чтобы два черновика на
+  /// одном устройстве не совпали
+  static String newIdempotencyKey() {
+    final r = Random.secure();
+    final rnd = List<int>.generate(8, (_) => r.nextInt(256))
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-$rnd';
+  }
+
+  /// Новая попытка после успешной отправки: следующая заявка — другая заявка
+  void renewIdempotencyKey() => idempotencyKey = newIdempotencyKey();
+
   bool get isEmpty =>
       items.isEmpty && description.isEmpty && photos.isEmpty && address.isEmpty;
 
@@ -245,6 +354,7 @@ class OrderDraft {
         'slotTo': slotTo,
         'promoCode': promoCode,
         'promoDiscountPercent': promoDiscountPercent,
+        'idempotencyKey': idempotencyKey,
       };
 
   static OrderDraft fromJson(Map<String, dynamic> j) {
@@ -270,7 +380,46 @@ class OrderDraft {
     d.slotTo = j['slotTo'] as String?;
     d.promoCode = j['promoCode'] as String?;
     d.promoDiscountPercent = (j['promoDiscountPercent'] as num?)?.toInt() ?? 0;
+    // Черновик от версии без ключа — ключ уже создан конструктором
+    d.idempotencyKey = (j['idempotencyKey'] as String?) ?? d.idempotencyKey;
     return d;
+  }
+
+  /// Перенести всё из восстановленного черновика в рабочий.
+  ///
+  /// **Список полей здесь обязан совпадать с `toJson`.** Раньше перенос жил
+  /// в экране визарда и копировал 14 полей из 21: молча терялись аварийность,
+  /// идентификатор выбранного адреса, «сохранить адрес» и все четыре ответа
+  /// чек-листа доступа. Человек заполнял чек-лист, выбирал сохранённый адрес,
+  /// выходил и возвращался — адрес превращался в свободный текст без
+  /// координат, ответы обнулялись, аварийная заявка становилась обычной.
+  /// И увидеть это было негде: экран итога показывает адрес строкой, а
+  /// аварийность и чек-лист на нём не подписаны.
+  ///
+  /// Расхождение сторожит `test/draft_roundtrip_test.dart`.
+  void copyFrom(OrderDraft d) {
+    items = d.items;
+    category = d.category;
+    description = d.description;
+    emergency = d.emergency;
+    photos = d.photos;
+    address = d.address;
+    lat = d.lat;
+    lng = d.lng;
+    saveAddress = d.saveAddress;
+    addressId = d.addressId;
+    floor = d.floor;
+    hasLift = d.hasLift;
+    needRiser = d.needRiser;
+    needCommonArea = d.needCommonArea;
+    accessConfirmed = d.accessConfirmed;
+    accessAt = d.accessAt;
+    timeMode = d.timeMode;
+    slotFrom = d.slotFrom;
+    slotTo = d.slotTo;
+    promoCode = d.promoCode;
+    promoDiscountPercent = d.promoDiscountPercent;
+    idempotencyKey = d.idempotencyKey;
   }
 
   Future<void> save() async {

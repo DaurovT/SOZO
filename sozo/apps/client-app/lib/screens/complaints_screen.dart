@@ -117,7 +117,7 @@ class ComplaintsScreen extends StatelessWidget {
           style: const TextStyle(fontSize: 12, color: SozoColors.textTertiary),
         ),
         if ((c['resolution'] as String?)?.isNotEmpty ?? false)
-          SozoBanner(icon: 'check-done', tone: BannerTone.success, text: c['resolution'] as String),
+          SozoBanner(icon: 'check-done', tone: BannerTone.success, text: (c['resolution'] as String?) ?? ''),
       ],
     );
   }

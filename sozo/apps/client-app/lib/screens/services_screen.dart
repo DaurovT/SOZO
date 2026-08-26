@@ -49,7 +49,9 @@ class _ServicesScreenState extends State<ServicesScreen> {
               ? const <Map<String, dynamic>>[]
               : cats
                   .expand((c) => ((c['items'] as List?) ?? const []).cast<Map<String, dynamic>>())
-                  .where((i) => (i['name'] as String).toLowerCase().contains(q))
+                  // `as String?`, а не `as String`: позиция прайса без имени
+                  // роняла экран услуг ровно в момент набора в поиске
+                  .where((i) => ((i['name'] as String?) ?? '').toLowerCase().contains(q))
                   .take(30)
                   .toList();
 
@@ -94,10 +96,12 @@ class _ServicesScreenState extends State<ServicesScreen> {
                 child: Text(
                   t('services.priceNote'),
                   textAlign: TextAlign.center,
+                  // Курсив 12 sp — оговорка про то, из чего складывается цена.
+                  // Её читают именно те, кто сомневается; курсивом мелким
+                  // кеглем её не читает никто
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     height: 1.5,
-                    fontStyle: FontStyle.italic,
                     color: authHint,
                   ),
                 ),
@@ -116,14 +120,17 @@ class _ServicesScreenState extends State<ServicesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Город — подпись, а не выбор: обработчика у него нет и не было,
+          // города в системе один. Шеврон вниз обещал список и обещание не
+          // выполнял, поэтому вместо него значок места
           Row(
             children: [
+              const FigmaIcon('map-pin', size: 14, color: authHint),
+              const SizedBox(width: 4),
               Text(
                 t('services.city'),
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: authHint),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: authHint),
               ),
-              const SizedBox(width: 4),
-              const FigmaIcon('chevron-down', size: 12, color: authHint),
             ],
           ),
           const SizedBox(height: 4),
@@ -251,10 +258,10 @@ class _ServicesScreenState extends State<ServicesScreen> {
                     if (((c['hint'] as String?) ?? '').isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
-                        c['hint'] as String,
-                        maxLines: 1,
+                        (c['hint'] as String?) ?? '',
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: authHint),
+                        style: const TextStyle(fontSize: 14, color: authHint),
                       ),
                     ],
                   ],
@@ -262,12 +269,12 @@ class _ServicesScreenState extends State<ServicesScreen> {
               ),
               const SizedBox(width: SozoSpace.s12),
               Text(
-                '${t('common.from')} ${soums(c['priceFromTiyin'])}',
+                priceFrom(c['priceFromTiyin']),
                 textAlign: TextAlign.right,
                 style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: SozoColors.accent,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: authInk,
                   fontFeatures: moneyFeatures,
                 ),
               ),
@@ -299,10 +306,10 @@ class _ServicesScreenState extends State<ServicesScreen> {
                       ),
                       const SizedBox(width: SozoSpace.s12),
                       Text(
-                        '${t('common.from')} ${soums(i['priceFromTiyin'])}',
+                        priceFrom(i['priceFromTiyin']),
                         textAlign: TextAlign.right,
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 15,
                           fontWeight: FontWeight.w700,
                           color: authInk,
                           fontFeatures: moneyFeatures,
@@ -343,7 +350,7 @@ class _ServicesScreenState extends State<ServicesScreen> {
                         const SizedBox(height: 3),
                         Text(
                           i['isStaged'] == true ? t('c07.staged') : t('c07.paired'),
-                          style: const TextStyle(fontSize: 12, color: authHint),
+                          style: const TextStyle(fontSize: 14, color: authHint),
                         ),
                       ],
                     ],
@@ -351,11 +358,11 @@ class _ServicesScreenState extends State<ServicesScreen> {
                 ),
                 const SizedBox(width: SozoSpace.s12),
                 Text(
-                  '${t('common.from')} ${soums(i['priceFromTiyin'])}',
+                  priceFrom(i['priceFromTiyin']),
                   style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: SozoColors.accent,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: authInk,
                     fontFeatures: moneyFeatures,
                   ),
                 ),

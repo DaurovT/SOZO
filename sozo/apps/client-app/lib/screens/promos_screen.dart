@@ -76,7 +76,9 @@ class _PromosScreenState extends State<PromosScreen> {
                 // Приветственный код показываем сами, а не ждём, что человек
                 // его где-то найдёт: скидка, о которой не сказали, никого
                 // не приводит
-                if (welcome != null) ...[
+                // Код без строки — не карточка: `as String` на пустом поле
+                // ронял весь экран кошелька
+                if (welcome != null && (welcome['code'] as String?)?.isNotEmpty == true) ...[
                   _WelcomeCard(
                     code: welcome['code'] as String,
                     percent: (welcome['discountPercent'] as num?)?.toInt() ?? 0,
@@ -92,7 +94,7 @@ class _PromosScreenState extends State<PromosScreen> {
                   EmptyState(icon: 'star', text: t('promo.empty'))
                 else
                   for (final p in items) ...[
-                    _PromoCard(promo: p, onRemove: () => _remove(p['code'] as String)),
+                    _PromoCard(promo: p, onRemove: () => _remove('${p['code'] ?? ''}')),
                     const SizedBox(height: SozoSpace.s8),
                   ],
 

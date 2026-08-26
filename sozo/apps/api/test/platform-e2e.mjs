@@ -177,7 +177,7 @@ async function main() {
   const after1 = (await call('/admin/scheduler', { token: t, method: 'GET' })).body;
   check('прогоны попали в журнал', after1.runs.length >= runs.length, `${after1.runs.length}`);
 
-  const sim = (await call('/admin/scheduler/simulate', { token: t, body: { days: 2 } })).body;
+  const sim = (await call('/admin/scheduler/simulate', { token: t, body: { days: 2, apply: true } })).body;
   check('холостой прогон на два дня отработал', sim.days === 2 && Array.isArray(sim.runs), JSON.stringify(sim).slice(0, 100));
   check('прогон дней вперёд тоже помечен ручным', (sim.runs ?? []).every((r) => r.manual === true),
     JSON.stringify((sim.runs ?? []).map((r) => r.manual)).slice(0, 80));

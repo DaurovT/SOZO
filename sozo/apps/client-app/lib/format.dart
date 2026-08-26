@@ -5,11 +5,18 @@ import 'i18n.dart';
 
 const _nbsp = ' '; // неразрывный пробел: сумма не должна рваться переносом
 
-/// Сумма из тиынов: «1 250 000 сум». Копеек нет, округление до 100 сум.
+/// Сумма из тиынов: «1 250 000 сум». Копеек нет — округляем до целого сума.
+///
+/// **До сотни округлять нельзя.** Так было раньше, и на экране оплаты это
+/// давало прямую ложь: к списанию 128 950, на экране «129 000», списывалось
+/// 128 950. Сервер считает точно (`client-orders.controller`, `amountTiyin`),
+/// приложение мастера показывает точно — расходился только клиент, и ровно
+/// там, где человек читает число как обещание. Разница в полсотни сумов
+/// ничего не стоит, а «мне показали не ту сумму» стоит доверия к чеку.
 String soums(Object? tiyin, {bool withUnit = true}) {
   final v = _num(tiyin);
   if (v == null) return '—';
-  final rounded = (v / 10000).round() * 100; // тиыны → сумы с округлением до сотни
+  final rounded = (v / 100).round(); // тиыны → сумы, копеек в обороте нет
   final sign = rounded < 0 ? '−' : ''; // именно минус, а не дефис (DEV-08 §1)
   final digits = rounded.abs().toString();
   final buf = StringBuffer();
@@ -20,48 +27,102 @@ String soums(Object? tiyin, {bool withUnit = true}) {
   return '$sign$buf${withUnit ? '$_nbsp${t('common.soums')}' : ''}';
 }
 
-/// Вилка «от 150 000 до 300 000 сум»; при равных краях — просто сумма
+/// Цена «от»: «от 80 000 сум» по-русски, «80 000 soʻmdan» по-узбекски.
+///
+/// Через ключ-фразу, а не склейкой «предлог + сумма»: в узбекском «от» — это
+/// суффикс `-dan`, и склейка спереди давала «dan 80 000 soʻm». Строка эта —
+/// самая частая в приложении, она стоит на каждой плитке каталога.
+String priceFrom(Object? tiyin) => t('common.priceFrom', {'p1': soums(tiyin)});
+
+/// Вилка «от 150 000 до 300 000 сум»; при равных краях — просто сумма.
+///
+/// Нулевая вилка — не «от 0 сум», а прочерк: ноль в строке «Итого» человек
+/// читает как обещание бесплатной работы. Пустой состав заявки объясняется
+/// словами на самом экране, а не суммой (см. C-13).
 String range(Object? fromTiyin, Object? toTiyin) {
   final f = _num(fromTiyin), tt = _num(toTiyin);
   if (f == null) return '—';
-  if (tt == null || tt <= f) return '${t('common.from')}$_nbsp${soums(f)}';
-  return '${t('common.from')}$_nbsp${soums(f, withUnit: false)} до ${soums(tt)}';
+  if (f <= 0 && (tt == null || tt <= 0)) return '—';
+  if (tt == null || tt <= f) return priceFrom(f);
+  return t('common.priceRange', {'p1': soums(f, withUnit: false), 'p2': soums(tt)});
 }
 
 num? _num(Object? v) => v is num ? v : (v == null ? null : num.tryParse('$v'));
 
-/// «16:00» из ISO-строки. Обрезаем строку, а не парсим в DateTime:
-/// сервер отдаёт местное время Ташкента, а перевод в UTC сдвинул бы окно.
+// ---------------------------------------------------------------------------
+// Время. Одно правило на весь файл, а не два разных.
+//
+// Раньше половина функций резала ISO-строку по символам (`substring(11, 16)`),
+// половина парсила её в `DateTime`, а `window` склеивала оба подхода. Пока
+// сервер отдавал местное время без смещения, результат совпадал — и совпадение
+// это держалось на честном слове. Как только на сервере появляется явный
+// Ташкент (`common/tz.ts`) и строки приезжают с `Z` или `+05:00`, срез строки
+// показывает час по Гринвичу, а `DateTime` — по часам устройства: окно приезда
+// уезжает на пять часов, а дата — на сутки у всех, кто читает вечером.
+//
+// Поэтому всё идёт через одну функцию: строка приводится к ташкентскому
+// настенному времени, и только потом из него достаются часы, дата и разница.
+
+/// Ташкент — UTC+5 круглый год: перевод часов в Узбекистане отменён в 1995-м,
+/// летнего времени нет. Поэтому смещение — константа, а не база часовых поясов:
+/// тянуть `timezone` ради одного города дороже, чем эта строка.
+const _tashkent = Duration(hours: 5);
+
+/// Настенные часы Ташкента как `DateTime`.
+///
+/// Помечаем результат как UTC — не потому, что это UTC, а чтобы обе стороны
+/// вычитания были одного сорта: разница между «UTC-меченым» и локальным
+/// временем считается по абсолютной шкале и даёт лишние пять часов.
+DateTime _wall(DateTime d) => DateTime.utc(d.year, d.month, d.day, d.hour, d.minute, d.second);
+
+/// Разбор ISO-строки в ташкентское настенное время.
+///
+/// Со смещением (`Z`, `+05:00`) `DateTime.parse` отдаёт UTC — переводим в
+/// Ташкент. Без смещения сервер прислал уже ташкентское время — берём как есть.
+DateTime? tashkent(Object? iso) {
+  final d = DateTime.tryParse(iso?.toString() ?? '');
+  if (d == null) return null;
+  return _wall(d.isUtc ? d.add(_tashkent) : d);
+}
+
+/// «Сейчас» по Ташкенту, независимо от часового пояса устройства: человек в
+/// командировке смотрит на окно приезда мастера, а не на свои часы
+DateTime nowTashkent() => _wall(DateTime.now().toUtc().add(_tashkent));
+
+/// «16:00» из ISO-строки
 String hhmm(Object? iso) {
-  final s = iso?.toString() ?? '';
-  return s.length >= 16 ? s.substring(11, 16) : '—';
+  final d = tashkent(iso);
+  return d == null ? '—' : '${_two(d.hour)}:${_two(d.minute)}';
 }
 
+/// «2026-08-24» — машинный вид даты для запросов и ключей
 String ymd(Object? iso) {
-  final s = iso?.toString() ?? '';
-  return s.length >= 10 ? s.substring(0, 10) : '—';
+  final d = tashkent(iso);
+  return d == null ? '—' : '${d.year}-${_two(d.month)}-${_two(d.day)}';
 }
 
-const _months = [
-  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-];
+String _two(int v) => v.toString().padLeft(2, '0');
+
+/// Месяц в форме, в которой он стоит в дате: «25 июля», «25-iyul».
+/// Из словаря, а не из константы в коде: русские месяцы посреди узбекского
+/// интерфейса — самая заметная строка, которая выдаёт непереведённое приложение
+String monthName(int month) => t('date.month${month < 1 || month > 12 ? 1 : month}');
 
 /// «25 июля» / «25 июля 2026» — год добавляется только для прошлого года
 String dayMonth(Object? iso, {bool withYear = false}) {
-  final d = DateTime.tryParse(iso?.toString() ?? '');
+  final d = tashkent(iso);
   if (d == null) return '—';
-  final s = '${d.day} ${_months[d.month - 1]}';
-  return withYear || d.year != DateTime.now().year ? '$s ${d.year}' : s;
+  final s = t('date.dayMonth', {'d': d.day, 'month': monthName(d.month)});
+  return withYear || d.year != nowTashkent().year ? t('date.withYear', {'date': s, 'year': d.year}) : s;
 }
 
 /// «сегодня», «завтра», «25 июля» — относительный формат DEV-08 §1
 String relativeDay(Object? iso) {
-  final d = DateTime.tryParse(iso?.toString() ?? '');
+  final d = tashkent(iso);
   if (d == null) return '—';
-  final now = DateTime.now();
-  final days = DateTime(d.year, d.month, d.day)
-      .difference(DateTime(now.year, now.month, now.day))
+  final now = nowTashkent();
+  final days = DateTime.utc(d.year, d.month, d.day)
+      .difference(DateTime.utc(now.year, now.month, now.day))
       .inDays;
   if (days == 0) return t('common.today');
   if (days == 1) return t('common.tomorrow');
@@ -78,20 +139,29 @@ String window(Object? fromIso, Object? toIso) {
 
 /// «через 15 мин» / «~16:40» — прогноз приезда
 String eta(Object? iso) {
-  final d = DateTime.tryParse(iso?.toString() ?? '');
+  final d = tashkent(iso);
   if (d == null) return '—';
-  final mins = d.difference(DateTime.now()).inMinutes;
-  if (mins <= 0) return 'уже скоро';
-  if (mins < 60) return 'через $mins мин';
-  return '~${hhmm(iso)}';
+  final mins = d.difference(nowTashkent()).inMinutes;
+  if (mins <= 0) return t('common.verySoon');
+  if (mins < 60) return t('common.inMinutes', {'n': mins});
+  return t('common.aboutAt', {'time': hhmm(iso)});
 }
 
-/// Русские формы множественного числа: 1 заявка / 2 заявки / 5 заявок
-String plural(int n, String one, String few, String many) {
+/// Счётное существительное из словаря: «1 заявка / 2 заявки / 5 заявок»,
+/// «1 ta ariza / 5 ta ariza», «1 request / 5 requests».
+///
+/// Формы лежат в словаре тремя ключами `<key>.one|few|many` — русское правило
+/// выбирает между всеми тремя, остальные языки различают только единственное
+/// и множественное. Раньше формы стояли строками прямо в вызове, и на
+/// узбекском интерфейсе счётчики оставались русскими.
+String plural(int n, String key) => t('$key.${_pluralForm(n)}', {'n': n});
+
+String _pluralForm(int n) {
+  if (l10n.code != 'ru') return n == 1 ? 'one' : 'many';
   final n10 = n % 10, n100 = n % 100;
-  if (n10 == 1 && n100 != 11) return '$n $one';
-  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return '$n $few';
-  return '$n $many';
+  if (n10 == 1 && n100 != 11) return 'one';
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'few';
+  return 'many';
 }
 
 /// «+998 90 123-45-67» из «+998901234567»

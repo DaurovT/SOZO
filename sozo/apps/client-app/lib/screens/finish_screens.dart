@@ -114,7 +114,7 @@ class FinishScreenBody extends StatelessWidget {
                         label: (m['name'] as String?) ?? '',
                         sub: [
                           if (m['kind'] == 'consumable') t('c19.consumable'),
-                          if (m['priceTier'] != null) _tierLabel(m['priceTier'] as String),
+                          if (m['priceTier'] != null) _tierLabel('${m['priceTier']}'),
                         ].join(' · '),
                         amount: soums(m['amountTiyin']),
                       ),
@@ -267,7 +267,7 @@ class FinishScreenBody extends StatelessWidget {
   }
 
   Widget _warrantyBlock(String until) {
-    final left = DateTime.tryParse(until)?.difference(DateTime.now()).inDays ?? 0;
+    final left = tashkent(until)?.difference(nowTashkent()).inDays ?? 0;
     final expired = left < 0;
     return SozoBanner(
       icon: 'shield-check',
@@ -275,7 +275,7 @@ class FinishScreenBody extends StatelessWidget {
       title: expired ? t('c25.warrantyExpired') : t('c25.warrantyUntil', {'date': dayMonth(until)}),
       text: expired
           ? t('c25.warrantyExpiredText')
-          : t('c25.warrantyLeft', {'days': plural(left, 'день', 'дня', 'дней')}),
+          : t('c25.warrantyLeft', {'days': plural(left, 'plural.days')}),
     );
   }
 
@@ -394,6 +394,13 @@ class _PaymentMethodsState extends State<PaymentMethods> {
   List<Map<String, dynamic>> _promos = const [];
   String? _promoCode;
   int _promoPercent = 0;
+
+  /// Подпись способа оплаты для диалога подтверждения
+  String _providerLabel(String provider) {
+    final found = _ordered.where((p) => p.$1 == provider).firstOrNull;
+    final label = found?.$2 ?? provider;
+    return label.startsWith('c20.') ? t(label) : label;
+  }
 
   /// Скидка считается от работ, а не от итога: материалы идут по чекам
   int get _worksTiyin => ((widget.order['totalFromTiyin'] as num?) ?? 0).toInt();
@@ -527,6 +534,18 @@ class _PaymentMethodsState extends State<PaymentMethods> {
 
   Future<void> _pay(String provider) async {
     if (_busy) return; // двойной тап по способу игнорируется (идемпотентность)
+    // Спрашиваем до отправки. Раньше платёж уходил на сервер от одного тапа
+    // по строке способа — а строки эти стоят в списке подряд, и промах пальцем
+    // означал начатый платёж. Наличные подтверждаем тоже: это выбор, о котором
+    // узнает мастер
+    final label = provider == 'cash' ? t('c20.cash') : _providerLabel(provider);
+    final ok = await showSozoConfirm(
+      context,
+      title: t('c20.confirmTitle'),
+      text: t('c20.confirmText', {'sum': soums(_payTiyin), 'method': label}),
+      confirmLabel: t('c20.confirmPay'),
+    );
+    if (!ok || !mounted) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -535,23 +554,43 @@ class _PaymentMethodsState extends State<PaymentMethods> {
     try {
       final r = await session.api.pay(widget.order['id'] as String, provider, promoCode: _promoCode);
       final status = ((r['payment'] as Map?)?['status'] as String?) ?? 'pending';
+      // Оплата больше не подтверждает приёмку.
+      //
+      // Раньше сервер проставлял `acceptance` внутри `pay`, и приложение
+      // считало то же самое: один вызов оплаты снимал приёмочный гейт без
+      // кода, подписи и участия ответственного. Теперь приёмка — только явное
+      // действие, а `acceptanceFixed` в ответе говорит, случилась она или нет.
+      // Событие о приёмке шлём по этому полю, а не по факту оплаты: иначе
+      // в аналитике приёмок оказывается больше, чем их было.
+      final acceptanceFixed = r['acceptanceFixed'] == true;
       if (status == 'succeeded') {
         unawaited(session.api.track('payment_succeeded', {'provider': provider}));
-        unawaited(session.api.track('acceptance_confirmed', {'method': 'online_payment'}));
+        if (acceptanceFixed) {
+          unawaited(session.api.track('acceptance_confirmed', {'method': 'online_payment'}));
+        }
       }
       if (!mounted) return;
       final messenger = ScaffoldMessenger.maybeOf(context);
       Navigator.of(context).pop();
       messenger?.showSnackBar(
         SnackBar(
-          content: Text((r['message'] as String?) ?? '', style: const TextStyle(color: SozoColors.surface)),
+          content: Text(
+            status == 'succeeded' && !acceptanceFixed
+                ? t('c20.acceptNext')
+                : ((r['message'] as String?) ?? ''),
+            style: const TextStyle(color: SozoColors.surface),
+          ),
           backgroundColor: toastBg,
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(SozoSpace.s16),
+          duration: const Duration(seconds: 5),
         ),
       );
-      // Успешная оплата ведёт на «Спасибо»: оценка и чаевые одним экраном
-      if (status == 'succeeded' && context.mounted) {
+      // «Спасибо» с оценкой и чаевыми — только когда работа уже принята.
+      // Пока приёмки нет, следующий шаг человека другой: закрыть лист,
+      // увидеть карточку «Работа сделана?» и ответить на неё. Экран акта
+      // перечитывает себя сам, как только лист закрылся
+      if (status == 'succeeded' && acceptanceFixed && context.mounted) {
         await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => ThanksScreen(order: widget.order)));
       }
     } on ApiError catch (e) {
@@ -666,7 +705,8 @@ class _PaymentMethodsState extends State<PaymentMethods> {
             ),
             const SizedBox(height: SozoSpace.s8),
           ],
-          Text(t('c20.acceptanceNote'), style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
+          // 14, а не 12: это оговорка о том, что оплата приёмку не заменяет
+          Text(t('c20.acceptanceNote'), style: const TextStyle(fontSize: 14, height: 1.35, color: SozoColors.textSecondary)),
           const SizedBox(height: SozoSpace.s12),
           SozoBanner(icon: 'banknote', text: t('c20.cashNote')),
           const SizedBox(height: SozoSpace.s8),

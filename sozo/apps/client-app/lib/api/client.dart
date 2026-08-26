@@ -5,11 +5,17 @@ import '../i18n.dart';
 
 /// Ошибка API в терминах клиента. Сервер всегда отдаёт {code, message}.
 class ApiError implements Exception {
-  ApiError(this.code, this.message, {this.statusCode});
+  ApiError(this.code, this.message, {this.statusCode, this.debug});
 
   final String code;
+
+  /// Строка для человека. На экран попадает только она
   final String message;
   final int? statusCode;
+
+  /// Техническая причина: адрес стенда, текст исключения, номер кода ответа.
+  /// В интерфейс не выводится никогда — только в лог и в отчёт об ошибке
+  final String? debug;
 
   /// Сети нет — экран показывает кеш и баннер, а не пустоту
   bool get isOffline => code == 'OFFLINE';
@@ -18,8 +24,20 @@ class ApiError implements Exception {
   bool get isUnauthorized => statusCode == 401;
 
   @override
-  String toString() => message;
+  String toString() => debug == null ? message : '$message [$debug]';
+
+  /// Локальная сеть закрыта настройками телефона — единственный случай,
+  /// когда экрану есть смысл предложить правку адреса стенда
+  bool get isLocalNetworkDenied => code == 'LOCAL_NETWORK_DENIED';
 }
+
+/// Текст любого сбоя для экрана.
+///
+/// `'$e'` в интерфейсе — это как раз то, из-за чего человек видел
+/// «SocketException: Connection refused (OS Error…), address = 192.168.0.10».
+/// Через эту функцию наружу выходит либо строка сервера, либо одна общая
+/// фраза, а техническая часть остаётся в логе.
+String humanError(Object e) => e is ApiError ? e.message : t('error.unknown');
 
 /// HTTP-клиент приложения «Клиент».
 ///
@@ -31,6 +49,17 @@ class ApiClient {
   String baseUrl;
   String? token;
 
+  /// Сессия протухла: сервер ответил 401 на запрос с токеном.
+  ///
+  /// Раньше это обрабатывалось на одном экране — выборе контекста. На всех
+  /// остальных 401 попадал в общий обработчик `AsyncView` и рисовал кнопку
+  /// «Повторить», которая обречена падать всегда. Выйти можно было только из
+  /// профиля, а профиль сам не грузился по той же причине: приложение
+  /// запиралось насмерть, и лечилось переустановкой.
+  ///
+  /// Ставит `Session`, дёргает `_decode` — из любого запроса приложения.
+  void Function()? onUnauthorized;
+
   static const timeout = Duration(seconds: 12);
 
   /// Язык ответа сервера.
@@ -40,18 +69,31 @@ class ApiClient {
   /// ошибках. Без этого заголовка переключение языка меняло только подписи
   /// самого приложения, а главная оставалась русской при любом выборе —
   /// и выглядело это как «кнопка языка не работает».
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        'Accept-Language': l10n.code,
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
+  Map<String, String> get _headers => _headersWith(null);
+
+  /// `authToken` перекрывает токен сессии для одного запроса.
+  ///
+  /// Нужен ровно на входе: между проверкой кода и записью согласий приложение
+  /// обязано ходить авторизованным, но сессии ещё нет — человек не нажал
+  /// «Войти». Раньше `verify` присваивал токен живому клиенту, и в этом
+  /// промежутке `session.signedIn` уже отвечал «да», хотя ни сохранения, ни
+  /// уведомления подписчиков не было. Комментарий в экране входа обещал
+  /// обратное — теперь обещание выполняется.
+  Map<String, String> _headersWith(String? authToken) {
+    final bearer = authToken ?? token;
+    return {
+      'Content-Type': 'application/json',
+      'Accept-Language': l10n.code,
+      if (bearer != null) 'Authorization': 'Bearer $bearer',
+    };
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) => Uri.parse('$baseUrl/v1$path')
       .replace(queryParameters: query?.isEmpty ?? true ? null : query);
 
-  Future<dynamic> get(String path, {Map<String, String>? query}) async {
+  Future<dynamic> get(String path, {Map<String, String>? query, String? authToken}) async {
     try {
-      final r = await http.get(_uri(path, query), headers: _headers).timeout(timeout);
+      final r = await http.get(_uri(path, query), headers: _headersWith(authToken)).timeout(timeout);
       return _decode(r);
     } on ApiError {
       rethrow;
@@ -60,9 +102,29 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> post(String path, Map<String, dynamic> body) async {
+  /// `idempotencyKey` уходит заголовком `Idempotency-Key`: повтор того же
+  /// запроса после таймаута обязан вернуть уже созданную запись, а не завести
+  /// вторую. `timeout` перекрывается там, где тело заведомо тяжёлое — заявка
+  /// с пятью фотографиями в base64 не укладывается в двенадцать секунд на
+  /// мобильном интернете, и общий таймаут превращал её в бесконечный повтор.
+  Future<dynamic> post(
+    String path,
+    Map<String, dynamic> body, {
+    String? idempotencyKey,
+    Duration? timeout,
+    String? authToken,
+  }) async {
     try {
-      final r = await http.post(_uri(path), headers: _headers, body: jsonEncode(body)).timeout(timeout);
+      final r = await http
+          .post(
+            _uri(path),
+            headers: {
+              ..._headersWith(authToken),
+              'Idempotency-Key': ?idempotencyKey,
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(timeout ?? ApiClient.timeout);
       return _decode(r);
     } on ApiError {
       rethrow;
@@ -82,47 +144,48 @@ class ApiClient {
     }
   }
 
-  /// Причина обрыва связи, а не «нет связи с сервером».
+  /// Обрыв связи. Человеку — одна строка, разработчику — причина в `debug`.
   ///
-  /// Разница принципиальна при разборе: отказ iOS в доступе к локальной сети,
-  /// неверный адрес и выключенный сервер выглядят для пользователя одинаково,
-  /// а чинятся по-разному. Адрес в тексте — чтобы было видно, куда стучались.
+  /// Раньше причина стояла в тексте на экране: «iOS не пускает приложение в
+  /// локальную сеть. Настройки → SOZO → Локальная сеть», «Сервер
+  /// http://192.168.0.10:3000 не ответил за 12 с». В отладке это экономит час,
+  /// в проде — читается как поломка приложения и адрес чужого компьютера
+  /// посреди экрана. Для человека все эти случаи означают ровно одно: связи
+  /// нет, попробуйте Wi-Fi или мобильные данные, а если срочно — позвоните.
+  ///
+  /// Код различаем по-прежнему: `LOCAL_NETWORK_DENIED` показывает экрану, что
+  /// дело в доступе к локальной сети, и там за долгим нажатием откроется
+  /// правка адреса стенда.
   ApiError _offline(Object e) {
     final text = e.toString();
+    final human = t('error.offline');
     // iOS 14+ спрашивает разрешение на локальную сеть; отказ даёт именно это
     if (text.contains('Operation not permitted') || text.contains('errno = 1')) {
-      return ApiError(
-        'LOCAL_NETWORK_DENIED',
-        'iOS не пускает приложение в локальную сеть.\n'
-            'Настройки → SOZO → Локальная сеть — включите доступ.',
-      );
+      return ApiError('LOCAL_NETWORK_DENIED', human, debug: 'local network denied: $text');
     }
     // «Нет маршрута» на iOS означает и смену адреса сервера, и запрет доступа
-    // к локальной сети — различить их изнутри приложения нельзя, поэтому
-    // называем обе причины, а не выбираем одну наугад
+    // к локальной сети — различить их изнутри приложения нельзя
     if (text.contains('No route to host') ||
         text.contains('Network is unreachable') ||
         text.contains('Failed host lookup')) {
-      return ApiError(
-        'OFFLINE',
-        'Сервер $baseUrl недоступен.\n'
-            'Либо адрес сервера изменился, либо iOS не пускает приложение '
-            'в локальную сеть (Настройки → SOZO → Локальная сеть).',
-      );
+      return ApiError('OFFLINE', human, debug: 'no route to $baseUrl: $text');
     }
     if (text.contains('Connection refused')) {
-      return ApiError('OFFLINE', 'Сервер $baseUrl не отвечает: проверьте, что он запущен');
+      return ApiError('OFFLINE', human, debug: 'connection refused: $baseUrl');
     }
     if (text.contains('TimeoutException')) {
-      return ApiError('OFFLINE', 'Сервер $baseUrl не ответил за ${timeout.inSeconds} с');
+      return ApiError('OFFLINE', human, debug: '$baseUrl timed out after ${timeout.inSeconds}s');
     }
-    return ApiError('OFFLINE', 'Нет связи с $baseUrl');
+    return ApiError('OFFLINE', human, debug: '$baseUrl: $text');
   }
 
   dynamic _decode(http.Response r) {
     final text = utf8.decode(r.bodyBytes);
     final dynamic body = text.isEmpty ? null : jsonDecode(text);
     if (r.statusCode >= 200 && r.statusCode < 300) return body;
+    // Только если токен был: 401 на проверке кода — это «код неверный»,
+    // а не «сессия истекла», и выбрасывать оттуда некуда, человек и так на входе
+    if (r.statusCode == 401 && token != null) onUnauthorized?.call();
     if (body is Map) {
       // Nest заворачивает объект исключения либо в корень, либо в message
       final inner = body['message'] is Map ? body['message'] as Map : body;
@@ -130,27 +193,34 @@ class ApiClient {
         (inner['code'] ?? body['error'] ?? 'ERROR').toString(),
         (inner['message'] ?? _defaultMessage(r.statusCode)).toString(),
         statusCode: r.statusCode,
+        debug: 'HTTP ${r.statusCode} $baseUrl',
       );
     }
-    throw ApiError('ERROR', _defaultMessage(r.statusCode), statusCode: r.statusCode);
+    throw ApiError('ERROR', _defaultMessage(r.statusCode),
+        statusCode: r.statusCode, debug: 'HTTP ${r.statusCode} $baseUrl');
   }
 
+  /// Ответ без своего текста. Номер кода в строку не выносим: «Ошибка сервера
+  /// (500)» человеку ничего не сообщает и ничего ему не предлагает — он
+  /// остаётся в `debug` и в логе
   String _defaultMessage(int status) => switch (status) {
-        401 => 'Сессия истекла — войдите заново',
-        403 => 'Действие недоступно',
-        404 => 'Не найдено',
-        409 => 'Заявка изменилась — обновите экран',
-        _ => 'Ошибка сервера ($status)',
+        401 => t('error.signedOut'),
+        403 => t('error.forbidden'),
+        404 => t('error.notFound'),
+        409 => t('error.conflict'),
+        _ => t('error.server'),
       };
 
   // ---------- Вход (C-02, C-03) ----------
 
   Future<void> requestOtp(String phone) => post('/auth/request-otp', {'phone': phone});
 
+  /// Проверка кода. Токен **возвращается, но не присваивается**: сессию
+  /// фиксирует экран входа после согласий, через `Session.signIn`.
+  /// До этого момента приложение не считается вошедшим — и не притворяется им.
   Future<String> verify(String phone, String code) async {
     final r = await post('/auth/verify', {'phone': phone, 'code': code}) as Map<String, dynamic>;
-    token = r['accessToken'] as String;
-    return token!;
+    return r['accessToken'] as String;
   }
 
   // ---------- Гостевой просмотр (C-01) ----------
@@ -168,7 +238,8 @@ class ApiClient {
 
   // ---------- Профиль и контексты ----------
 
-  Future<Map<String, dynamic>> me() async => (await get('/app/me')) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> me({String? authToken}) async =>
+      (await get('/app/me', authToken: authToken)) as Map<String, dynamic>;
 
   /// Регистрация устройства для push (ТЗ §11).
   ///
@@ -186,8 +257,8 @@ class ApiClient {
   Future<Map<String, dynamic>> revokeDevice(String token) async =>
       (await post('/devices/revoke', {'token': token})) as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> saveConsents(Map<String, dynamic> body) async =>
-      (await post('/app/consents', body)) as Map<String, dynamic>;
+  Future<Map<String, dynamic>> saveConsents(Map<String, dynamic> body, {String? authToken}) async =>
+      (await post('/app/consents', body, authToken: authToken)) as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> body) async =>
       (await post('/app/profile', body)) as Map<String, dynamic>;
@@ -304,8 +375,13 @@ class ApiClient {
   Future<Map<String, dynamic>> order(String id) async =>
       (await get('/app/orders/$id')) as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> body) async =>
-      (await post('/app/orders', body)) as Map<String, dynamic>;
+  /// Создание заявки. Тело тяжёлое (фотографии в base64), поэтому свой
+  /// таймаут; ключ идемпотентности живёт в черновике и переживает повтор
+  static const createTimeout = Duration(seconds: 45);
+
+  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> body, {String? idempotencyKey}) async =>
+      (await post('/app/orders', body, idempotencyKey: idempotencyKey, timeout: createTimeout))
+          as Map<String, dynamic>;
 
   /// Похожая заявка за последние сутки — предупреждение перед созданием второй
   Future<Map<String, dynamic>> duplicateCheck(String address) async =>

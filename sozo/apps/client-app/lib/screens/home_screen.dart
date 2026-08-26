@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../design_tokens.dart';
 import '../format.dart';
 import '../i18n.dart';
@@ -222,9 +223,31 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: SozoSpace.s16),
         ],
 
-        // Кнопки «Вызвать мастера» на главной больше нет: в макете её место
-        // занял плюс в центре таббара (190:86), и две одинаковые точки входа
-        // рядом друг с другом только делят внимание
+        // Главное действие экрана — во всю ширину и словами.
+        //
+        // Какое-то время её здесь не было: в макете место кнопки занял плюс в
+        // центре таббара (190:86), и две точки входа рядом казались делёжкой
+        // внимания. На живом экране вышло иначе. Плюс — безымянная иконка, а
+        // самым заметным элементом главной осталась красная аварийная плашка,
+        // и человек без заявок делал единственный доступный ему вывод: раз
+        // кнопки нет, надо жать красное. Плюс остался ускорителем для тех, кто
+        // уже освоился, и теперь тоже подписан
+        _callMasterButton(
+          () => _create(
+            context,
+            reload,
+            blockedByDebt: debt > 0,
+            blocked: blocked != null,
+          ),
+        ),
+        const SizedBox(height: SozoSpace.s12),
+
+        // Простой режим предлагаем тому, кто уже увеличил системный шрифт:
+        // сам он до третьей строки настроек профиля не дойдёт
+        if (_offerSimpleMode(context)) ...[
+          _simpleModeOffer(context),
+          const SizedBox(height: SozoSpace.s12),
+        ],
 
         // 4. Повтор прошлой заявки — два тапа, без визарда (ТЗ 17.17 п.2)
         if (repeatable != null) ...[
@@ -257,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
             subtitle: t('c06.equipmentDueSub', {
               'days': plural(
                 (equipmentDue.first['daysSinceService'] as num?)?.toInt() ?? 0,
-                'день', 'дня', 'дней',
+                'plural.days',
               ),
             }),
             onTap: () => Navigator.of(context).push(
@@ -275,7 +298,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: 'shield-check',
             iconColor: homeOkChipFg,
             title: t('c06.warranty', {
-              'n': plural((warranty!['count'] as num).toInt(), 'работа', 'работы', 'работ'),
+              'n': plural(((warranty!['count'] as num?) ?? 0).toInt(), 'plural.works'),
             }),
             subtitle: t('c06.warrantySub', {'date': dayMonth(warranty['nextUntil'])}),
             subtitleMaxLines: 2,
@@ -301,11 +324,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: SozoSpace.s12),
                   Expanded(
                     child: Text(
-                      t('c06.postponed', {
-                        'n': plural(postponed.length, 'отложенная рекомендация', 'отложенные рекомендации',
-                            'отложенных рекомендаций'),
-                      }),
-                      style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary),
+                      t('c06.postponed', {'n': plural(postponed.length, 'plural.recommendations')}),
+                      style: const TextStyle(fontSize: 15, color: SozoColors.textSecondary),
                     ),
                   ),
                   const FigmaIcon('chevron-right', size: 18, color: SozoColors.textTertiary),
@@ -467,14 +487,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: authInk),
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: authInk),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
                       maxLines: subtitleMaxLines,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: authHint, height: 1.3),
+                      style: const TextStyle(fontSize: 14, color: authHint, height: 1.3),
                     ),
                   ],
                 ),
@@ -485,6 +505,86 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// «Вызвать мастера» — 56 точек во всю ширину, янтарная заливка.
+  ///
+  /// Иконка слева, чтобы кнопка читалась как действие, а не как заголовок
+  Widget _callMasterButton(VoidCallback onTap) {
+    return Material(
+      color: SozoColors.accent,
+      borderRadius: BorderRadius.circular(SozoRadius.tile),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(SozoRadius.tile),
+        onTap: onTap,
+        child: SizedBox(
+          height: SozoSize.buttonPrimary,
+          width: double.infinity,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const FigmaIcon('wrench', size: 20, color: SozoColors.onAccent),
+              const SizedBox(width: SozoSpace.s8),
+              Flexible(
+                child: Text(
+                  t('c06.callMaster'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: SozoColors.onAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Показывать ли предложение простого режима.
+  ///
+  /// Признак — системный шрифт крупнее обычного: человек уже сказал телефону,
+  /// что ему трудно читать, и повторять это приложению не должен. По возрасту
+  /// не предлагаем никогда — это оскорбительно (DEV-15 §10.3.1); отказ
+  /// запоминается, второй раз не спрашиваем.
+  bool _offerSimpleMode(BuildContext context) =>
+      !session.simpleMode &&
+      !session.simpleModeDeclined &&
+      MediaQuery.textScalerOf(context).scale(16) > 16 * 1.2;
+
+  Widget _simpleModeOffer(BuildContext context) {
+    return SozoCard(
+      children: [
+        Text(
+          t('simple.offerTitle'),
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: SozoColors.text),
+        ),
+        Text(
+          t('simple.offerText'),
+          style: const TextStyle(fontSize: 15, height: 1.35, color: SozoColors.textSecondary),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: SecondaryButton(
+                t('simple.offerAccept'),
+                onTap: () => session.setSimpleMode(true),
+              ),
+            ),
+            const SizedBox(width: SozoSpace.s8),
+            Expanded(
+              child: TextAction(
+                t('simple.offerDecline'),
+                onTap: () => session.declineSimpleMode(),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -660,7 +760,7 @@ class _HomeScreenState extends State<HomeScreen> {
           MoneyRow(label: t('c06.firstRunVisit'), amount: soums(price), bold: true),
           Text(
             (f['visitNote'] as String?) ?? '',
-            style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary, height: 1.35),
+            style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary, height: 1.35),
           ),
         ],
         if ((f['warrantyDays'] as num?) != null)
@@ -739,7 +839,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .join(',');
       slots = await session.api.slots(items: items);
     } catch (e) {
-      if (context.mounted) showSozoToast(context, '$e');
+      if (context.mounted) showSozoToast(context, humanError(e));
       return;
     }
     if (!context.mounted) return;
@@ -813,6 +913,12 @@ class _RepeatSheetState extends State<_RepeatSheet> {
   bool _busy = false;
   String? _error;
 
+  /// Свой ключ идемпотентности на этот лист: повтор заявки — тоже создание,
+  /// и таймаут после того, как сервер её завёл, точно так же провоцирует
+  /// второе нажатие. Ключ живёт, пока открыт лист, поэтому повтор одного и
+  /// того же нажатия сервер узнает
+  final String _idempotencyKey = OrderDraft.newIdempotencyKey();
+
   List<Map<String, dynamic>> get _lines =>
       ((widget.source['lines'] as List?) ?? const []).cast<Map<String, dynamic>>();
 
@@ -834,12 +940,12 @@ class _RepeatSheetState extends State<_RepeatSheet> {
         'slotDate': parts?.first,
         'slotStartMin': parts == null ? null : int.tryParse(parts.last),
         'source': 'repeat',
-      });
+      }, idempotencyKey: _idempotencyKey);
       if (!mounted) return;
       showSozoToast(context, t('c13.sent'));
       Navigator.of(context).pop(created['id'] as String);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = humanError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

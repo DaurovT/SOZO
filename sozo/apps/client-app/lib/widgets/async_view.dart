@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -46,6 +48,18 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
   /// Отдельно от `_offline`: тот включается, только когда данные уже были
   bool _connectionFailed = false;
 
+  /// Конфликт версий уже перечитывали — второй раз не повторяем
+  bool _retriedConflict = false;
+
+  /// Номер последней начатой загрузки.
+  ///
+  /// Флага «идёт загрузка» мало: перезагрузку зовут и таймер опроса, и
+  /// pull-to-refresh, и кнопки экрана после действия. Два запроса уходят
+  /// внахлёст, медленный первый возвращается после быстрого второго — и
+  /// карточка откатывается к устаревшему состоянию: «мастер в пути» поверх
+  /// уже показанного «выполнена». Отвечаем только на последний запрос.
+  int _generation = 0;
+
   @override
   void initState() {
     super.initState();
@@ -53,11 +67,17 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
   }
 
   Future<void> reload() async {
+    final generation = ++_generation;
+    // Устарел, пока летел: ответ на прошлый запрос не должен затирать более
+    // свежий — ни данными, ни ошибкой, ни снятым признаком загрузки
+    bool stale() => !mounted || generation != _generation;
+
     if (mounted) setState(() => _loading = _data == null);
     try {
       final data = await widget.load();
-      if (!mounted) return;
+      if (stale()) return;
       widget.onData?.call(data);
+      _retriedConflict = false;
       setState(() {
         _data = data;
         _error = null;
@@ -66,7 +86,15 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
         _loading = false;
       });
     } on ApiError catch (e) {
-      if (!mounted) return;
+      if (stale()) return;
+      // 409 при чтении означает, что данные под нами поменялись. Просить
+      // человека «обновить экран» незачем — обновляемся сами, один раз,
+      // чтобы не уйти в петлю, если сервер отвечает так всегда
+      if (e.statusCode == 409 && !_retriedConflict) {
+        _retriedConflict = true;
+        unawaited(reload());
+        return;
+      }
       setState(() {
         _loading = false;
         // Сеть пропала, а данные уже были — показываем их с баннером,
@@ -79,10 +107,10 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
         }
       });
     } catch (e) {
-      if (!mounted) return;
+      if (stale()) return;
       setState(() {
         _loading = false;
-        _error = '$e';
+        _error = humanError(e);
       });
     }
   }
@@ -93,8 +121,10 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
       return widget.skeleton?.call() ?? const SkeletonList();
     }
     if (_data == null) {
-      // Сервер не ответил — предлагаем починить адрес прямо здесь: на экране
-      // входа человека уже нет, а больше это поле нигде не открыть
+      // Сервер не ответил. Человеку — одна фраза и кнопка «Позвонить в
+      // поддержку»; правка адреса стенда осталась под долгим нажатием по
+      // значку ошибки — на экране входа человека уже нет, а больше это поле
+      // нигде не открыть
       return ErrorState(
         message: _error ?? t('error.offline'),
         onRetry: reload,

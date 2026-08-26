@@ -10,6 +10,11 @@ import 'figma_icon.dart';
 /// Компоненты DEV-06 §4 в исполнении приложения «Клиент».
 /// Числа берутся из токенов; локальных цветов и радиусов здесь нет.
 
+/// Телефон диспетчерской — запасной путь, когда приложение не может помочь:
+/// нет связи, отказали в камере, непонятно, куда жать. Свой у объекта телефон
+/// приходит в `me.supportPhone`, этот — общий.
+const sozoSupportPhone = '+998712000000';
+
 // ============================ Карточки ============================
 
 /// Белая карточка: p16, скругление 20, свой шаг между детьми. Тени нет.
@@ -119,32 +124,22 @@ class SectionHeading extends StatelessWidget {
   }
 }
 
-/// Текстовое действие янтарём — 14/semibold
+/// Текстовое действие рядом с заголовком секции: «Все», «Добавить», «Выйти».
+///
+/// Имя осталось от янтаря, цвет — нет. Янтарём такая надпись давала 1,75:1 на
+/// белом, а тап-зона в четыре точки отступа — около восемнадцати в высоту.
+/// Теперь это тот же `InlineLink`, что и остальные текст-действия приложения;
+/// класс держим ради вызовов, чтобы правка не разъехалась по шести экранам.
 class AmberAction extends StatelessWidget {
-  const AmberAction(this.label, {super.key, this.onTap, this.fontSize = 14});
+  const AmberAction(this.label, {super.key, this.onTap, this.fontSize = 15});
 
   final String label;
   final VoidCallback? onTap;
   final double fontSize;
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(SozoRadius.badge),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s4, vertical: SozoSpace.s4),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w600,
-            color: onTap == null ? SozoColors.textTertiary : SozoColors.accent,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      InlineLink(label, onTap: onTap, fontSize: fontSize);
 }
 
 class SozoDivider extends StatelessWidget {
@@ -412,7 +407,7 @@ class DangerTextButton extends StatelessWidget {
   }
 }
 
-/// Второстепенное действие текстом: высота 44 (тап-зона), но без веса кнопки.
+/// Второстепенное действие текстом: высота 48 (тап-зона), но без веса кнопки.
 /// Нужно, чтобы отказ и «отложить» не выглядели равновелико согласию.
 class TextAction extends StatelessWidget {
   const TextAction(this.label, {super.key, this.onTap, this.danger = false});
@@ -427,7 +422,7 @@ class TextAction extends StatelessWidget {
         ? SozoColors.textTertiary
         : (danger ? SozoColors.error : SozoColors.textSecondary);
     return SizedBox(
-      height: 44,
+      height: SozoSize.buttonSecondary,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(SozoRadius.badge),
@@ -438,6 +433,66 @@ class TextAction extends StatelessWidget {
               label,
               style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: color),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Текст-действие внутри строки: «Изменить», «Не знаю, что сломалось»,
+/// «Отправить код повторно», «Есть промокод».
+///
+/// Два правила, ради которых это отдельный виджет.
+///
+/// **Цвет.** Раньше такие надписи набирались янтарём #FEB70F — 1,75:1 на белом.
+/// Это не «бледновато», это нечитаемо: пожилой глаз такую надпись не находит
+/// вовсе. Тёмный текст с подчёркиванием даёт 18:1 и остаётся узнаваемым как
+/// ссылка без опоры на цвет.
+///
+/// **Размер зоны.** По макету это была голая надпись 14 sp — около 18 точек
+/// высотой. Здесь она обёрнута в 48: минимум под палец, в том числе дрожащий.
+class InlineLink extends StatelessWidget {
+  const InlineLink(
+    this.label, {
+    super.key,
+    this.onTap,
+    this.danger = false,
+    this.align = TextAlign.start,
+    this.fontSize = 15,
+  });
+
+  final String label;
+  final VoidCallback? onTap;
+  final bool danger;
+  final TextAlign align;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = onTap == null
+        ? SozoColors.textTertiary
+        : (danger ? linkDanger : SozoColors.link);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(SozoRadius.badge),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: SozoSize.buttonSecondary),
+        alignment: switch (align) {
+          TextAlign.center => Alignment.center,
+          TextAlign.end => Alignment.centerRight,
+          _ => Alignment.centerLeft,
+        },
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s8, vertical: SozoSpace.s8),
+        child: Text(
+          label,
+          textAlign: align,
+          style: TextStyle(
+            fontSize: fontSize,
+            fontWeight: FontWeight.w600,
+            color: color,
+            decoration: TextDecoration.underline,
+            decorationColor: color,
           ),
         ),
       ),
@@ -498,26 +553,40 @@ class NeutralPill extends StatelessWidget {
 }
 
 class SmallButton extends StatelessWidget {
-  const SmallButton(this.label, {super.key, this.onTap, this.color});
+  const SmallButton(this.label, {super.key, this.onTap, this.color, this.icon});
 
   final String label;
   final VoidCallback? onTap;
   final Color? color;
+  final String? icon;
 
   @override
   Widget build(BuildContext context) {
     final c = color ?? SozoColors.accent;
+    // Подпись тёмная, а не в цвет заливки: янтарь по бледно-янтарному давал
+    // 1,6:1 — надпись на кнопке была видна только тому, кто знал, что она там
+    final ink = color == null ? SozoColors.text : c;
     return Material(
       color: c.withValues(alpha: 0.14),
       borderRadius: BorderRadius.circular(SozoRadius.badge),
       child: InkWell(
         borderRadius: BorderRadius.circular(SozoRadius.badge),
         onTap: onTap,
-        child: Padding(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
           padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s12, vertical: SozoSpace.s8),
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                FigmaIcon(icon!, size: 16, color: ink),
+                const SizedBox(width: SozoSpace.s4),
+              ],
+              Text(
+                label,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: ink),
+              ),
+            ],
           ),
         ),
       ),
@@ -623,8 +692,8 @@ class TagChip extends StatelessWidget {
           final text = Text(
             label,
             style: TextStyle(
-              fontSize: pill ? 11 : 12,
-              fontWeight: pill ? FontWeight.w600 : FontWeight.w500,
+              fontSize: pill ? 12 : 13,
+              fontWeight: pill ? FontWeight.w600 : FontWeight.w600,
               color: fg ?? SozoColors.textSecondary,
             ),
           );
@@ -1103,12 +1172,14 @@ class QtyStepper extends StatelessWidget {
     );
   }
 
-  /// Кнопки 32×32 со скруглением 8 на сером (223:43). Меньше 44 — сознательно:
-  /// в макете они стоят внутри карточки работы, и крупные её ломают. Промах
-  /// компенсирует область нажатия самой карточки — она рядом и делает то же
+  /// Кнопки 44×44 со скруглением 8 на сером (223:43 рисовал 32×32).
+  ///
+  /// Тридцать два было признанным компромиссом «чтобы не ломать карточку»,
+  /// но промах по «плюсу» здесь стоит лишней работы в смете, а сама карточка
+  /// по нажатию делает противоположное — снимает выбор
   Widget _btn(String label, VoidCallback? onTap) => SizedBox(
-        width: 32,
-        height: 32,
+        width: 44,
+        height: 44,
         child: Material(
           color: SozoColors.bg,
           borderRadius: BorderRadius.circular(SozoRadius.badge),
@@ -1292,14 +1363,21 @@ class EmptyState extends StatelessWidget {
 /// делать». Поэтому значок в красноватом круге, заголовок отдельно от
 /// объяснения, а действие — заметная кнопка, а не бледная ссылка.
 ///
-/// Когда не отвечает сервер, добавляется вторая кнопка: адрес приложения
-/// правится только на экране входа, и вошедший человек оказывался в тупике —
-/// приложение показывало ошибку и не давало ничего с ней сделать.
+/// Когда не отвечает сервер, добавляется вторая кнопка — «Позвонить в
+/// поддержку»: человеку с прорывом трубы нужен выход из тупика, а не разбор
+/// причины отказа.
+///
+/// Настройка адреса сервера с этого экрана убрана: строка «Изменить адрес
+/// сервера» с плейсхолдером локального IP стояла на **каждом** экране ошибки
+/// и в проде читалась как поломка приложения. Она осталась там же, где была
+/// задумана, — под долгим нажатием, теперь по значку ошибки.
 class ErrorState extends StatelessWidget {
   const ErrorState({super.key, required this.message, this.onRetry, this.onEditServer});
 
   final String message;
   final VoidCallback? onRetry;
+
+  /// Правка адреса сервера — под долгим нажатием по значку, без надписи
   final VoidCallback? onEditServer;
 
   @override
@@ -1310,12 +1388,15 @@ class ErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: const BoxDecoration(color: homeDebtBg, shape: BoxShape.circle),
-              alignment: Alignment.center,
-              child: const FigmaIcon('alert-circle', size: 32, color: homeDanger),
+            GestureDetector(
+              onLongPress: onEditServer,
+              child: Container(
+                width: 72,
+                height: 72,
+                decoration: const BoxDecoration(color: homeDebtBg, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: const FigmaIcon('alert-circle', size: 32, color: homeDanger),
+              ),
             ),
             const SizedBox(height: SozoSpace.s24),
             Text(
@@ -1327,7 +1408,7 @@ class ErrorState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, height: 1.4, color: authHint),
+              style: const TextStyle(fontSize: 16, height: 1.4, color: SozoColors.textSecondary),
             ),
             const SizedBox(height: SozoSpace.s24),
             if (onRetry != null)
@@ -1350,20 +1431,12 @@ class ErrorState extends StatelessWidget {
                   ),
                 ),
               ),
-            if (onEditServer != null) ...[
-              const SizedBox(height: SozoSpace.s12),
-              GestureDetector(
-                onTap: onEditServer,
-                child: Text(
-                  t('error.changeServer'),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: SozoColors.accent,
-                  ),
-                ),
-              ),
-            ],
+            const SizedBox(height: SozoSpace.s12),
+            SecondaryButton(
+              t('error.callSupport'),
+              icon: 'phone',
+              onTap: () => callPhone(context, session.supportPhone ?? sozoSupportPhone),
+            ),
           ],
         ),
       ),
@@ -1483,7 +1556,9 @@ Future<bool> showSozoConfirm(
           children: [
             Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: authInk)),
             const SizedBox(height: SozoSpace.s12),
-            Text(text, style: const TextStyle(fontSize: 12, height: 1.4, color: authHint)),
+            // 16, а не 12 из макета: именно в этом абзаце стоит сумма, которую
+            // придётся заплатить при отмене. Двенадцатым кеглем её не читают
+            Text(text, style: const TextStyle(fontSize: 16, height: 1.4, color: SozoColors.text)),
             const SizedBox(height: SozoSpace.s24),
             _dialogButton(
               confirmLabel,

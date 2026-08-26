@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../api/client.dart';
 import '../design_tokens.dart';
 import '../i18n.dart';
 import '../store/session.dart';
@@ -49,7 +50,7 @@ class _HomeBuildingScreenState extends State<HomeBuildingScreen> {
     } on Object catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = '$e';
+        _error = humanError(e);
         _loading = false;
       });
     }

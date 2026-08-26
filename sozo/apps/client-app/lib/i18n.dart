@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:ui' show TextDirection;
+import 'dart:ui' show PlatformDispatcher, TextDirection;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -109,6 +109,24 @@ class L10n extends ChangeNotifier {
 
   String get name => names[_code] ?? _code;
 
+  /// Язык устройства, если приложение его знает.
+  ///
+  /// Первый запуск обязан открыться на языке телефона: узбекоязычный человек
+  /// не должен искать переключатель, чтобы прочитать первый экран. Смотрим
+  /// весь список системных языков по порядку — на телефоне их обычно два, и
+  /// второй бывает единственным, который мы поддерживаем.
+  ///
+  /// Догружаемые языки сюда не годятся: словаря для них ещё нет на устройстве,
+  /// а запуск не должен ждать сети. Такой человек выберет язык руками — и со
+  /// следующего запуска он поднимется из кеша.
+  static String? _systemCode() {
+    for (final l in PlatformDispatcher.instance.locales) {
+      final code = l.languageCode.toLowerCase();
+      if (builtIn.contains(code)) return code;
+    }
+    return null;
+  }
+
   /// Восстановление языка при запуске.
   ///
   /// Догружаемый язык поднимаем из кеша, а не из сети: запуск не должен
@@ -119,7 +137,11 @@ class L10n extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_keyCode);
     if (saved == null || !codes.contains(saved)) {
-      _code = 'ru';
+      // Выбора ещё не было — берём язык телефона. Записываем сразу: иначе
+      // человек, сменивший язык системы после установки, получил бы другой
+      // интерфейс, ничего у себя не меняя
+      _code = _systemCode() ?? 'ru';
+      await prefs.setString(_keyCode, _code);
       notifyListeners();
       return;
     }
