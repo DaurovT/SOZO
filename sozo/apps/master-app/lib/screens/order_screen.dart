@@ -6,6 +6,7 @@ import '../design_tokens.dart';
 import '../main.dart';
 import '../widgets/app_chrome.dart';
 import '../widgets/common.dart';
+import '../widgets/external_actions.dart';
 import '../widgets/figma_blocks.dart';
 import '../widgets/figma_icon.dart';
 import '../widgets/photo_capture.dart';
@@ -94,7 +95,7 @@ class _OrderScreenState extends State<OrderScreen> {
       final r = await session.api.delay(widget.orderId, minutes);
       if (mounted) showOk(context, (r['message'] ?? t('order.planSdvinut')).toString());
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.orderId,
           kind: 'delay',
@@ -123,11 +124,11 @@ class _OrderScreenState extends State<OrderScreen> {
       session.outbox.markOnline(true);
       unawaitedFlush();
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         // Сети нет — операция не теряется, а встаёт в очередь в правильном порядке
         await session.outbox.enqueue(orderId: o.id, kind: 'action', payload: body, title: '${o.number}: $action');
         session.outbox.markOnline(false);
-        if (mounted) showOk(context, t('order.netSetiShagSohranen'));
+        if (mounted) showOk(context, queuedMessage(e));
       } else if (mounted) {
         showError(context, e.message);
         await _load();
@@ -145,7 +146,7 @@ class _OrderScreenState extends State<OrderScreen> {
       session.outbox.markOnline(true);
       return true;
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: o.id,
           kind: 'photo',
@@ -275,14 +276,14 @@ class _OrderScreenState extends State<OrderScreen> {
       if (mounted) showOk(context, t('order.priemkaZafiksirovana'));
       await _load();
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: o.id,
           kind: 'acceptance',
           payload: body,
           title: t('order.priemka', {'p1': o.number}),
         );
-        if (mounted) showOk(context, t('order.netSetiPriemkaUydet'));
+        if (mounted) showOk(context, queuedMessage(e));
       } else if (mounted) {
         showError(context, e.message);
       }
@@ -290,31 +291,62 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<String?> _askCode() async {
+    // Контроллер живёт ровно столько, сколько диалог: без dispose каждый
+    // вызов оставлял за собой висящий объект с подписчиками
     final ctrl = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(t('order.kodPriemki')),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          maxLength: 4,
-          autofocus: true,
-          decoration: InputDecoration(hintText: t('order.nCifryIzPrilojeniya')),
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(t('order.kodPriemki')),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            autofocus: true,
+            decoration: InputDecoration(hintText: t('order.nCifryIzPrilojeniya')),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(t('common.otmena'))),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: Text(t('common.gotovo'))),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(t('common.otmena'))),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: Text(t('common.gotovo'))),
-        ],
-      ),
-    );
+      );
+    } finally {
+      ctrl.dispose();
+    }
   }
 
+  /// Внести материал.
+  ///
+  /// Название и сумма живут в контроллерах снаружи цикла: если мастер
+  /// отменил камеру, форма открывается заново с уже введённым. Раньше в
+  /// этом месте всё стиралось, и на морозе приходилось набирать заново.
   Future<void> _addMaterial() async {
     final o = _order!;
     final nameCtrl = TextEditingController();
     final sumCtrl = TextEditingController();
     var kind = 'spare_part';
+    try {
+      while (true) {
+        final done = await _materialStep(o, nameCtrl, sumCtrl, kind, (k) => kind = k);
+        if (done) return;
+      }
+    } finally {
+      nameCtrl.dispose();
+      sumCtrl.dispose();
+    }
+  }
+
+  /// Один проход формы. Возвращает true, когда дальше делать нечего:
+  /// материал внесён либо мастер отказался от него совсем
+  Future<bool> _materialStep(
+    OrderCard o,
+    TextEditingController nameCtrl,
+    TextEditingController sumCtrl,
+    String kind,
+    void Function(String) onKind,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -329,7 +361,10 @@ class _OrderScreenState extends State<OrderScreen> {
                   ButtonSegment(value: 'consumable', label: Text(t('order.rashodnik'))),
                 ],
                 selected: {kind},
-                onSelectionChanged: (s) => setLocal(() => kind = s.first),
+                onSelectionChanged: (s) => setLocal(() {
+                  kind = s.first;
+                  onKind(kind);
+                }),
               ),
               const SizedBox(height: SozoSpace.s12),
               TextField(
@@ -339,6 +374,9 @@ class _OrderScreenState extends State<OrderScreen> {
               TextField(
                 controller: sumCtrl,
                 keyboardType: TextInputType.number,
+                // Разряды прямо при наборе: «150 000» мастер пишет с
+                // пробелом всегда, и раньше это давало ноль в смете
+                inputFormatters: [ThousandsFormatter()],
                 decoration: InputDecoration(labelText: t('common.summaSum')),
               ),
               const SizedBox(height: SozoSpace.s8),
@@ -356,7 +394,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       ),
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !mounted) return true;
 
     String? receipt;
     if (kind == 'spare_part') {
@@ -372,14 +410,23 @@ class _OrderScreenState extends State<OrderScreen> {
         },
       );
       if (receipt == null) {
-        if (mounted) showError(context, t('order.bezChekaZapchastVnesti'));
-        return;
+        if (!mounted) return true;
+        // Камеру закрыли: спрашиваем, снять чек ещё раз или отменить
+        // материал целиком. Введённое остаётся в контроллерах в обоих случаях
+        final retry = await showSozoConfirm(
+          context,
+          title: t('order.chekNeSnyat'),
+          body: t('order.chekNeSnyatPoyasnenie'),
+          confirmLabel: t('order.snyatChek'),
+          cancelLabel: t('order.otmenitMaterial'),
+        );
+        return retry != true;
       }
     }
     final body = {
       'kind': kind,
       'name': nameCtrl.text.trim(),
-      'amountSoums': int.tryParse(sumCtrl.text.trim()) ?? 0,
+      'amountSoums': soumsOf(sumCtrl.text),
       'sourceChannel': 'partner_store',
       'receiptDataUrl': ?receipt,
     };
@@ -387,18 +434,19 @@ class _OrderScreenState extends State<OrderScreen> {
       await session.api.addMaterial(o.id, body);
       await _load();
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: o.id,
           kind: 'material',
           payload: body,
           title: t('order.material2', {'p1': o.number}),
         );
-        if (mounted) showOk(context, t('order.netSetiMaterialUydet'));
+        if (mounted) showOk(context, queuedMessage(e));
       } else if (mounted) {
         showError(context, e.message);
       }
     }
+    return true;
   }
 
   Future<void> _pause() async {
@@ -418,6 +466,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ],
       ),
     );
+    ctrl.dispose();
     if (reason == null || reason.isEmpty) return;
     await _act('pause', reason: reason, payload: {'reason': reason});
   }
@@ -437,13 +486,22 @@ class _OrderScreenState extends State<OrderScreen> {
     );
     if (cash == null || !mounted) return;
     if (!cash) {
-      showError(context, t('order.uhodBezOplatySoglasovyvaet'));
+      // Тупик: раньше приложение отвечало «позвоните в диспетчерскую» и на
+      // этом заканчивалось — кнопки звонка не было ни здесь, ни выше
+      final call = await showSozoConfirm(
+        context,
+        title: t('order.oplata'),
+        body: t('order.uhodBezOplatySoglasovyvaet'),
+        confirmLabel: t('order.pozvonitDispetcheru'),
+      );
+      if (call == true && mounted) await callNumber(context, session.dispatcherPhone);
       return;
     }
     await _act('complete', payload: {'paymentCollected': true});
   }
 
   Future<void> _runStep(OrderStep step) async {
+    if (_busy) return;
     switch (step.action) {
       case 'confirm_estimate':
         await _confirmEstimate();
@@ -473,7 +531,7 @@ class _OrderScreenState extends State<OrderScreen> {
       );
     }
     return Scaffold(
-      appBar: SozoAppBar(title: o?.number ?? t('order.zayavka'), action: o == null ? null : _menu(o)),
+      appBar: SozoAppBar(title: o?.number ?? t('order.zayavka'), action: o == null ? null : _troubleButton(o)),
       body: o == null
           ? (_error != null
                 ? EmptyView(title: t('order.neUdalosOtkrytZayavku'), subtitle: _error, icon: 'alert-circle')
@@ -493,70 +551,148 @@ class _OrderScreenState extends State<OrderScreen> {
                     _photosCard(o),
                     _pipeline(o),
                     _extras(o),
-                    ..._steps(o),
+                    ..._secondarySteps(o),
+                    _troubleRow(o),
                   ]) ...[block, const SizedBox(height: SozoSpace.s12)],
                 ],
               ),
             ),
+      // Главный шаг — прилипшей панелью, а не девятым блоком ленты.
+      // До правки до кнопки «Выехал» или «Завершить» надо было прокрутить
+      // около двух тысяч точек, и мастер видел гору карточек вместо действия
+      bottomNavigationBar: o == null ? null : _primaryFooter(o),
     );
   }
 
-  /// Меню «…» — все ветки, когда работа идёт не по плану (M-11)
-  Widget _menu(OrderCard o) {
-    final beforeDepart = o.status == 'assigned';
+  /// Ветки «работа идёт не по плану» (M-11).
+  ///
+  /// Раньше это были тринадцать пунктов за безымянной иконкой «…» размером
+  /// 20 в поле 36. Мастер, у которого сломалась машина или не пускают в
+  /// подъезд, искать их там не будет. Теперь то же самое открывается
+  /// названной кнопкой в ленте, а список разбит на две понятные группы.
+  Widget _troubleButton(OrderCard o) {
+    return SozoAppBarAction(icon: 'more-horizontal', onTap: () => _openTrouble(o));
+  }
+
+  /// На закрытой заявке ветки «работа идёт не по плану» уже ничего не
+  /// значат — кнопку не показываем
+  static const _finished = ['completed', 'verified', 'closed', 'rated', 'cancelled'];
+
+  Widget _troubleRow(OrderCard o) {
+    if (_finished.contains(o.status)) return const SizedBox.shrink();
+    return OutlineIconButton(
+      icon: 'alert-triangle',
+      label: t('order.chtoToPoshloNeTak'),
+      amber: false,
+      onPressed: () => _openTrouble(o),
+    );
+  }
+
+  Future<void> _openTrouble(OrderCard o) async {
+    // «Не смогу доехать» остаётся до начала работ, а не только до «Выехал»:
+    // сломанная машина и пробка случаются уже в пути, и раньше мастеру
+    // оставалось врать про «небезопасно» или ставить паузу
+    final beforeWork = o.status == 'assigned' || o.status == 'master_departed';
     final working = o.status == 'in_progress' || o.status == 'addwork_approval';
-    return PopupMenuButton<String>(
-      tooltip: t('order.esche'),
-      padding: EdgeInsets.zero,
-      icon: const SizedBox(width: 36, height: 36, child: Center(child: FigmaIcon('more-horizontal', size: 20))),
-      onSelected: (v) async {
-        switch (v) {
-          case 'cant_go':
-            await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.cantGo));
-          case 'client_unavailable':
-            await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.clientUnavailable));
-          case 'no_access':
-            await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.noAccess));
-          case 'unsafe':
-            await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.unsafe));
-          case 'helper':
-            await _openBranch(HelperRequestScreen(order: o));
-          case 'recommend':
-            await _openBranch(RecommendScreen(order: o));
-          case 'addwork':
-            await _openBranch(AddworkScreen(order: o));
-          case 'conservation':
-            await _openBranch(ConservationScreen(order: o));
-          case 'shopping':
-            await _openBranch(ShoppingListScreen(order: o));
-          case 'spare_tiers':
-            await _openBranch(SpareTierScreen(order: o));
-          case 'purchase_code':
-            await _openBranch(PurchaseCodeScreen(order: o));
-          case 'replacement_proof':
-            await _openBranch(ReplacementProofScreen(order: o));
-          case 'inspection':
-            await _openBranch(InspectionScreen(order: o));
-        }
-      },
-      itemBuilder: (_) => [
-        if (beforeDepart) PopupMenuItem(value: 'cant_go', child: Text(t('branch.neMoguPoehat'))),
-        PopupMenuItem(value: 'client_unavailable', child: Text(t('branch.klientNedostupen'))),
-        PopupMenuItem(value: 'no_access', child: Text(t('order.netDostupaTretyaStorona'))),
-        PopupMenuItem(value: 'unsafe', child: Text(t('branch.prervatNebezopasno'))),
-        if (working) ...[
-          const PopupMenuDivider(),
-          PopupMenuItem(value: 'addwork', child: Text(t('work.vynujdennayaDopRabota'))),
-          PopupMenuItem(value: 'spare_tiers', child: Text(t('order.vilkaZapchasti2'))),
-          PopupMenuItem(value: 'recommend', child: Text(t('order.rekomendovat'))),
-          PopupMenuItem(value: 'conservation', child: Text(t('work.konservaciya2'))),
-          PopupMenuItem(value: 'shopping', child: Text(t('order.spisokZakupkiKlientu'))),
-          PopupMenuItem(value: 'helper', child: Text(t('order.nujenPomoschnik'))),
-          PopupMenuItem(value: 'purchase_code', child: Text(t('order.kodZakupki'))),
-          PopupMenuItem(value: 'replacement_proof', child: Text(t('order.dokazatelstvoZameny'))),
-          PopupMenuItem(value: 'inspection', child: Text(t('order.chekListOsmotra'))),
-        ],
-      ],
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(SozoRadius.card))),
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(SozoSpace.s16),
+                child: Text(
+                  t('order.chtoToPoshloNeTak'),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+              _troubleGroup(t('order.gruppaNeRabotaetsya')),
+              if (beforeWork) _troubleTile(ctx, 'cant_go', 'car', t('branch.neMoguPoehat')),
+              _troubleTile(ctx, 'client_unavailable', 'phone', t('branch.klientNedostupen')),
+              _troubleTile(ctx, 'no_access', 'shield', t('order.netDostupaTretyaStorona')),
+              _troubleTile(ctx, 'unsafe', 'alert-triangle', t('branch.prervatNebezopasno')),
+              if (working) ...[
+                _troubleGroup(t('order.gruppaNujnoSoglasovat')),
+                _troubleTile(ctx, 'addwork', 'wrench', t('work.vynujdennayaDopRabota')),
+                _troubleTile(ctx, 'spare_tiers', 'toolbox', t('order.vilkaZapchasti2')),
+                _troubleTile(ctx, 'recommend', 'trending-up', t('order.rekomendovat')),
+                _troubleTile(ctx, 'conservation', 'shield', t('work.konservaciya2')),
+                _troubleTile(ctx, 'shopping', 'shopping-bag', t('order.spisokZakupkiKlientu')),
+                _troubleTile(ctx, 'helper', 'users', t('order.nujenPomoschnik')),
+                _troubleTile(ctx, 'purchase_code', 'qr-code', t('order.kodZakupki')),
+                _troubleTile(ctx, 'replacement_proof', 'image', t('order.dokazatelstvoZameny')),
+                _troubleTile(ctx, 'inspection', 'clipboard', t('order.chekListOsmotra')),
+              ],
+              const SizedBox(height: SozoSpace.s16),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'cant_go':
+        await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.cantGo));
+      case 'client_unavailable':
+        await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.clientUnavailable));
+      case 'no_access':
+        await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.noAccess));
+      case 'unsafe':
+        await _openBranch(BranchScreen(orderId: o.id, orderNumber: o.number, kind: BranchKind.unsafe));
+      case 'helper':
+        await _openBranch(HelperRequestScreen(order: o));
+      case 'recommend':
+        await _openBranch(RecommendScreen(order: o));
+      case 'addwork':
+        await _openBranch(AddworkScreen(order: o));
+      case 'conservation':
+        await _openBranch(ConservationScreen(order: o));
+      case 'shopping':
+        await _openBranch(ShoppingListScreen(order: o));
+      case 'spare_tiers':
+        await _openBranch(SpareTierScreen(order: o));
+      case 'purchase_code':
+        await _openBranch(PurchaseCodeScreen(order: o));
+      case 'replacement_proof':
+        await _openBranch(ReplacementProofScreen(order: o));
+      case 'inspection':
+        await _openBranch(InspectionScreen(order: o));
+    }
+  }
+
+  Widget _troubleGroup(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(SozoSpace.s16, SozoSpace.s8, SozoSpace.s16, SozoSpace.s4),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: SozoColors.textSecondary),
+      ),
+    );
+  }
+
+  /// Строка ветки: высота 56 — по ней попадают в перчатке
+  Widget _troubleTile(BuildContext ctx, String value, String icon, String title) {
+    return InkWell(
+      onTap: () => Navigator.of(ctx).pop(value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16, vertical: SozoSpace.s16),
+        child: Row(
+          children: [
+            FigmaIcon(icon, size: 20, color: SozoColors.textSecondary),
+            const SizedBox(width: SozoSpace.s12),
+            Expanded(
+              child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+            const FigmaIcon('chevron-right', size: 16),
+          ],
+        ),
+      ),
     );
   }
 
@@ -651,6 +787,11 @@ class _OrderScreenState extends State<OrderScreen> {
 
   /// Степпер конвейера — всегда видно, где мы и что дальше (M-11)
   Widget _pipeline(OrderCard o) {
+    // Материалы нужны не всегда: замена прокладки и прочистка закрываются
+    // без единой запчасти. Пока шаг считался выполненным «по факту непустого
+    // списка», на таких заявках он навсегда оставался серым, а вместе с ним
+    // и всё, что ниже — мастер решал, что обязан что-то внести
+    final materialsExpected = o.materials.isNotEmpty || o.toBuy.isNotEmpty;
     final stages = [
       (
         t('order.vyehal'),
@@ -658,7 +799,7 @@ class _OrderScreenState extends State<OrderScreen> {
       ),
       (t('order.fotoDo'), <String>[]),
       (t('order.smeta'), <String>[]),
-      (t('order.materialy'), <String>[]),
+      (materialsExpected ? t('order.materialy') : t('order.materialyEsliNujny'), <String>[]),
       (t('order.fotoPosle'), <String>[]),
       (t('order.priemka2'), <String>[]),
       (t('order.oplata'), <String>[]),
@@ -675,7 +816,7 @@ class _OrderScreenState extends State<OrderScreen> {
       ].contains(o.status),
       o.photosOf('before') > 0,
       o.hasApprovedQuote,
-      o.materials.isNotEmpty,
+      materialsExpected ? o.materials.isNotEmpty : true,
       o.photosOf('after') > 0,
       o.hasAcceptance,
       ['completed', 'verified', 'closed', 'rated'].contains(o.status),
@@ -864,13 +1005,15 @@ class _OrderScreenState extends State<OrderScreen> {
         if (o.siteAccess != null) _siteAccessNote(o.siteAccess!),
         if (o.toBuy.isNotEmpty) _toBuyNote(o),
         if (o.clientAssets.any((a) => !a.fromThisOrder)) _assetsNote(o),
+        // Три кнопки, которые мастер жмёт стоя у подъезда. До правки все три
+        // показывали тост-заглушку: url_launcher не был подключён вовсе
         Row(
           children: [
             Expanded(
               child: ActionTile(
                 icon: 'phone',
                 label: t('order.klientu'),
-                onTap: () => showOk(context, t('order.naborKlienta')),
+                onTap: () => callNumber(context, o.clientPhone),
               ),
             ),
             const SizedBox(width: SozoSpace.s8),
@@ -878,7 +1021,7 @@ class _OrderScreenState extends State<OrderScreen> {
               child: ActionTile(
                 icon: 'headset',
                 label: t('order.dispetcheru'),
-                onTap: () => showOk(context, t('order.naborDispetcherskoy')),
+                onTap: () => callNumber(context, session.dispatcherPhone),
               ),
             ),
             const SizedBox(width: SozoSpace.s8),
@@ -886,7 +1029,7 @@ class _OrderScreenState extends State<OrderScreen> {
               child: ActionTile(
                 icon: 'navigation',
                 label: t('order.marshrut'),
-                onTap: () => showOk(context, t('order.adres', {'p1': o.address})),
+                onTap: () => openNavigation(context, lat: o.lat, lng: o.lng, address: o.address),
               ),
             ),
           ],
@@ -1224,38 +1367,66 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  /// Кнопки шагов: сначала блокирующая причина, затем главный шаг,
-  /// затем остальные, и последней — пауза красной строкой (макет 30:113)
-  List<Widget> _steps(OrderCard o) {
+  /// Главный шаг заявки — то единственное, ради чего мастер открыл экран.
+  ///
+  /// Сервер присылает шаги вместе с причиной блокировки; причину показываем
+  /// прямо над кнопкой, а не в конце ленты — иначе серая кнопка молчит.
+  OrderStep? _primaryStep(OrderCard o) {
+    final acting = o.steps.where((s) => s.action != 'pause').toList();
+    if (acting.isEmpty) return null;
+    return acting.firstWhere(
+      (s) => s.action == 'complete' || s.action == 'start' || s.action == 'depart',
+      orElse: () => acting.first,
+    );
+  }
+
+  Widget? _primaryFooter(OrderCard o) {
+    final primary = _primaryStep(o);
+    if (primary == null) return null;
+    return StickyFooter(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!primary.enabled && primary.reason != null) ...[
+            NoteBox(icon: 'alert-triangle', text: primary.reason!, tone: NoteTone.danger),
+            const SizedBox(height: SozoSpace.s8),
+          ],
+          BigButton(label: primary.title, busy: _busy, onPressed: primary.enabled ? () => _runStep(primary) : null),
+        ],
+      ),
+    );
+  }
+
+  /// Остальные шаги остаются в ленте: они равноправные и редкие.
+  /// Пауза — последней красной строкой (макет 30:113)
+  List<Widget> _secondarySteps(OrderCard o) {
     if (o.steps.isEmpty) {
       return [NoteBox(icon: 'alert-circle', text: t('order.poEtoyZayavkeDeystviy'), tone: NoteTone.warn)];
     }
     final pause = o.steps.where((s) => s.action == 'pause').firstOrNull;
-    final acting = o.steps.where((s) => s.action != 'pause').toList();
-    final primary = acting.isEmpty
-        ? null
-        : acting.firstWhere(
-            (s) => s.action == 'complete' || s.action == 'start' || s.action == 'depart',
-            orElse: () => acting.first,
-          );
-    final rest = acting.where((s) => s.action != primary?.action).toList();
+    final primary = _primaryStep(o);
+    final rest = o.steps.where((s) => s.action != 'pause' && s.action != primary?.action).toList();
+    if (rest.isEmpty && pause == null) return const [];
     return [
-      if (primary != null && !primary.enabled && primary.reason != null)
-        NoteBox(icon: 'alert-triangle', text: primary.reason!, tone: NoteTone.danger),
       Column(
         children: [
-          if (primary != null)
-            BigButton(label: primary.title, busy: _busy, onPressed: primary.enabled ? () => _runStep(primary) : null),
-          for (final s in rest) ...[
-            const SizedBox(height: SozoSpace.s8),
-            BigButton(label: s.title, kind: BigButtonKind.secondary, onPressed: s.enabled ? () => _runStep(s) : null),
-            if (!s.enabled && s.reason != null)
+          for (var i = 0; i < rest.length; i++) ...[
+            if (i > 0) const SizedBox(height: SozoSpace.s8),
+            BigButton(
+              label: rest[i].title,
+              kind: BigButtonKind.secondary,
+              // Блокировка на время запроса нужна и здесь: двойной тап по
+              // «Я на месте» давал два перехода подряд, а с недавних пор ещё
+              // и конфликт версий вторым ответом
+              onPressed: rest[i].enabled && !_busy ? () => _runStep(rest[i]) : null,
+            ),
+            if (!rest[i].enabled && rest[i].reason != null)
               Padding(
                 padding: const EdgeInsets.only(top: SozoSpace.s4),
                 child: Text(
-                  s.reason!,
+                  rest[i].reason!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+                  style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary),
                 ),
               ),
           ],
@@ -1263,7 +1434,7 @@ class _OrderScreenState extends State<OrderScreen> {
             const SizedBox(height: SozoSpace.s8),
             DangerTextButton(
               label: t('order.priostanovitPauza'),
-              onPressed: pause.enabled ? () => _runStep(pause) : null,
+              onPressed: pause.enabled && !_busy ? () => _runStep(pause) : null,
             ),
           ],
         ],

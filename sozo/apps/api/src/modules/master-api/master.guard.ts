@@ -10,8 +10,12 @@ export interface MasterRequest {
 
 /**
  * Аутентификация приложения мастера (PRD-02 §2).
- * Токен → телефон → карточка мастера. На линию пускаем только активных:
- * кандидат, стажёр и заблокированный получают понятную причину, а не пустой экран.
+ * Токен → телефон → карточка мастера.
+ *
+ * Доступ к заявкам — решение администратора, а не результат прохождения
+ * воронки: в приложении онбординга больше нет, и мастер, у которого доступ
+ * ещё не открыт или закрыт, должен получить причину и телефон, а не пустой
+ * экран и не анкету. Формулировки здесь видит мастер дословно.
  */
 @Injectable()
 export class MasterGuard implements CanActivate {
@@ -32,12 +36,15 @@ export class MasterGuard implements CanActivate {
       });
     }
     if (master.status === 'blocked') {
-      throw new ForbiddenException({ code: 'MASTER_BLOCKED', message: 'Доступ приостановлен. Свяжитесь с диспетчером.' });
+      throw new ForbiddenException({
+        code: 'MASTER_BLOCKED',
+        message: 'Доступ к заявкам закрыт администратором. Свяжитесь с диспетчером.',
+      });
     }
     if (master.status === 'candidate' || master.status === 'checking') {
       throw new ForbiddenException({
-        code: 'ONBOARDING_INCOMPLETE',
-        message: 'Анкета на проверке. Доступ к заявкам откроется после оформления и экзамена.',
+        code: 'ACCESS_NOT_OPEN',
+        message: 'Доступ к заявкам ещё не открыт. Его открывает администратор — позвоните диспетчеру.',
       });
     }
     req.master = master;

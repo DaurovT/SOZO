@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -5,13 +6,20 @@ import '../design_tokens.dart';
 import '../main.dart';
 import '../widgets/brand.dart';
 import '../widgets/common.dart';
+import '../widgets/external_actions.dart';
 import '../widgets/figma_blocks.dart';
 import '../i18n.dart';
 
 /// Вход по телефону и коду (M-00).
 ///
-/// Адрес сервера меняется прямо здесь: браузер ходит на localhost, телефон —
-/// на IP компьютера в той же Wi-Fi, боевой аппарат — на домен. Одна сборка на всё.
+/// Адрес сервера меняется прямо здесь, но не на виду: браузер ходит на
+/// localhost, телефон — на IP компьютера в той же Wi-Fi, боевой аппарат —
+/// на домен. В отладочной сборке поле открыто сразу, в боевой — после семи
+/// тапов по адресу: один любопытный тап по редактируемому адресу оставлял
+/// мастера с неработающим приложением и без кнопки сброса.
+///
+/// Здесь же показывается причина, если к заявкам не пускают: доступ
+/// открывает админ, воронки онбординга в приложении нет.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -26,6 +34,9 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _codeSent = false;
   bool _busy = false;
   bool _serverOpen = false;
+
+  /// Счётчик тапов по адресу сервера: поле открывается на седьмом
+  int _serverTaps = 0;
 
   @override
   void initState() {
@@ -73,8 +84,21 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Доступ мог открыть админ, пока мастер стоял на этом экране
+  Future<void> _recheckAccess() async {
+    setState(() => _busy = true);
+    await session.refreshProfile();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (session.accessDeniedMessage != null) showError(context, session.accessDeniedMessage!);
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Вошли, но к заявкам не допущены: вместо формы входа — причина и две
+    // кнопки. Иначе мастер видит поле телефона, вводит код заново и
+    // получает тот же отказ, не понимая, что дело не в коде
+    if (session.isSignedInWithoutAccess) return _accessDenied();
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -104,6 +128,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: SozoSpace.s16),
                     const Center(child: LanguageSwitch()),
                     SizedBox(height: _codeSent ? 36 : 34),
+                    // Сессия могла протухнуть на объекте: сообщение об этом
+                    // ставит сама сессия, и мастер должен увидеть причину,
+                    // а не гадать, почему его выкинуло
                     if (session.accessDeniedMessage != null) ...[
                       BlockerNote(text: session.accessDeniedMessage!, icon: 'alert-circle'),
                       const SizedBox(height: SozoSpace.s16),
@@ -141,21 +168,26 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: InkWell(
                           onTap: () => setState(() => _codeSent = false),
                           child: Padding(
-                            padding: EdgeInsets.all(SozoSpace.s8),
+                            padding: EdgeInsets.all(SozoSpace.s12),
                             child: Text(
                               t('login.izmenitNomer'),
-                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: SozoColors.accent),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: SozoColors.accent),
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(height: SozoSpace.s8),
-                      Center(
-                        child: Text(
-                          t('login.testovyyKonturKod00000'),
-                          style: TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+                      // Подсказка тестового контура — только в отладочной
+                      // сборке. На боевом экране «код 00000, SMS не
+                      // отправляется» читается как поломка приложения
+                      if (kDebugMode) ...[
+                        const SizedBox(height: SozoSpace.s8),
+                        Center(
+                          child: Text(
+                            t('login.testovyyKonturKod00000'),
+                            style: TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                     const SizedBox(height: SozoSpace.s24),
                     // Адрес сервера в макете не нарисован, но без него не войти
@@ -163,12 +195,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     if (!_serverOpen)
                       Center(
                         child: InkWell(
-                          onTap: () => setState(() => _serverOpen = true),
+                          onTap: () => setState(() {
+                            _serverTaps++;
+                            if (kDebugMode || _serverTaps >= 7) _serverOpen = true;
+                          }),
                           child: Padding(
                             padding: const EdgeInsets.all(SozoSpace.s8),
                             child: Text(
                               session.baseUrl,
-                              style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+                              style: const TextStyle(fontSize: 12, color: SozoColors.textTertiary),
                             ),
                           ),
                         ),
@@ -191,6 +226,45 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ],
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Вошли, но доступ к заявкам закрыт или ещё не открыт.
+  ///
+  /// Один экран на обе причины: мастеру важно не то, какой у него статус в
+  /// системе, а что делать дальше — подождать и перепроверить либо позвонить.
+  Widget _accessDenied() {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(SozoSpace.s24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Center(child: SozoWordmark(height: 40)),
+                  const SizedBox(height: SozoSpace.s32),
+                  BlockerNote(text: session.accessDeniedMessage ?? t('login.dostupZakryt'), icon: 'alert-circle'),
+                  const SizedBox(height: SozoSpace.s24),
+                  PrimaryButton(label: t('login.proveritDostup'), busy: _busy, onPressed: _recheckAccess),
+                  const SizedBox(height: SozoSpace.s12),
+                  if (session.dispatcherPhone != null)
+                    SecondaryButton(
+                      label: t('order.pozvonitDispetcheru'),
+                      onPressed: () => callNumber(context, session.dispatcherPhone),
+                    ),
+                  const SizedBox(height: SozoSpace.s12),
+                  SecondaryButton(label: t('login.voytiDrugimNomerom'), onPressed: session.logout),
+                  const SizedBox(height: SozoSpace.s24),
+                  const Center(child: LanguageSwitch()),
+                ],
               ),
             ),
           ),

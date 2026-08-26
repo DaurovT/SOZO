@@ -30,9 +30,30 @@ class PushService {
   StreamSubscription<RemoteMessage>? _opened;
   StreamSubscription<RemoteMessage>? _foreground;
 
+  /// Инициализация канала. Регистрация устройства её дожидается: раньше обе
+  /// уходили параллельно, и на быстрой сети `register()` спрашивал токен у
+  /// ещё не поднятого Firebase — мастер оставался без офферов до перезапуска
+  final _ready = Completer<void>();
+
+  /// Ссылка из уведомления, по которому запустили приложение.
+  ///
+  /// Холодный старт разбирается внутри `init()`, а обработчик ставится после
+  /// возврата из неё — тап по пушу открывал «Сегодня» вместо заявки. Ссылку
+  /// придерживаем до появления обработчика.
+  String? _pendingDeepLink;
+
+  void Function(String deepLink)? _onDeepLink;
+
   /// Куда вести человека по тапу. Ставится приложением при старте: сам слой
   /// не знает ни про экраны, ни про навигацию.
-  void Function(String deepLink)? onDeepLink;
+  set onDeepLink(void Function(String deepLink)? handler) {
+    _onDeepLink = handler;
+    final pending = _pendingDeepLink;
+    if (handler != null && pending != null) {
+      _pendingDeepLink = null;
+      handler(pending);
+    }
+  }
 
   /// Уведомление пришло, пока приложение открыто. Экран решает сам — показать
   /// плашку, обновить карточку заявки или промолчать.
@@ -78,6 +99,8 @@ class PushService {
       // Приложению это не мешает
       _messaging = null;
       debugPrint('push unavailable: $e');
+    } finally {
+      if (!_ready.isCompleted) _ready.complete();
     }
   }
 
@@ -87,6 +110,9 @@ class PushService {
   /// токен за телефоном, и если аппаратом стал пользоваться другой человек,
   /// строка обязана переехать на него.
   Future<void> register() async {
+    // Ждём инициализацию: без этого первая попытка выходила впустую на
+    // непрогретом Firebase, а второй в этой сессии уже не было
+    await _ready.future;
     final messaging = _messaging;
     if (messaging == null || _api.token == null) return;
     try {
@@ -107,11 +133,29 @@ class PushService {
           await Future<void>.delayed(const Duration(seconds: 1));
         }
       }
-      final token = await messaging.getToken();
-      if (token != null) await _send(token);
+      // Токен может не выдаться с первого раза: сеть, прогрев сервисов,
+      // только что выданное разрешение. Пропущенная регистрация — это
+      // пропущенные офферы на всю смену, поэтому пробуем трижды
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final token = await messaging.getToken();
+        if (token != null) {
+          await _send(token);
+          return;
+        }
+        await Future<void>.delayed(Duration(seconds: 2 * (attempt + 1)));
+      }
+      debugPrint('device token not obtained after 3 attempts');
     } catch (e) {
       debugPrint('device token not obtained: $e');
     }
+  }
+
+  /// Убедиться, что устройство зарегистрировано. Зовётся при возврате в
+  /// приложение: если регистрация не удалась при старте, второй попытки
+  /// раньше не было вовсе
+  Future<void> ensureRegistered() async {
+    if (_registered != null || _api.token == null) return;
+    await register();
   }
 
   /// Снять устройство при выходе. Иначе уведомления по чужим заявкам
@@ -145,7 +189,13 @@ class PushService {
 
   void _handleOpened(RemoteMessage m) {
     final deepLink = m.data['deepLink'] as String?;
-    if (deepLink != null && deepLink.isNotEmpty) onDeepLink?.call(deepLink);
+    if (deepLink == null || deepLink.isEmpty) return;
+    final handler = _onDeepLink;
+    if (handler == null) {
+      _pendingDeepLink = deepLink; // обработчик ещё не поставлен — придержим
+      return;
+    }
+    handler(deepLink);
   }
 
   void _handleForeground(RemoteMessage m) {

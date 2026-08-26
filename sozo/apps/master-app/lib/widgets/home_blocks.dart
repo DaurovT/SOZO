@@ -160,11 +160,14 @@ class MetricCard extends StatelessWidget {
 
 /// Пилюля фильтра: активная янтарная с точкой, обычная белая (node 25:220)
 class FilterPill extends StatelessWidget {
-  const FilterPill({super.key, required this.label, required this.active, this.emoji, this.onTap});
+  const FilterPill({super.key, required this.label, required this.active, this.icon, this.onTap});
 
   final String label;
   final bool active;
-  final String? emoji;
+
+  /// Иконка набора у неактивной пилюли. Эмодзи здесь были бы единственным
+  /// местом в навигации, где картинку рисует шрифт системы
+  final String? icon;
   final VoidCallback? onTap;
 
   @override
@@ -176,19 +179,19 @@ class FilterPill extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(100),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: SozoSpace.s8),
+          padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16, vertical: SozoSpace.s12),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (active)
                 const FigmaIcon('ellipse', size: 8)
-              else if (emoji != null)
-                Text(emoji!, style: const TextStyle(fontSize: 13)),
+              else if (icon != null)
+                FigmaIcon(icon!, size: 14, color: SozoColors.textSecondary),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: active ? FontWeight.w600 : FontWeight.w500,
                   color: active ? SozoColors.text : SozoColors.textSecondary,
                 ),

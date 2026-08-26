@@ -79,6 +79,16 @@ class _OutboxScreenState extends State<OutboxScreen> {
                             style: const TextStyle(fontSize: 13, color: SozoColors.error, height: 1.35),
                           ),
                           const SizedBox(height: SozoSpace.s8),
+                          // «Повторить» стоит первой: у застрявшей операции
+                          // единственной кнопкой было «убрать», то есть стереть
+                          // работу за день. Половина причин — временные
+                          // (сессия, шлюз, слишком большой пакет)
+                          PrimaryButton(
+                            label: t('sync.povtorit'),
+                            busy: outbox.syncing,
+                            onPressed: () => outbox.retry(op.clientOpUuid),
+                          ),
+                          const SizedBox(height: SozoSpace.s8),
                           SecondaryButton(
                             label: t('sync.ubratIzOcheredi'),
                             onPressed: () async {

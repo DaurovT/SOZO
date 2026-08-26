@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../api/client.dart';
 import '../design_tokens.dart';
 import '../i18n.dart';
+import '../store/outbox.dart';
 import '../store/session.dart';
 import '../widgets/common.dart';
+import '../widgets/figma_blocks.dart';
 import '../widgets/figma_icon.dart';
 import '../widgets/photo_capture.dart';
 
@@ -95,17 +98,39 @@ class _PermitScreenState extends State<PermitScreen> {
   bool _busy = false;
   String? _photoId;
 
-  Future<void> _act(String action) async {
+  /// Переход по наряду-допуску.
+  ///
+  /// Три вещи, из-за которых он раньше не проходил никогда:
+  ///  • схема требует `clientOpUuid` в формате UUID — его не слали вовсе,
+  ///    и сервер отвечал 400 на каждое вскрытие зоны;
+  ///  • ошибку ловили как `Object`, поэтому 400 читался как «нет сети»:
+  ///    экран рисовал «Зона вскрыта», операция уезжала в очередь, а на
+  ///    сервере наряда не появлялось ни сейчас, ни потом;
+  ///  • закрытие требует явного подтверждения, что зона сдана.
+  ///
+  /// Это ещё и юридическая запись о допуске к работам — молча терять её нельзя.
+  Future<void> _act(String action, {bool zoneSecured = false}) async {
     if (_busy) return;
     setState(() => _busy = true);
-    final body = <String, dynamic>{'action': action, if (_photoId != null) 'photoId': _photoId};
+    final body = <String, dynamic>{
+      'action': action,
+      'clientOpUuid': newOpUuid(),
+      if (_photoId != null) 'photoId': _photoId,
+      if (action == 'close') 'zoneSecured': zoneSecured,
+    };
     try {
       final r = await widget.session.api.post('/permits/${_p.id}/transitions', body);
       if (!mounted) return;
       setState(() => _p = PermitInfo.fromJson(Map<String, dynamic>.from(r as Map)));
       showOk(context, action == 'open' ? t('permit.zonaVskryta') : t('permit.zonaZakryta'));
-    } on Object catch (e) {
-      // Офлайн — в очередь: именно ради этого случая экран и существует
+    } on ApiError catch (e) {
+      // В очередь уходит только то, что связь действительно не пустила.
+      // Отказ сервера показываем как отказ: наряд — не то место, где можно
+      // делать вид, что всё получилось
+      if (!e.keepsData) {
+        if (mounted) showError(context, e);
+        return;
+      }
       await widget.session.outbox.enqueue(
         orderId: widget.orderId,
         kind: 'permit_$action',
@@ -114,11 +139,22 @@ class _PermitScreenState extends State<PermitScreen> {
       );
       if (!mounted) return;
       setState(() => _p = PermitInfo.fromJson({..._toJson(_p), 'status': action == 'open' ? 'opened' : 'closed'}));
-      showOk(context, t('permit.netSetiOtmetkaUydet'));
-      debugPrint('permit $action queued: $e');
+      showOk(context, queuedMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Закрытие наряда: сервер требует подтверждения, что зона сдана, —
+  /// раньше проверка выполнялась самим нажатием кнопки и не значила ничего
+  Future<void> _close() async {
+    final ok = await showSozoConfirm(
+      context,
+      title: t('permit.zakrytieZony'),
+      body: t('permit.zonaSdanaPodtverjdenie'),
+      confirmLabel: t('permit.zonaSdana'),
+    );
+    if (ok == true) await _act('close', zoneSecured: true);
   }
 
   Map<String, dynamic> _toJson(PermitInfo p) => {
@@ -301,14 +337,18 @@ class _PermitScreenState extends State<PermitScreen> {
         'shutdownStartedAt': started ? _p.shutdownStartedAt : DateTime.now().toIso8601String(),
       }));
       showOk(context, started ? t('permit.resursVklyuchen') : t('permit.resursOtklyuchen'));
-    } on Object catch (_) {
+    } on ApiError catch (e) {
+      if (!e.keepsData) {
+        if (mounted) showError(context, e);
+        return;
+      }
       await widget.session.outbox.enqueue(
         orderId: widget.orderId,
         kind: started ? 'shutdown_restore' : 'shutdown_start',
-        payload: {'shutdownId': _p.shutdownId},
+        payload: {'shutdownId': _p.shutdownId, 'clientOpUuid': newOpUuid()},
         title: started ? t('permit.vklyuchenieResursa') : t('permit.otklyuchenieResursa'),
       );
-      if (mounted) showOk(context, t('permit.netSetiOtmetkaUydet'));
+      if (mounted) showOk(context, queuedMessage(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -326,14 +366,23 @@ class _PermitScreenState extends State<PermitScreen> {
         alreadyTaken: _photoId == null ? 0 : 1,
         onUpload: (dataUrl) async {
           try {
-            final r = await widget.session.api.uploadPhoto(widget.orderId, {'stage': stage, 'data': dataUrl});
+            // Ключ снимка один на всё приложение — `dataUrl`. Наряд слал
+            // `data`, и сервису приходилось знать оба имени
+            final r = await widget.session.api.uploadPhoto(widget.orderId, {'stage': stage, 'dataUrl': dataUrl});
             if (mounted) setState(() => _photoId = (r['id'] ?? r['photoId'])?.toString());
             return true;
-          } on Object catch (_) {
+          } on ApiError catch (e) {
+            if (!e.keepsData) {
+              if (mounted) showError(context, e);
+              return false;
+            }
+            // Идентификатором снимка становится ключ операции: сервер примет
+            // его как id фото, когда очередь дойдёт. Поэтому он и обязан
+            // быть настоящим UUID
             final id = await widget.session.outbox.enqueue(
               orderId: widget.orderId,
               kind: 'photo',
-              payload: {'stage': stage, 'data': dataUrl, 'permitId': _p.id},
+              payload: {'stage': stage, 'dataUrl': dataUrl, 'permitId': _p.id},
               title: title,
             );
             if (mounted) setState(() => _photoId = id);
@@ -358,7 +407,7 @@ class _PermitScreenState extends State<PermitScreen> {
           const SizedBox(height: SozoSpace.s12),
           PrimaryButton(
             label: t('permit.zakrylZonu'),
-            onPressed: _busy || _photoId == null ? null : () => _act('close'),
+            onPressed: _busy || _photoId == null ? null : _close,
           ),
           if (_photoId == null)
             Padding(

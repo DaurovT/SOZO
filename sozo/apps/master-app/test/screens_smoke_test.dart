@@ -12,11 +12,11 @@ import 'package:sozo_master/i18n.dart';
 import 'package:sozo_master/main.dart';
 import 'package:sozo_master/screens/addwork_screen.dart';
 import 'package:sozo_master/screens/badge_screen.dart';
+import 'package:sozo_master/screens/help_screen.dart';
 import 'package:sozo_master/screens/branch_screens.dart';
 import 'package:sozo_master/screens/login_screen.dart';
 import 'package:sozo_master/screens/notifications_screen.dart';
 import 'package:sozo_master/screens/offer_sheet.dart';
-import 'package:sozo_master/screens/onboarding_screen.dart';
 import 'package:sozo_master/screens/order_extras.dart';
 import 'package:sozo_master/screens/order_screen.dart';
 import 'package:sozo_master/screens/orders_screen.dart';
@@ -92,6 +92,7 @@ void main() {
     testWidgets('сегодня', (t) => check(t, 'Сегодня', const TodayScreen()));
     testWidgets('мои заявки', (t) => check(t, 'Мои заявки', const OrdersScreen()));
     testWidgets('профиль', (t) => check(t, 'Профиль', const ProfileScreen()));
+    testWidgets('как это работает', (t) => check(t, 'Как это работает', const HelpScreen()));
     // M-46 замещает кошелёк в сменах оператора: экран обязан строиться
     // и на данных, и на отказе «вы не в штате» — второй случай приходит
     // чаще, чем кажется, и раньше такие ветки роняли вкладку
@@ -113,8 +114,6 @@ void main() {
         ),
       );
     });
-    testWidgets('оформление', (t) => check(t, 'Оформление', const OnboardingScreen()));
-
     // Навык приходит с сервера по-русски и таким же уходит обратно в анкету,
     // поэтому переводится только показ. Ошибиться тут легко и незаметно:
     // словарь значений добавили, а вызвать `tv` на экране забыли — интерфейс
@@ -134,6 +133,7 @@ void main() {
     testWidgets('график', (t) => check(t, 'График', const ScheduleTab()));
     testWidgets('кошелёк', (t) => check(t, 'Кошелёк', const WalletScreen()));
     testWidgets('профиль', (t) => check(t, 'Профиль', const ProfileScreen()));
+    testWidgets('как это работает', (t) => check(t, 'Как это работает', const HelpScreen()));
     testWidgets('уведомления', (t) => check(t, 'Уведомления', const NotificationsScreen()));
     testWidgets('очередь отправки', (t) => check(t, 'Очередь отправки', const OutboxScreen()));
 
@@ -190,12 +190,6 @@ void main() {
         ),
       );
     });
-
-    testWidgets('оформление', (t) => check(t, 'Оформление', const OnboardingScreen()));
-    testWidgets('анкета', (t) => check(t, 'Анкета', const ApplicationScreen()));
-    testWidgets('документы кандидата', (t) => check(t, 'Документы кандидата', const DocumentsScreen()));
-    testWidgets('обучение', (t) => check(t, 'Обучение', const TrainingScreen()));
-    testWidgets('экзамен', (t) => check(t, 'Экзамен', ExamScreen(exam: const {'available': true, 'attemptsLeft': 3})));
   });
 }
 
@@ -593,8 +587,9 @@ class _FixtureResponse extends Stream<List<int>> implements HttpClientResponse {
     void Function()? onDone,
     bool? cancelOnError,
   }) {
-    return Stream<List<int>>.value(Uint8List.fromList(_body))
-        .listen(onData, onError: onError, onDone: onDone, cancelOnError: cancelOnError);
+    return Stream<List<int>>.value(
+      Uint8List.fromList(_body),
+    ).listen(onData, onError: onError, onDone: onDone, cancelOnError: cancelOnError);
   }
 
   @override

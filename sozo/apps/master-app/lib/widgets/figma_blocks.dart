@@ -65,8 +65,11 @@ class CardTitle extends StatelessWidget {
   }
 }
 
-/// Текстовое действие янтарём — 14/semibold. Кнопкой не оформляется:
-/// в макете это подпись у правого края строки.
+/// Текстовое действие янтарём — 14/semibold. Выглядит подписью у правого
+/// края строки (так в макете), но нажимается как кнопка: «Составить»,
+/// «Изменить», «Снять», «Зафиксировать» — это рабочие действия конвейера,
+/// и по 40×21 в перчатке зимой в подъезде мастер не попадает.
+/// Отступы дают тач-таргет 48, при этом надпись остаётся на месте.
 class AmberAction extends StatelessWidget {
   const AmberAction(this.label, {super.key, this.onTap, this.fontSize = 14});
 
@@ -79,14 +82,20 @@ class AmberAction extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(SozoRadius.badge),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s4, vertical: 2),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: FontWeight.w600,
-            color: onTap == null ? SozoColors.textTertiary : SozoColors.accent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: SozoSize.tap, minWidth: SozoSize.tap),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s12, vertical: SozoSpace.s12),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: fontSize,
+                fontWeight: FontWeight.w600,
+                color: onTap == null ? SozoColors.textTertiary : SozoColors.accent,
+              ),
+            ),
           ),
         ),
       ),
@@ -129,7 +138,9 @@ class NoteBox extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg, height: 1.35),
+              // 15, а не макетные 12: это единственное место, где написано,
+              // почему следующий шаг недоступен
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: fg, height: 1.35),
             ),
           ),
         ],
@@ -358,7 +369,10 @@ class BigButton extends StatelessWidget {
           child: busy
               ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2))
               : Text(
+                  // Без maxLines: при системном шрифте 150–200% «Принять
+                  // заявку» должно переноситься, а не превращаться в «Приня…»
                   label,
+                  textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16, fontWeight: weight, color: fg),
                 ),
         ),
@@ -505,8 +519,10 @@ class FloatingLabelField extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Container(
-          height: SozoSize.field,
-          padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16),
+          // Не жёсткая высота: при крупном системном шрифте текст в поле
+          // обрезался снизу
+          constraints: const BoxConstraints(minHeight: SozoSize.field),
+          padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16, vertical: SozoSpace.s8),
           decoration: BoxDecoration(
             color: SozoColors.surface,
             borderRadius: BorderRadius.circular(SozoRadius.field),
@@ -665,7 +681,8 @@ class SozoSwitch extends StatelessWidget {
   }
 }
 
-/// Счётчик количества (макет 53:556): кружки 28 со знаками «−» и «+».
+/// Счётчик количества (макет 53:556): кружки со знаками «−» и «+».
+/// В макете они 28 — это непопадаемо в перчатке, поэтому 44 при поле нажатия 48.
 /// Знаки набраны текстом — так они и нарисованы в макете, отдельных иконок нет.
 class QtyStepper extends StatelessWidget {
   const QtyStepper({super.key, required this.qty, required this.onMinus, required this.onPlus});
@@ -680,12 +697,16 @@ class QtyStepper extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         _btn('−', onMinus, plus: false),
-        const SizedBox(width: 14),
-        Text(
-          '$qty',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: SozoColors.text),
+        const SizedBox(width: SozoSpace.s8),
+        SizedBox(
+          width: 28,
+          child: Text(
+            '$qty',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: SozoColors.text),
+          ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: SozoSpace.s8),
         _btn('+', onPlus, plus: true),
       ],
     );
@@ -694,22 +715,22 @@ class QtyStepper extends StatelessWidget {
   Widget _btn(String sign, VoidCallback onTap, {required bool plus}) {
     return Material(
       color: plus ? softWarnBg : SozoColors.bg,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(22),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(22),
         onTap: onTap,
         child: Container(
-          width: 28,
-          height: 28,
+          width: 44,
+          height: 44,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: plus ? bannerBorder : SozoColors.border),
           ),
           child: Text(
             sign,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 22,
               fontWeight: FontWeight.w600,
               color: plus ? SozoColors.text : SozoColors.textSecondary,
             ),
@@ -735,11 +756,17 @@ class SmallChipButton extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(SozoRadius.badge),
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s12, vertical: 6),
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: SozoColors.text),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: SozoSize.tap),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: SozoSpace.s16, vertical: SozoSpace.s12),
+            child: Center(
+              widthFactor: 1,
+              child: Text(
+                label,
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.text),
+              ),
+            ),
           ),
         ),
       ),

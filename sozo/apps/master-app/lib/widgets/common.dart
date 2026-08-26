@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../api/client.dart';
 import '../design_tokens.dart';
 import '../store/outbox.dart';
 import 'figma_blocks.dart';
@@ -88,8 +90,11 @@ class PrimaryButton extends StatelessWidget {
         child: busy
             ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: fg))
             : Text(
+                // Две строки вместо обрезки: при системном шрифте 150–200%
+                // «Принять заявку» превращалось в «Приня…»
                 label,
-                maxLines: 1,
+                maxLines: 2,
+                textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
@@ -123,7 +128,8 @@ class SecondaryButton extends StatelessWidget {
         ),
         child: Text(
           label,
-          maxLines: 1,
+          maxLines: 2,
+          textAlign: TextAlign.center,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
@@ -211,7 +217,9 @@ class BlockerNote extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg, height: 1.35),
+              // 15, а не макетные 12: плашка объясняет, почему нельзя дальше,
+              // и читают её на улице, часто в очках не для чтения
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: fg, height: 1.35),
             ),
           ),
         ],
@@ -235,9 +243,17 @@ class OfflineBar extends StatelessWidget {
       builder: (context, _) {
         if (outbox.online && outbox.depth == 0) return const SizedBox.shrink();
         final blocked = outbox.hasBlocked;
-        final color = blocked ? SozoColors.error : (outbox.online ? SozoColors.warning : SozoColors.textSecondary);
+        final stuck = outbox.lastFlushError;
+        final color = blocked || stuck != null
+            ? SozoColors.error
+            : (outbox.online ? SozoColors.warning : SozoColors.textSecondary);
+        // Порядок важен: отказ по операции требует человека, неудачная
+        // попытка пройдёт сама, а «отправляем» без причины — то самое
+        // бесконечное обещание, из-за которого мастер переставал верить плашке
         final text = blocked
             ? t('common.ocheredOstanovlena', {'p1': outbox.ops.firstWhere((o) => o.lastError != null).lastError})
+            : stuck != null
+            ? t('common.ocheredNeUshla', {'p1': stuck})
             : outbox.online
             ? t('common.otpravlyaemNakoplennoe', {'p1': outbox.depth})
             : t('common.netSetiRabotaemOflayn', {
@@ -431,7 +447,75 @@ void _toast(BuildContext context, String text, Duration duration) {
     );
 }
 
-void showError(BuildContext context, Object e) => _toast(context, '$e', const Duration(seconds: 4));
+/// Текст ошибки для мастера.
+///
+/// `'$e'` печатал в тост `PlatformException(camera_access_denied, …)` —
+/// строку, из которой мастер не может понять ни что случилось, ни что делать.
+/// Понятные тексты сервера пропускаем как есть, остальное сводим к причинам,
+/// которые встречаются на объекте.
+String humanError(Object e) {
+  if (e is ApiError) return e.message;
+  final raw = '$e';
+  if (raw.contains('camera_access_denied') || raw.contains('photo_access_denied')) {
+    return t('common.oshibkaKameraZakryta');
+  }
+  if (raw.contains('SocketException') || raw.contains('ClientException') || raw.contains('TimeoutException')) {
+    return t('common.oshibkaNetSvyazi');
+  }
+  if (raw.contains('no_available_camera') || raw.contains('camera_error')) return t('common.oshibkaKameraNeOtvechaet');
+  return t('common.oshibkaNeVyshloPovtorite');
+}
+
+void showError(BuildContext context, Object e) => _toast(context, humanError(e), const Duration(seconds: 4));
+
+/// Что сказать мастеру, когда операция легла в очередь.
+///
+/// Причин четыре, и они не равны: пропавшая связь — норма работы, протухшая
+/// сессия требует войти заново, авария шлюза пройдёт сама. Раньше все три
+/// показывались как «нет сети», и мастер не понимал, почему очередь стоит.
+String queuedMessage(ApiError e) {
+  if (e.statusCode == 401) return t('net.sessiyaIsteklaSohraneno');
+  if (e.isGateway || (e.statusCode ?? 0) >= 500) return t('net.serverNeOtvetil');
+  return t('common.bezSvyaziSohraneno');
+}
+
+/// Разряды в поле суммы прямо при наборе.
+///
+/// Долг вносят руками, а «200000» и «2000000» на экране телефона отличаются
+/// одним символом: ошибка на порядок обнаруживается уже после оплаты.
+/// Наружу отдаём то же поле без пробелов — разбирает его `digitsOf`.
+class ThousandsFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = digitsOf(newValue.text);
+    if (digits.isEmpty) return newValue.copyWith(text: '');
+    final text = groupDigits(digits);
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
+
+/// Только цифры: поле суммы показывает разряды пробелами, а серверу уходит число
+String digitsOf(String raw) => raw.replaceAll(RegExp(r'[^0-9]'), '');
+
+/// Сумма из поля ввода.
+///
+/// `int.tryParse('150 000') ?? 0` возвращал ноль: мастер набирал сумму с
+/// пробелом — привычка от денег — и запчасть уходила в заявку с нулевой
+/// ценой. Чек при этом приложен, работа сделана, денег нет.
+int soumsOf(String raw) => int.tryParse(digitsOf(raw)) ?? 0;
+
+/// Разряды пробелами: 2000000 → «2 000 000»
+String groupDigits(String digits) {
+  final buf = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buf.write(' ');
+    buf.write(digits[i]);
+  }
+  return buf.toString();
+}
 
 void showOk(BuildContext context, String text) => _toast(context, text, const Duration(seconds: 3));
 

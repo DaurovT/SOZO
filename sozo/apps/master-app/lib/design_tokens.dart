@@ -10,10 +10,16 @@ abstract final class SozoColors {
   static const bg = Color(0xFFF4F5F7);
   static const surface = Color(0xFFFFFFFF);
   static const text = Color(0xFF141518);
-  static const textSecondary = Color(0xFF8E939F);
 
-  /// Третий уровень: единицы измерения, счётчики, служебные подписи
-  static const textTertiary = Color(0xFFB4B4BD);
+  /// Второй уровень — пояснения, подписи, причины блокировки.
+  /// Макетный #8E939F давал 3,08:1 на белом при норме 4,5: дальнозоркий
+  /// мастер на солнце такой текст не читает. #6B7280 даёт 4,83:1.
+  static const textSecondary = Color(0xFF6B7280);
+
+  /// Третий уровень: единицы измерения, счётчики, служебные подписи.
+  /// Ниже #8E939F не опускаемся — это бывший второй уровень, и на нём
+  /// смысловых строк уже нет
+  static const textTertiary = Color(0xFF8E939F);
 
   /// Акцент из знака: главная кнопка экрана, активная вкладка, деньги мастера
   static const accent = Color(0xFFFEB70F);
@@ -83,6 +89,9 @@ abstract final class SozoSpace {
 
 /// Высоты интерактивных элементов: под палец в перчатке (DEV-09 §5 п.1)
 abstract final class SozoSize {
+  /// Минимальный тач-таргет: ниже 48 палец в перчатке не попадает.
+  /// Одно число на всё приложение — иконки, шаги количества, клетки календаря
+  static const tap = 48.0;
   static const buttonPrimary = 56.0;
   static const buttonSecondary = 48.0;
   static const field = 56.0;

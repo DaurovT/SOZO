@@ -7,7 +7,6 @@ import 'widgets/figma_icon.dart';
 import 'i18n.dart';
 import 'screens/output_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/onboarding_screen.dart';
 import 'screens/orders_screen.dart';
 import 'screens/outbox_screen.dart';
 import 'screens/profile_extras.dart';
@@ -25,6 +24,15 @@ final session = Session();
 /// Ключ навигатора: тап по уведомлению приходит вне дерева виджетов, и
 /// открыть по нему экран больше нечем — контекста у такого события нет.
 final navigatorKey = GlobalKey<NavigatorState>();
+
+/// Активная вкладка оболочки.
+///
+/// Вынесена наружу ради дедлинков: «Сегодня», «Деньги» и «График» живут
+/// внутри `MasterShell` и своего `Scaffold` не имеют. Push таких экранов
+/// новым роутом давал прозрачный фон, полосатый текст и экран без таббара —
+/// именно то, что мастер видел, тапнув по уведомлению. Теперь уведомление
+/// переключает вкладку, а не открывает второй экземпляр ленты.
+final shellTab = ValueNotifier<int>(0);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,6 +73,15 @@ class _MasterAppState extends State<MasterApp> {
       title: t('common.sozoMaster'),
       debugShowCheckedModeBanner: false,
       theme: sozoTheme(),
+      // Крупный системный шрифт приложение обязано пережить: у мастера
+      // за пятьдесят он включён почти всегда. Потолок 1.6 — граница, за
+      // которой кнопка шага перестаёт помещаться на экране 5,5″ целиком;
+      // ниже единицы не опускаемся, мельче макета делать нечего.
+      builder: (context, child) => MediaQuery.withClampedTextScaling(
+        minScaleFactor: 1.0,
+        maxScaleFactor: 1.6,
+        child: child ?? const SizedBox.shrink(),
+      ),
       // Слушаем и язык: он переключается на ходу, и перерисоваться должно
       // всё дерево, а не только экран с переключателем.
       // Ключ по языку: при переключении дерево пересоздаётся целиком, и экраны
@@ -80,8 +97,9 @@ class _MasterAppState extends State<MasterApp> {
           }
           if (session.forceUpdate) return const _ForceUpdateScreen();
           if (session.isAuthorized) return const MasterShell();
-          // Кандидат вошёл, но на линию не выпущен — показываем воронку, а не пустой экран
-          if (session.isOnboarding) return const OnboardingScreen();
+          // Доступ закрыт или его ещё не открыли — причина показывается на
+          // экране входа. Воронки онбординга в приложении больше нет:
+          // мастера заводит и допускает к заявкам админ
           return const LoginScreen();
         },
       ),
@@ -131,8 +149,44 @@ class MasterShell extends StatefulWidget {
   State<MasterShell> createState() => _MasterShellState();
 }
 
-class _MasterShellState extends State<MasterShell> {
+class _MasterShellState extends State<MasterShell> with WidgetsBindingObserver {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    shellTab.addListener(_onTabRequested);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    shellTab.removeListener(_onTabRequested);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Возврат в приложение — единственный надёжный момент, когда связь могла
+  /// появиться незаметно: мастер вышел из подвала, посмотрел в телефон.
+  /// Раньше очередь уходила только по тику ленты «Сегодня», и вернувшийся
+  /// из «Профиля» или «Заявок» синхронизацию не запускал вовсе.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(session.outbox.flush());
+    // Токен устройства мог не выдаться при старте: без него не приходят офферы
+    unawaited(session.push.ensureRegistered());
+  }
+
+  /// Вкладку просит дедлинк уведомления
+  void _onTabRequested() {
+    if (mounted && shellTab.value != _tab) setState(() => _tab = shellTab.value);
+  }
+
+  void _select(int i) {
+    setState(() => _tab = i);
+    shellTab.value = i;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,7 +205,7 @@ class _MasterShellState extends State<MasterShell> {
               child: IndexedStack(
                 index: _tab,
                 children: [
-                  TodayScreen(onOpenWallet: () => setState(() => _tab = 3)),
+                  TodayScreen(onOpenWallet: () => _select(3)),
                   const OrdersScreen(),
                   const ScheduleTab(),
                   // M-34 или M-46 — решает аффилиация, не пользователь (DEV-09)
@@ -163,7 +217,7 @@ class _MasterShellState extends State<MasterShell> {
           ],
         ),
       ),
-      bottomNavigationBar: SozoTabBar(index: _tab, onSelect: (i) => setState(() => _tab = i)),
+      bottomNavigationBar: SozoTabBar(index: _tab, onSelect: _select),
     );
   }
 }

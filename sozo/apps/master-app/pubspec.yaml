@@ -43,6 +43,8 @@ dependencies:
   qr_flutter: ^4.1.0
   firebase_core: ^4.13.0
   firebase_messaging: ^16.5.0
+  url_launcher: ^6.3.2
+  path_provider: ^2.1.6
 # Xcode-лицензия в этой среде не принята: objective_c 9.5 не собирается на macOS-хосте
 # и роняет flutter test. Приложение целится в Android, поэтому фиксируем версию без него.
 dependency_overrides:

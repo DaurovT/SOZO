@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../main.dart';
 import '../screens/notifications_screen.dart';
 import '../screens/order_screen.dart';
-import '../screens/today_screen.dart';
-import '../screens/wallet_screen.dart';
 
 /// Куда ведёт тап по уведомлению мастера (PRD-02 §5, колонка «Deep-link»).
 ///
@@ -11,6 +10,11 @@ import '../screens/wallet_screen.dart';
 /// `sozo-master://offer/{id}`, `sozo-master://wallet`, `sozo-master://feed/today`.
 /// Разбирает их приложение — сервер знает событие, но не знает, какие экраны
 /// есть в этой сборке.
+///
+/// Вкладки оболочки («Сегодня», «Деньги») открываются переключением, а не
+/// новым роутом: своего `Scaffold` у них нет, и push давал прозрачный фон,
+/// наложенный текст и экран без таббара. Отдельные экраны — заявка и лента
+/// уведомлений — по-прежнему открываются поверх.
 ///
 /// Оффер — особый случай. Его карточка живёт всплывающим листом поверх
 /// «Сегодня» и показывается сама, когда оффер приходит в открытое приложение
@@ -24,24 +28,31 @@ Future<void> openDeepLink(NavigatorState nav, String raw) async {
   final parts = [uri.host, ...uri.pathSegments].where((s) => s.isNotEmpty).toList();
   if (parts.isEmpty) return;
 
-  Widget screen;
+  /// Вернуться к оболочке и показать нужную вкладку
+  void openTab(int index) {
+    nav.popUntil((r) => r.isFirst);
+    shellTab.value = index;
+  }
+
   switch (parts.first) {
     case 'order':
       // Подпути (/estimate, /payment, /upsell) ведут на карточку заявки:
       // рабочий конвейер мастера собран на ней целиком, и вкладки внутри
       // открываются в один тап уже с загруженной заявкой
-      screen = parts.length >= 2 ? OrderScreen(orderId: parts[1]) : const TodayScreen();
+      if (parts.length >= 2) {
+        await nav.push(MaterialPageRoute(builder: (_) => OrderScreen(orderId: parts[1])));
+      } else {
+        openTab(0);
+      }
     case 'offer':
     case 'feed':
-      screen = const TodayScreen();
+      openTab(0);
     case 'wallet':
-      screen = const WalletScreen();
+      openTab(3);
     default:
       // Незнакомая ссылка — из уведомления, которого эта версия приложения
       // не знает. Лента показывает событие целиком: это лучше, чем не
       // открыть ничего в ответ на тап
-      screen = const NotificationsScreen();
+      await nav.push(MaterialPageRoute(builder: (_) => const NotificationsScreen()));
   }
-
-  await nav.push(MaterialPageRoute(builder: (_) => screen));
 }

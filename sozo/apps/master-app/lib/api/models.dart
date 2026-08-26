@@ -10,15 +10,36 @@ import '../screens/permit_screen.dart';
 int _int(dynamic v) => v is num ? v.toInt() : 0;
 String _str(dynamic v) => v?.toString() ?? '';
 
-/// Сумма приходит в тийинах (1 сум = 100 тийин), делить только на выводе
+/// Сумма приходит в тийинах (1 сум = 100 тийин), делить только на выводе.
+///
+/// Минус выносим за разряды: он считался цифрой, и −123 456 показывалось как
+/// «- 123 456» — в кошельке и в строке наличного долга, то есть ровно там,
+/// где отрицательная сумма и появляется.
 String formatSoums(int tiyin) {
-  final soums = (tiyin / 100).round().toString();
-  final buf = StringBuffer();
-  for (var i = 0; i < soums.length; i++) {
-    if (i > 0 && (soums.length - i) % 3 == 0) buf.write(' ');
-    buf.write(soums[i]);
+  final soums = (tiyin / 100).round();
+  final digits = soums.abs().toString();
+  final buf = StringBuffer(soums < 0 ? '−' : '');
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buf.write(' ');
+    buf.write(digits[i]);
   }
   return t('status.sum', {'p1': buf});
+}
+
+/// Деньги из ответа сервера. Жёсткий `as num` на экранах ронял кошелёк и
+/// главную, если поле не пришло: модели терпимы к пропускам, экраны — нет
+int tiyinOf(Object? v) => v is num ? v.toInt() : 0;
+
+/// Минуты словами: 200 → «3 ч 20 мин», 480 → «8 ч».
+///
+/// Сервер отдаёт загрузку смены в минутах, и «занято 200 мин из 480 мин»
+/// мастер в уме не переводит — он думает часами.
+String formatDuration(int minutes) {
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  if (h == 0) return '$m ${t('output.min')}';
+  if (m == 0) return '$h ${t('output.chas')}';
+  return '$h ${t('output.chas')} $m ${t('output.min')}';
 }
 
 /// Время и дата из ISO-строки сервера.

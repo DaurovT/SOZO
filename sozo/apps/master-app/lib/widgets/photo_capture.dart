@@ -52,6 +52,38 @@ class _PhotoCaptureSheetState extends State<PhotoCaptureSheet> {
   int get _total => widget.alreadyTaken + _taken.length;
   bool get _enough => _total >= widget.minRequired;
 
+  @override
+  void initState() {
+    super.initState();
+    _recoverLost();
+  }
+
+  /// Android вправе выгрузить приложение, пока открыта камера — на дешёвом
+  /// аппарате с малой памятью это норма, а не редкость. Снимок при этом уже
+  /// сделан, но возвращается не в приложение, а в никуда: мастер видит пустой
+  /// экран и снимает заново, стоя в подвале. Забираем потерянное при возврате.
+  Future<void> _recoverLost() async {
+    try {
+      final lost = await _picker.retrieveLostData();
+      final file = lost.file;
+      if (file == null || !mounted) return;
+      setState(() => _busy = true);
+      await _accept(file);
+    } catch (_) {
+      /* нечего восстанавливать — обычный случай */
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Общий путь для только что снятого и для восстановленного снимка
+  Future<void> _accept(XFile file) async {
+    final bytes = await file.readAsBytes();
+    final mime = file.mimeType ?? (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+    final ok = await widget.onUpload('data:$mime;base64,${base64Encode(bytes)}');
+    if (ok && mounted) setState(() => _taken.add(bytes));
+  }
+
   Future<void> _shoot() async {
     if (_total >= widget.maxPhotos) return;
     setState(() => _busy = true);
@@ -63,10 +95,7 @@ class _PhotoCaptureSheetState extends State<PhotoCaptureSheet> {
         preferredCameraDevice: widget.frontCamera ? CameraDevice.front : CameraDevice.rear,
       );
       if (file == null) return;
-      final bytes = await file.readAsBytes();
-      final mime = file.mimeType ?? (file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
-      final ok = await widget.onUpload('data:$mime;base64,${base64Encode(bytes)}');
-      if (ok && mounted) setState(() => _taken.add(bytes));
+      await _accept(file);
     } catch (e) {
       if (mounted) showError(context, e);
     } finally {

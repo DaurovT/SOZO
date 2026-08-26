@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sozo_master/api/client.dart';
 import 'package:sozo_master/api/models.dart';
 import 'package:sozo_master/i18n.dart';
 import 'package:sozo_master/store/outbox.dart';
+import 'package:sozo_master/widgets/common.dart';
 
 void main() {
   group('деньги', () {
@@ -93,9 +95,35 @@ void main() {
         deviceTime: '2026-07-31T10:00:00.000Z',
         monotonicMs: 1,
         title: 'служебное',
-      ).toWire();
+      ).wire(null);
       // title, attempts и lastError — состояние приложения, серверу они не нужны
       expect(wire.keys.toSet(), {'clientOpUuid', 'orderId', 'kind', 'payload', 'deviceTime'});
+    });
+
+    test('снимок подставляется обратно только на время отправки', () {
+      // Фотография живёт файлом, а не в JSON очереди: иначе каждое добавление
+      // операции переписывает мегабайты в настройках
+      final op = OutboxOp(
+        clientOpUuid: 'op-2',
+        orderId: 'o1',
+        kind: 'photo',
+        payload: {'stage': 'before'},
+        deviceTime: '2026-07-31T10:00:00.000Z',
+        monotonicMs: 1,
+        blobFile: '/tmp/op-2.b64',
+        blobKey: 'dataUrl',
+      );
+      expect(op.toJson()['payload'], isNot(contains('dataUrl')));
+      expect(op.wire('data:image/png;base64,AA')['payload'], containsPair('dataUrl', 'data:image/png;base64,AA'));
+    });
+
+    test('ключ идемпотентности — настоящий UUID', () {
+      // Наряд-допуск и id фото сервер проверяет схемой: «1756…-3f2a1-2»
+      // возвращал 400, который экран показывал как «нет сети»
+      final uuid = newOpUuid();
+      expect(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$').hasMatch(uuid), isTrue,
+          reason: 'не UUID v4: $uuid');
+      expect(newOpUuid(), isNot(uuid));
     });
   });
 
@@ -129,6 +157,36 @@ void main() {
       expect(p.documents.single.name, 'Паспорт');
     });
   });
+  group('текст для мастера', () {
+    // Загрузка смены приходила в минутах: «занято 200 мин из 480 мин»
+    // мастер в уме не переводит
+    test('минуты показываются часами', () {
+      expect(formatDuration(200), '3 ч 20 мин');
+      expect(formatDuration(480), '8 ч');
+      expect(formatDuration(45), '45 мин');
+      expect(formatDuration(0), '0 мин');
+    });
+
+    // Сумма долга вводится руками, и ошибка на порядок замечается
+    // уже после оплаты
+    test('разряды в поле суммы и разбор обратно', () {
+      expect(groupDigits('2000000'), '2 000 000');
+      expect(groupDigits('500'), '500');
+      expect(digitsOf('2 000 000'), '2000000');
+      expect(int.parse(digitsOf('1 250 000')), 1250000);
+    });
+
+    test('исключение платформы не попадает в тост как есть', () {
+      final camera = humanError(Exception('PlatformException(camera_access_denied, null, null, null)'));
+      expect(camera.contains('PlatformException'), isFalse);
+      expect(camera, t('common.oshibkaKameraZakryta'));
+
+      // Понятный текст сервера пропускаем без изменений: он объясняет
+      // ситуацию точнее любой общей фразы
+      expect(humanError(ApiError('NO_RECEIPT', 'Без чека запчасть внести нельзя')), 'Без чека запчасть внести нельзя');
+    });
+  });
+
   group('локализация', () {
     final l = L10n();
 

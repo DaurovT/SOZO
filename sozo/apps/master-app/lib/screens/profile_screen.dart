@@ -13,6 +13,7 @@ import 'badge_screen.dart';
 import 'outbox_screen.dart';
 import 'profile_extras.dart';
 import 'resources_screens.dart';
+import 'help_screen.dart';
 import 'maintenance_screen.dart';
 import 'walkthrough_screen.dart';
 
@@ -54,6 +55,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
 
+  /// Выход спрашиваем всегда. Раньше подтверждение было только у кандидата
+  /// в воронке, а у работающего мастера — нет: один промах по красной
+  /// кнопке в конце профиля, и он вне линии посреди смены
+  Future<void> _confirmLogout() async {
+    final ok = await showSozoConfirm(
+      context,
+      title: t('prof.vyytiVopros'),
+      body: t('prof.vyytiPoyasnenie'),
+      confirmLabel: t('prof.vyyti'),
+    );
+    if (ok == true) await session.logout();
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = session.profile;
@@ -85,6 +99,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         NavGroup(
           title: t('prof.rabota'),
           children: [
+            // Обучение раньше жило только в воронке кандидата: освоил при
+            // оформлении или нет — второго шанса не было. Теперь порядок
+            // работы доступен всегда и не требует ни сети, ни сервера
+            NavRow(
+              icon: 'book',
+              title: t('prof.kakEtoRabotaet'),
+              subtitle: t('prof.kakEtoRabotaetPodpis'),
+              onTap: () => _open(const HelpScreen()),
+            ),
             NavRow(
               icon: 'trending-up',
               title: t('prof.reytingIApellyacii'),
@@ -301,10 +324,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(width: SozoSpace.s12),
+          // Кнопка со словом, а не только тумблер 44×24: это главное
+          // переключение дня, и промахнуться по нему нельзя
           if (_shiftBusy)
             const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
           else
-            SozoSwitch(value: p.online, onChanged: _toggleShift),
+            SmallChipButton(
+              label: p.online ? t('today.zakonchitSmenu') : t('today.nachatSmenu'),
+              onTap: () => _toggleShift(!p.online),
+            ),
         ],
       ),
     );
@@ -358,7 +386,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       borderRadius: BorderRadius.circular(SozoRadius.tile),
       child: InkWell(
         borderRadius: BorderRadius.circular(SozoRadius.tile),
-        onTap: session.logout,
+        onTap: _confirmLogout,
         child: Container(
           constraints: const BoxConstraints(minHeight: SozoSize.buttonPrimary),
           padding: const EdgeInsets.symmetric(vertical: 14),
@@ -503,7 +531,14 @@ class SkillsScreen extends StatelessWidget {
 
   Future<void> _requestSkill(BuildContext context) async {
     final ctrl = TextEditingController();
-    final skill = await showDialog<String>(
+    final skill = await _askSkill(context, ctrl);
+    ctrl.dispose();
+    if (skill == null || skill.isEmpty || !context.mounted) return;
+    await _sendSkillRequest(context, skill);
+  }
+
+  Future<String?> _askSkill(BuildContext context, TextEditingController ctrl) {
+    return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(t('prof.novyyDopusk')),
@@ -518,7 +553,10 @@ class SkillsScreen extends StatelessWidget {
         ],
       ),
     );
-    if (skill == null || skill.isEmpty || !context.mounted) return;
+  }
+
+  Future<void> _sendSkillRequest(BuildContext context, String skill) async {
+    if (!context.mounted) return;
     try {
       final r = await session.api.requestSkill(skill);
       if (context.mounted) showOk(context, (r['message'] ?? t('prof.zayavkaPrinyata')).toString());

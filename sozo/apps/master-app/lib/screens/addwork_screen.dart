@@ -31,6 +31,14 @@ class _AddworkScreenState extends State<AddworkScreen> {
   final Map<String, int> _full = {};
   bool _busy = false;
 
+  /// Какая доля от суммы работ достаётся мастеру по этой заявке.
+  /// Считаем из чисел, которые сервер уже прислал в карточке
+  double? get _shareRatio {
+    final total = widget.order.totalFromTiyin;
+    if (total <= 0 || widget.order.myShareTiyin <= 0) return null;
+    return widget.order.myShareTiyin / total;
+  }
+
   int _totalOf(Map<String, int> picked) {
     var sum = 0;
     for (final e in picked.entries) {
@@ -63,7 +71,7 @@ class _AddworkScreenState extends State<AddworkScreen> {
       showOk(context, t('work.otpravlenoMojnoVypolnyatSoglas'));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'addwork',
@@ -214,16 +222,22 @@ class _AddworkScreenState extends State<AddworkScreen> {
                 Money(formatSoums(total), size: 15),
               ],
             ),
-            Row(
-              children: [
-                Text(t('common.vashaDolya'), style: TextStyle(fontSize: 13, color: SozoColors.textSecondary)),
-                const Spacer(),
-                Text(
-                  formatSoums((total * 0.55).round()),
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.accent),
-                ),
-              ],
-            ),
+            // Доля мастера считается по ставке этой заявки, а не по зашитым
+            // в код 55%: ставка зависит от релиза прайса и грейда, и её уже
+            // посчитал сервер — берём отношение из самой карточки.
+            // Не посчитали (нулевой итог) — строку не показываем: неверная
+            // цифра о деньгах хуже отсутствующей
+            if (_shareRatio != null)
+              Row(
+                children: [
+                  Text(t('common.vashaDolyaPrimerno'), style: TextStyle(fontSize: 13, color: SozoColors.textSecondary)),
+                  const Spacer(),
+                  Text(
+                    formatSoums((total * _shareRatio!).round()),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.accent),
+                  ),
+                ],
+              ),
           ],
         ],
       ),
@@ -323,14 +337,19 @@ class _ConservationScreenState extends State<ConservationScreen> {
   bool _busy = false;
 
   Future<void> _submit() async {
+    if (_busy) return;
     setState(() => _busy = true);
     try {
       final r = await session.api.conservation(widget.order.id, _photo!);
       if (!mounted) return;
-      showOk(context, t('work.konservaciyaZafiksirovana', {'p1': formatSoums((r['amountTiyin'] as num).toInt())}));
+      // Разбор ответа — после запроса и без жёсткого каста. Форматирование
+      // стояло внутри try, и отсутствие поля давало TypeError, который мимо
+      // `on ApiError` уходил наверх: экран оставался занятым навсегда, хотя
+      // консервация на сервере уже была зафиксирована
+      showOk(context, t('work.konservaciyaZafiksirovana', {'p1': formatSoums(tiyinOf(r['amountTiyin']))}));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'conservation',
@@ -338,10 +357,17 @@ class _ConservationScreenState extends State<ConservationScreen> {
           title: t('work.konservaciya', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('work.netSetiUydetPri2'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.message);
+        setState(() => _busy = false);
+      }
+    } catch (e) {
+      // Всё остальное: неожиданный ответ, разбор, что угодно. Экран обязан
+      // отпустить кнопку, иначе мастер стоит на объекте с мёртвым экраном
+      if (mounted) {
+        showError(context, e);
         setState(() => _busy = false);
       }
     }

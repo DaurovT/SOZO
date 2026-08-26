@@ -316,7 +316,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           title: t('stage.nalichnye2', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('stage.netSetiOplataZapishetsya'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.isOffline ? t('stage.onlaynOplataTrebuetSeti') : e.message);

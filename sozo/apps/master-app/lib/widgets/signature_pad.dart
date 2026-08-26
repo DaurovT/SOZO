@@ -23,10 +23,17 @@ class SignaturePad extends StatefulWidget {
 }
 
 class _SignaturePadState extends State<SignaturePad> {
+  /// Штрихи хранятся в долях от размера холста, а не в точках экрана.
+  ///
+  /// Поворот телефона или появление клавиатуры меняют размер поля, и подпись,
+  /// записанная в точках, уезжала за край или пропадала совсем — а расписался
+  /// клиент уже один раз, второй раз просить неловко.
   final List<List<Offset>> _strokes = [];
   final _nameCtrl = TextEditingController();
-  final _canvasKey = GlobalKey();
   bool _busy = false;
+
+  /// Размер поля на последней отрисовке — по нему нормируем и восстанавливаем
+  Size _canvas = Size.zero;
 
   bool get _hasSignature => _strokes.any((s) => s.length > 2);
 
@@ -37,15 +44,23 @@ class _SignaturePadState extends State<SignaturePad> {
   }
 
   Future<void> _submit() async {
+    if (_busy || _canvas.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final box = _canvasKey.currentContext!.findRenderObject() as RenderBox;
-      final size = box.size;
+      // Растр в физических пикселях, а не в логических: подпись — юридический
+      // документ, а на экране 3x получалось ~350×400 точек, то есть мыло,
+      // на котором в споре ничего не разобрать
+      final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 3.0);
+      final size = _canvas;
       final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, size.width, size.height));
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, size.width * dpr, size.height * dpr));
+      canvas.scale(dpr);
       canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), Paint()..color = SozoColors.surface);
-      _paintStrokes(canvas);
-      final img = await recorder.endRecording().toImage(size.width.round(), size.height.round());
+      paintSignature(canvas, size, _strokes);
+      final img = await recorder.endRecording().toImage(
+        (size.width * dpr).round(),
+        (size.height * dpr).round(),
+      );
       final data = await img.toByteData(format: ui.ImageByteFormat.png);
       final b64 = base64Encode(data!.buffer.asUint8List());
       if (!mounted) return;
@@ -58,21 +73,23 @@ class _SignaturePadState extends State<SignaturePad> {
     }
   }
 
-  void _paintStrokes(Canvas canvas) {
-    final paint = Paint()
-      ..color = SozoColors.text
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    for (final stroke in _strokes) {
-      if (stroke.length < 2) continue;
-      final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
-      for (final p in stroke.skip(1)) {
-        path.lineTo(p.dx, p.dy);
-      }
-      canvas.drawPath(path, paint);
-    }
+  /// Начало штриха. Список мог опустеть между нажатием и движением — если
+  /// в этот момент нажали «Стереть», `_strokes.last` бросал исключение
+  void _startStroke(Offset local, Size size) {
+    _canvas = size;
+    setState(() => _strokes.add([_norm(local, size)]));
   }
+
+  void _extendStroke(Offset local, Size size) {
+    _canvas = size;
+    setState(() {
+      if (_strokes.isEmpty) _strokes.add(<Offset>[]);
+      _strokes.last.add(_norm(local, size));
+    });
+  }
+
+  Offset _norm(Offset p, Size size) =>
+      Offset(size.width == 0 ? 0 : p.dx / size.width, size.height == 0 ? 0 : p.dy / size.height);
 
   @override
   Widget build(BuildContext context) {
@@ -97,28 +114,35 @@ class _SignaturePadState extends State<SignaturePad> {
             ],
             Expanded(
               child: Container(
-                key: _canvasKey,
                 decoration: BoxDecoration(
                   color: SozoColors.surface,
                   border: Border.all(color: SozoColors.border, width: 2),
                   borderRadius: BorderRadius.circular(SozoRadius.card),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: GestureDetector(
-                  onPanStart: (d) => setState(() => _strokes.add([d.localPosition])),
-                  onPanUpdate: (d) => setState(() => _strokes.last.add(d.localPosition)),
-                  child: CustomPaint(
-                    painter: _SignaturePainter(_strokes),
-                    size: Size.infinite,
-                    child: _hasSignature
-                        ? null
-                        : Center(
-                            child: Text(
-                              t('sign.raspishitesPalcem'),
-                              style: TextStyle(color: SozoColors.textSecondary, fontSize: 16),
-                            ),
-                          ),
-                  ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final size = constraints.biggest;
+                    // Размер поля запоминаем на отрисовке: по нему нормируются
+                    // штрихи и по нему же собирается растр при отправке
+                    _canvas = size;
+                    return GestureDetector(
+                      onPanStart: (d) => _startStroke(d.localPosition, size),
+                      onPanUpdate: (d) => _extendStroke(d.localPosition, size),
+                      child: CustomPaint(
+                        painter: _SignaturePainter(_strokes),
+                        size: Size.infinite,
+                        child: _hasSignature
+                            ? null
+                            : Center(
+                                child: Text(
+                                  t('sign.raspishitesPalcem'),
+                                  style: TextStyle(color: SozoColors.textSecondary, fontSize: 16),
+                                ),
+                              ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -142,27 +166,34 @@ class _SignaturePadState extends State<SignaturePad> {
   }
 }
 
+/// Один код рисует и на экране, и в файле: расхождение между тем, что видел
+/// клиент, и тем, что уехало на сервер, в подписи недопустимо
+void paintSignature(Canvas canvas, Size size, List<List<Offset>> strokes) {
+  final paint = Paint()
+    ..color = SozoColors.text
+    ..strokeWidth = 2.5
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..style = PaintingStyle.stroke;
+  Offset at(Offset p) => Offset(p.dx * size.width, p.dy * size.height);
+  for (final stroke in strokes) {
+    if (stroke.length < 2) continue;
+    final path = Path()..moveTo(at(stroke.first).dx, at(stroke.first).dy);
+    for (final p in stroke.skip(1)) {
+      final o = at(p);
+      path.lineTo(o.dx, o.dy);
+    }
+    canvas.drawPath(path, paint);
+  }
+}
+
 class _SignaturePainter extends CustomPainter {
   _SignaturePainter(this.strokes);
 
   final List<List<Offset>> strokes;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = SozoColors.text
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    for (final stroke in strokes) {
-      if (stroke.length < 2) continue;
-      final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
-      for (final p in stroke.skip(1)) {
-        path.lineTo(p.dx, p.dy);
-      }
-      canvas.drawPath(path, paint);
-    }
-  }
+  void paint(Canvas canvas, Size size) => paintSignature(canvas, size, strokes);
 
   @override
   bool shouldRepaint(covariant _SignaturePainter old) => true;

@@ -131,7 +131,7 @@ class _BranchScreenState extends State<BranchScreen> {
       // с false: возвращаться в ленту незачем, работа не отдана
       Navigator.of(context).pop(r['escalated'] != true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: id,
           kind: 'branch_${widget.kind.name}',
@@ -153,7 +153,7 @@ class _BranchScreenState extends State<BranchScreen> {
   String get _offlineHint => switch (widget.kind) {
     BranchKind.cantGo => t('branch.netSetiOtkazOtpravitsya'),
     BranchKind.clientUnavailable => t('branch.netSetiProzvonNe'),
-    _ => t('branch.netSetiOtpravitsyaPri'),
+    _ => t('common.bezSvyaziSohraneno'),
   };
 
   @override

@@ -61,12 +61,12 @@ class _SpareTierScreenState extends State<SpareTierScreen> {
     }
   }
 
-  int _filled() => _tiers.values.where((tier) => (int.tryParse(tier.price.text.trim()) ?? 0) > 0).length;
+  int _filled() => _tiers.values.where((tier) => (soumsOf(tier.price.text)) > 0).length;
 
   Future<void> _send() async {
     setState(() => _busy = true);
     final variants = _tiers.entries
-        .where((e) => (int.tryParse(e.value.price.text.trim()) ?? 0) > 0)
+        .where((e) => (soumsOf(e.value.price.text)) > 0)
         .map(
           (e) => {
             'tier': e.key,
@@ -83,14 +83,14 @@ class _SpareTierScreenState extends State<SpareTierScreen> {
       showOk(context, t('order.otpravlenoKlientuJdemVybor'));
       await _load();
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'spare_tiers',
           payload: body,
           title: t('order.vilkaZapchasti', {'p1': widget.order.number}),
         );
-        if (mounted) showOk(context, t('work.netSetiUydetPri2'));
+        if (mounted) showOk(context, queuedMessage(e));
       } else if (mounted) {
         showError(context, e.message);
       }
@@ -139,6 +139,7 @@ class _SpareTierScreenState extends State<SpareTierScreen> {
                   TextField(
                     controller: e.value.price,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [ThousandsFormatter()],
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(labelText: t('order.cenaSum'), isDense: true),
                   ),
@@ -251,7 +252,7 @@ class _RecommendScreenState extends State<RecommendScreen> {
       showOk(context, t('order.rekomendaciyaOtpravlenaKonveye'));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'recommendation',
@@ -259,7 +260,7 @@ class _RecommendScreenState extends State<RecommendScreen> {
           title: t('order.rekomendaciya', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('work.netSetiUydetPri2'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.message);
@@ -536,7 +537,7 @@ class _AssetScreenState extends State<AssetScreen> {
       showOk(context, t('order.tehnikaZafiksirovanaPovtornyeZ'));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'asset',
@@ -544,7 +545,7 @@ class _AssetScreenState extends State<AssetScreen> {
           title: t('order.tehnika', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('work.netSetiUydetPri2'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.message);
@@ -737,8 +738,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
           .map(
             (r) => {
               'name': r.name.text.trim(),
-              'qty': int.tryParse(r.qty.text.trim()) ?? 1,
-              'approxSoums': int.tryParse(r.price.text.trim()) ?? 0,
+              'qty': soumsOf(r.qty.text) == 0 ? 1 : soumsOf(r.qty.text),
+              'approxSoums': soumsOf(r.price.text),
             },
           )
           .toList(),
@@ -750,7 +751,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
       showOk(context, t('order.spisokUKlientaVy'));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'shopping_list',
@@ -758,7 +759,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
           title: t('order.spisokZakupki', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('work.netSetiUydetPri2'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.message);
@@ -806,6 +807,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                           child: TextField(
                             controller: e.value.price,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [ThousandsFormatter()],
                             decoration: InputDecoration(labelText: t('order.orientirCenySum'), isDense: true),
                           ),
                         ),

@@ -8,6 +8,7 @@ import '../design_tokens.dart';
 import '../widgets/figma_icon.dart';
 import '../main.dart';
 import '../widgets/common.dart';
+import '../widgets/figma_blocks.dart';
 import '../widgets/home_blocks.dart';
 import 'notifications_screen.dart';
 import 'offer_sheet.dart';
@@ -18,8 +19,15 @@ import '../i18n.dart';
 /// «Сегодня» — стартовый экран (M-01, M-02).
 ///
 /// Заявка в работе всегда первой: мастер открывает приложение, чтобы
-/// продолжить её, а не изучать список. Офферы приходят опросом раз в 5 секунд —
-/// на месте push это делает FCM, здесь достаточно поллинга.
+/// продолжить её, а не изучать список.
+///
+/// Смена открывается прямо отсюда: без открытой смены заявки не приходят
+/// вовсе, и пустое состояние, которое только советует её начать, оставляло
+/// мастера без единственного нужного действия.
+///
+/// Опрос — раз в 25 секунд и только на активном экране. Пять секунд круглые
+/// сутки — это полный запрос «сегодня» каждые пять секунд на дешёвом Android
+/// и платном мобильном трафике; о новых заявках в фоне сообщает push.
 class TodayScreen extends StatefulWidget {
   const TodayScreen({super.key, this.onOpenWallet});
 
@@ -30,12 +38,21 @@ class TodayScreen extends StatefulWidget {
   State<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends State<TodayScreen> {
+class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
+  /// Шаг опроса ленты. Держим редким намеренно: оффер приходит push-ом,
+  /// а опрос — страховка на случай, когда push не дошёл
+  static const _pollPeriod = Duration(seconds: 25);
+
   Map<String, dynamic>? _data;
   Map<String, dynamic>? _tomorrow;
   String? _error;
   Timer? _poll;
   bool _offerOpen = false;
+  bool _shiftBusy = false;
+
+  /// Оффер пришёл, когда мастер был не на ленте: карточку на весь экран
+  /// поверх подписи клиента не показываем — вместо неё баннер
+  bool _offerBanner = false;
   int _tab = 0; // 0 — сегодня, 1 — завтра
   int _filter = 0; // 0 — активные заявки, 1 — требуют внимания
 
@@ -51,14 +68,46 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
-    _poll = Timer.periodic(const Duration(seconds: 5), (_) => _tick());
+    _startPoll();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     super.dispose();
+  }
+
+  /// В фоне опрос останавливаем целиком: приложение свёрнуто, экран погашен,
+  /// а трафик и батарея тратятся. Возврат на экран — сразу свежая лента
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startPoll();
+      _load();
+    } else {
+      _poll?.cancel();
+      _poll = null;
+    }
+  }
+
+  void _startPoll() {
+    _poll?.cancel();
+    _poll = Timer.periodic(_pollPeriod, (_) => _tick());
+  }
+
+  Future<void> _toggleShift(bool value) async {
+    setState(() => _shiftBusy = true);
+    try {
+      await session.setOnline(value);
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _shiftBusy = false);
+    }
   }
 
   Future<void> _load() async {
@@ -80,18 +129,30 @@ class _TodayScreenState extends State<TodayScreen> {
   /// Тик: подтягиваем офферы и заодно пытаемся выгрузить очередь
   Future<void> _tick() async {
     if (!mounted || _offerOpen) return;
-    if (session.outbox.depth > 0 && !session.outbox.hasBlocked) {
-      await session.outbox.flush();
-    }
+    // Блокировку по заявке очередь считает сама: одна застрявшая операция
+    // больше не останавливает отправку по остальным заявкам
+    if (session.outbox.depth > 0) await session.outbox.flush();
     await _load();
     if (!mounted) return;
     final pending = (_data?['offersPending'] as num?)?.toInt() ?? 0;
-    if (pending > 0 && session.profile?.online == true) await _showOffer();
+    if (pending == 0 || session.profile?.online != true) {
+      if (_offerBanner) setState(() => _offerBanner = false);
+      return;
+    }
+    // Поверх ленты открыт другой экран — подпись клиента, камера, смета.
+    // Карточка оффера на весь экран в этот момент перекрывает работу и
+    // уводит мастера с середины действия; ждём его баннером
+    if (ModalRoute.of(context)?.isCurrent ?? true) {
+      await _showOffer();
+    } else if (!_offerBanner) {
+      setState(() => _offerBanner = true);
+    }
   }
 
   Future<void> _showOffer() async {
     if (_offerOpen) return;
     _offerOpen = true;
+    if (_offerBanner) setState(() => _offerBanner = false);
     try {
       final j = await session.api.offers();
       final items = ((j['items'] as List?) ?? const []).cast<Map<String, dynamic>>();
@@ -163,11 +224,16 @@ class _TodayScreenState extends State<TodayScreen> {
             ),
           ),
           const SizedBox(height: SozoSpace.s16),
+          // Состояние смены — на главной, а не в четвёртой вкладке: от него
+          // зависит, придут ли заявки вообще
+          _shiftCard(profile?.online == true),
+          const SizedBox(height: SozoSpace.s16),
+          if (_offerBanner) ...[_offerBannerCard(), const SizedBox(height: SozoSpace.s16)],
           if (locked) ...[
             BlockerNote(
               icon: 'alert-triangle',
               danger: true,
-              text: t('today.snyatySLiniiDolg', {'p1': formatSoums((cash!['debtTiyin'] as num).toInt())}),
+              text: t('today.snyatySLiniiDolg', {'p1': formatSoums(tiyinOf(cash!['debtTiyin']))}),
             ),
             const SizedBox(height: SozoSpace.s16),
           ] else ...[
@@ -234,8 +300,11 @@ class _TodayScreenState extends State<TodayScreen> {
                 ),
                 const SizedBox(width: SozoSpace.s8),
                 FilterPill(
+                  // Иконка набора, а не эмодзи: 🔧 рисуется шрифтом системы
+                  // и на дешёвом Android выглядит чужеродно рядом с остальной
+                  // навигацией (об этом же комментарий в notifications_screen)
                   label: t('today.trebuyutVnimaniya'),
-                  emoji: '🔧',
+                  icon: 'wrench',
                   active: _filter == 1,
                   onTap: () => setState(() => _filter = 1),
                 ),
@@ -258,12 +327,22 @@ class _TodayScreenState extends State<TodayScreen> {
             HomeSectionTitle(t('today.seychasVRabote')),
             const SizedBox(height: SozoSpace.s16),
             if (current == null)
-              EmptyView(
-                title: session.profile?.online == true ? t('today.zayavokPokaNet') : t('today.vyNeNaLinii'),
-                subtitle: session.profile?.online == true
-                    ? t('today.offeryPridutSamiKak')
-                    : t('today.nachniteSmenuDispetcherUvidit'),
-                icon: 'toolbox',
+              Column(
+                children: [
+                  EmptyView(
+                    title: session.profile?.online == true ? t('today.zayavokPokaNet') : t('today.vyNeNaLinii'),
+                    subtitle: session.profile?.online == true
+                        ? t('today.offeryPridutSamiKak')
+                        : t('today.nachniteSmenuDispetcherUvidit'),
+                    icon: 'toolbox',
+                  ),
+                  // Текст «начните смену» без кнопки — тупик: тумблер жил
+                  // во вкладке «Профиль», и найти его удавалось не всем
+                  if (session.profile?.online != true) ...[
+                    const SizedBox(height: SozoSpace.s16),
+                    PrimaryButton(label: t('today.nachatSmenu'), busy: _shiftBusy, onPressed: () => _toggleShift(true)),
+                  ],
+                ],
               )
             else
               _orderTile(current, accent: true),
@@ -280,8 +359,73 @@ class _TodayScreenState extends State<TodayScreen> {
           const SizedBox(height: SozoSpace.s16),
           DayLoadCard(
             percent: loadPercent,
-            caption: t('today.zanyatoMinIzMin', {'p1': loadPercent, 'p2': busyMin, 'p3': shiftMin}),
+            caption: t('today.zanyatoMinIzMin', {
+              'p1': loadPercent,
+              'p2': formatDuration(busyMin),
+              'p3': formatDuration(shiftMin),
+            }),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Смена на главном экране: состояние словом и кнопка рядом.
+  /// Тумблер 44×24 в четвёртой вкладке был самым спрятанным элементом
+  /// приложения при том, что без него не приходит ни одна заявка
+  Widget _shiftCard(bool online) {
+    return SozoCard(
+      accent: !online,
+      child: Row(
+        children: [
+          FigmaIcon('circle', size: 18, color: online ? softSuccessFg : SozoColors.textSecondary),
+          const SizedBox(width: SozoSpace.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  online ? t('today.smenaIdet') : t('today.smenaZakryta'),
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  online ? t('prof.vyPoluchaeteZayavki') : t('prof.pokaSmenaZakrytaZayavki'),
+                  style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: SozoSpace.s12),
+          if (_shiftBusy)
+            const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+          else
+            SmallChipButton(
+              label: online ? t('today.zakonchitSmenu') : t('today.nachatSmenu'),
+              onTap: () => _toggleShift(!online),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Оффер, пришедший во время другой работы. Карточку с таймером мастер
+  /// откроет сам, когда освободится: перебивать подпись клиента нельзя
+  Widget _offerBannerCard() {
+    return SozoCard(
+      accent: true,
+      onTap: _showOffer,
+      child: Row(
+        children: [
+          const FigmaIcon('alert-circle', size: 20, color: SozoColors.accent),
+          const SizedBox(width: SozoSpace.s12),
+          Expanded(
+            child: Text(
+              t('today.novayaZayavkaJdet'),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+          ),
+          AmberAction(t('today.otkrytZayavku'), onTap: _showOffer),
         ],
       ),
     );

@@ -79,7 +79,7 @@ class _StockScreenState extends State<StockScreen> {
                   for (final c in catalog) ...[
                     _refillRow(
                       name: c['name'].toString(),
-                      price: t('res.za', {'p1': formatSoums((c['costTiyin'] as num).toInt()), 'p2': c['unit']}),
+                      price: t('res.za', {'p1': formatSoums(tiyinOf(c['costTiyin'])), 'p2': c['unit']}),
                       qty: picked[c['id']] ?? 0,
                       onMinus: () => setLocal(() {
                         final q = picked[c['id']] ?? 0;
@@ -347,10 +347,11 @@ class _PurchaseCodeScreenState extends State<PurchaseCodeScreen> {
               TextField(
                 controller: sumCtrl,
                 keyboardType: TextInputType.number,
+                inputFormatters: [ThousandsFormatter()],
                 onChanged: (_) => setLocal(() {}),
                 decoration: InputDecoration(labelText: t('common.summaSum')),
               ),
-              if ((int.tryParse(sumCtrl.text.trim()) ?? 0) > 200000) ...[
+              if (soumsOf(sumCtrl.text) > 200000) ...[
                 const SizedBox(height: SozoSpace.s8),
                 Text(t('res.doroje200000Ukajite'), style: TextStyle(fontSize: 12, color: SozoColors.textSecondary)),
                 SegmentedButton<String>(
@@ -373,6 +374,8 @@ class _PurchaseCodeScreenState extends State<PurchaseCodeScreen> {
         ),
       ),
     );
+    nameCtrl.dispose();
+    sumCtrl.dispose();
     if (ok != true || !mounted) return;
 
     String? photo;
@@ -392,7 +395,7 @@ class _PurchaseCodeScreenState extends State<PurchaseCodeScreen> {
       final r = await session.api.attachInvoice(widget.order.id, codeId, {
         'dataUrl': photo,
         'items': [
-          {'name': nameCtrl.text.trim(), 'amountSoums': int.tryParse(sumCtrl.text.trim()) ?? 0, 'priceTier': tier},
+          {'name': nameCtrl.text.trim(), 'amountSoums': soumsOf(sumCtrl.text), 'priceTier': tier},
         ],
       });
       if (!mounted) return;
@@ -489,10 +492,7 @@ class _PurchaseCodeScreenState extends State<PurchaseCodeScreen> {
           ),
           const SizedBox(height: 20),
           Text(
-            t('res.limitDeystvuetDo', {
-              'p1': formatSoums((c['limitTiyin'] as num).toInt()),
-              'p2': hhmm(c['expiresAt']),
-            }),
+            t('res.limitDeystvuetDo', {'p1': formatSoums(tiyinOf(c['limitTiyin'])), 'p2': hhmm(c['expiresAt'])}),
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: SozoColors.textSecondary),
           ),
@@ -638,6 +638,7 @@ class _EquipmentFullScreenState extends State<EquipmentFullScreen> {
         ),
       ),
     );
+    noteCtrl.dispose();
     if (ok != true || !mounted) return;
 
     try {
@@ -659,35 +660,39 @@ class _EquipmentFullScreenState extends State<EquipmentFullScreen> {
     }
   }
 
-  Future<String?> _askCode(String? devHint) {
+  Future<String?> _askCode(String? devHint) async {
     final ctrl = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(t('res.kodPodtverjdeniya')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              autofocus: true,
-              decoration: InputDecoration(hintText: t('res.nCifryOtKladovschika')),
-            ),
-            if (devHint != null)
-              Text(
-                t('res.testovyyKonturKod', {'p1': devHint}),
-                style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(t('res.kodPodtverjdeniya')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                autofocus: true,
+                decoration: InputDecoration(hintText: t('res.nCifryOtKladovschika')),
               ),
+              if (devHint != null)
+                Text(
+                  t('res.testovyyKonturKod', {'p1': devHint}),
+                  style: const TextStyle(fontSize: 12, color: SozoColors.textSecondary),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(t('common.otmena'))),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: Text(t('prof.podtverdit'))),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(t('common.otmena'))),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()), child: Text(t('prof.podtverdit'))),
-        ],
-      ),
-    );
+      );
+    } finally {
+      ctrl.dispose();
+    }
   }
 
   @override
@@ -842,6 +847,8 @@ class _RatingScreenState extends State<RatingScreen> {
   }
 
   Future<void> _appeal(String subject, String reference) async {
+    // Контроллеры диалогов освобождаем сразу после закрытия: экран ресурсов
+    // открывают десятки раз за смену, и каждый оставлял за собой объект
     final ctrl = TextEditingController();
     final text = await showDialog<String>(
       context: context,
@@ -859,6 +866,7 @@ class _RatingScreenState extends State<RatingScreen> {
         ],
       ),
     );
+    ctrl.dispose();
     if (text == null || text.isEmpty || !mounted) return;
     try {
       final r = await session.api.fileAppeal({'subject': subject, 'reference': reference, 'text': text});
@@ -912,7 +920,7 @@ class _RatingScreenState extends State<RatingScreen> {
                       }, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: SozoColors.text)),
                       const SizedBox(height: SozoSpace.s8),
                       Text(
-                        t('res.vashaDolyaOknoDney', {'p1': (d['sharePermille'] as num) / 10, 'p2': d['windowDays']}),
+                        t('res.vashaDolyaOknoDney', {'p1': tiyinOf(d['sharePermille']) / 10, 'p2': d['windowDays']}),
                         textAlign: TextAlign.center,
                         style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary),
                       ),
@@ -1054,7 +1062,7 @@ class _RatingScreenState extends State<RatingScreen> {
   /// Компонент рейтинга (макет 58:595): значение 18/bold и полоса 6.
   /// Ниже 70 полоса оранжевая — видно, что именно тянет балл вниз.
   Widget _metricCard(Map<String, dynamic> c) {
-    final value = (c['value'] as num).toDouble();
+    final value = (c['value'] as num?)?.toDouble() ?? 0;
     final good = value >= 70;
     return FigmaCard(
       children: [
@@ -1282,6 +1290,7 @@ class _InspectionScreenState extends State<InspectionScreen> {
         ),
       ),
     );
+    descCtrl.dispose();
     if (ok != true || !mounted) return;
     await showPhotoCapture(
       context,

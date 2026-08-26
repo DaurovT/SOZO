@@ -9,11 +9,13 @@ import '../i18n.dart';
 /// Геометрия снята с макета: header-bar 30:11, header 74:11, header-layer 26:173.
 /// Все три узла совпадают до пикселя, поэтому вариант в приложении ровно один.
 
-/// Высота шапки: 12 сверху + кнопка 36 + 12 снизу
-const double kSozoAppBarHeight = 60;
+/// Высота шапки: 12 сверху + кнопка 48 + 12 снизу.
+/// Кнопки в шапке нажимают в перчатке и на ходу, поэтому поле нажатия 48,
+/// а нарисованный кружок остаётся макетным
+const double kSozoAppBarHeight = 72;
 
-/// Кнопка «назад» из макета: серая коробка 36 со скруглением 18,
-/// внутри янтарный круг 30 и стрелка 20.
+/// Кнопка «назад» из макета: янтарный круг 30 в сером поле.
+/// Поле нажатия 48 вместо макетных 36 — минимальный тач-таргет.
 class SozoBackButton extends StatelessWidget {
   const SozoBackButton({super.key, this.onTap});
 
@@ -22,18 +24,18 @@ class SozoBackButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 36,
-      height: 36,
+      width: SozoSize.tap,
+      height: SozoSize.tap,
       child: Material(
         color: SozoColors.bg,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(SozoSize.tap / 2),
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(SozoSize.tap / 2),
           onTap: onTap ?? () => Navigator.of(context).maybePop(),
           child: Center(
             child: Container(
-              width: 30,
-              height: 30,
+              width: 32,
+              height: 32,
               decoration: const BoxDecoration(color: SozoColors.accent, shape: BoxShape.circle),
               alignment: Alignment.center,
               child: const FigmaIcon('arrow-left', size: 20),
@@ -45,7 +47,7 @@ class SozoBackButton extends StatelessWidget {
   }
 }
 
-/// Круглая кнопка в правом слоте шапки: иконка 20 в поле 36
+/// Круглая кнопка в правом слоте шапки: иконка 20 в поле 48
 class SozoAppBarAction extends StatelessWidget {
   const SozoAppBarAction({super.key, required this.icon, this.onTap, this.color});
 
@@ -59,8 +61,8 @@ class SozoAppBarAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 36,
-      height: 36,
+      width: SozoSize.tap,
+      height: SozoSize.tap,
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(SozoRadius.chip),
@@ -75,7 +77,7 @@ class SozoAppBarAction extends StatelessWidget {
 }
 
 /// Шапка экрана: «назад» слева, заголовок 17/bold по центру, слот справа.
-/// Правый слот всегда занимает 36 — иначе заголовок съезжает с центра.
+/// Правый слот всегда занимает 48 — иначе заголовок съезжает с центра.
 class SozoAppBar extends StatelessWidget implements PreferredSizeWidget {
   const SozoAppBar({super.key, required this.title, this.action, this.onBack, this.showBack = true, this.bottom});
 
@@ -107,7 +109,7 @@ class SozoAppBar extends StatelessWidget implements PreferredSizeWidget {
               ),
               child: Row(
                 children: [
-                  showBack ? SozoBackButton(onTap: onBack) : const SizedBox(width: 36, height: 36),
+                  showBack ? SozoBackButton(onTap: onBack) : const SizedBox(width: SozoSize.tap, height: SozoSize.tap),
                   Expanded(
                     child: Text(
                       title,
@@ -117,7 +119,7 @@ class SozoAppBar extends StatelessWidget implements PreferredSizeWidget {
                       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: SozoColors.text),
                     ),
                   ),
-                  action ?? const SizedBox(width: 36, height: 36),
+                  action ?? const SizedBox(width: SozoSize.tap, height: SozoSize.tap),
                 ],
               ),
             ),
@@ -155,8 +157,8 @@ List<({String icon, String label, double size})> get sozoTabs => [
   (icon: 'user', label: t('prof.profil'), size: 22.0),
 ];
 
-/// Таббар: белый, верхняя граница, вкладка 70 шириной, активная — янтарная
-/// пилюля 48×32 со скруглением 16 (макет 29:4).
+/// Таббар: белый, верхняя граница, вкладки поровну по ширине экрана,
+/// активная — янтарная пилюля 48×32 со скруглением 16 (макет 29:4).
 class SozoTabBar extends StatelessWidget {
   const SozoTabBar({super.key, required this.index, required this.onSelect});
 
@@ -176,7 +178,7 @@ class SozoTabBar extends StatelessWidget {
       padding: EdgeInsets.only(top: SozoSpace.s8, bottom: inset < 20 ? 20 : inset),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [for (var i = 0; i < sozoTabs.length; i++) _item(i)],
+        children: [for (var i = 0; i < sozoTabs.length; i++) Expanded(child: _item(i))],
       ),
     );
   }
@@ -184,43 +186,44 @@ class SozoTabBar extends StatelessWidget {
   Widget _item(int i) {
     final tab = sozoTabs[i];
     final active = i == index;
-    return SizedBox(
-      width: 70,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => onSelect(i),
-          child: Padding(
-            padding: const EdgeInsets.only(top: SozoSpace.s4),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 48,
-                  height: 32,
-                  alignment: Alignment.center,
-                  decoration: active
-                      ? BoxDecoration(color: SozoColors.accent, borderRadius: BorderRadius.circular(16))
-                      : null,
-                  // Цвет задаём здесь, а не берём из файла: иконки выгружены
-                  // из разных состояний макета, у части внутри белая обводка
-                  child: FigmaIcon(
-                    tab.icon,
-                    size: tab.size,
-                    color: active ? SozoColors.onAccent : SozoColors.textSecondary,
-                  ),
+    // Ширина от экрана (Expanded выше), а не макетные 70: при системном
+    // шрифте 150–200% подписи «Заявки» и «Профиль» не помещались в коробку
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => onSelect(i),
+        child: Padding(
+          padding: const EdgeInsets.only(top: SozoSpace.s4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: active
+                    ? BoxDecoration(color: SozoColors.accent, borderRadius: BorderRadius.circular(16))
+                    : null,
+                // Цвет задаём здесь, а не берём из файла: иконки выгружены
+                // из разных состояний макета, у части внутри белая обводка
+                child: FigmaIcon(
+                  tab.icon,
+                  size: tab.size,
+                  color: active ? SozoColors.onAccent : SozoColors.textSecondary,
                 ),
-                const SizedBox(height: SozoSpace.s4),
-                Text(
-                  tab.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: active ? FontWeight.w600 : FontWeight.w500,
-                    color: active ? SozoColors.text : SozoColors.textSecondary,
-                  ),
+              ),
+              const SizedBox(height: SozoSpace.s4),
+              Text(
+                tab.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                  color: active ? SozoColors.text : SozoColors.textSecondary,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

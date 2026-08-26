@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../i18n.dart';
@@ -16,11 +17,22 @@ class ApiError implements Exception {
   /// терялось на разборе.
   final Map<String, dynamic>? payload;
 
-  /// Сеть недоступна — операция уходит в офлайн-очередь, а не теряется
-  bool get isOffline => code == 'OFFLINE';
+  /// Сеть недоступна — операция уходит в офлайн-очередь, а не теряется.
+  /// Таймаут сюда же: для мастера это тот же случай — связь есть, но её нет
+  bool get isOffline => code == 'OFFLINE' || code == 'TIMEOUT';
 
   /// Конфликт версий: кто-то изменил заявку параллельно — надо перечитать
   bool get isVersionConflict => code == 'VERSION_CONFLICT';
+
+  /// Ответ не от приложения: шлюз отдал HTML (502/504 nginx), а не JSON.
+  /// Раньше это неотличимо сливалось с офлайном — операция уезжала в очередь,
+  /// «будто сети нет», и мастер не понимал, почему она там висит
+  bool get isGateway => code == 'GATEWAY';
+
+  /// Данные нельзя терять: связь, шлюз, серверная ошибка или протухшая сессия.
+  /// Во всех четырёх случаях операция обязана лечь в очередь, а не исчезнуть
+  /// вместе с тостом. Разница только в тексте, который увидит мастер
+  bool get keepsData => isOffline || isGateway || statusCode == 401 || (statusCode ?? 0) >= 500;
 
   @override
   String toString() => message;
@@ -34,7 +46,17 @@ class ApiClient {
   String baseUrl;
   String? token;
 
+  /// Обычный запрос. Двенадцать секунд — предел терпения на объекте
   static const timeout = Duration(seconds: 12);
+
+  /// Выгрузка очереди и снимков: тот же предел означал гарантированный
+  /// таймаут на фотографии в 0,5–1 МБ через мобильный интернет в подвале
+  static const uploadTimeout = Duration(seconds: 60);
+
+  /// Сессия протухла. Сообщаем сессии, а не разбираем 401 в каждом экране:
+  /// до этого единственная обработка жила в `refreshProfile`, и на действии
+  /// по заявке мастер получал «Сессия истекла» без выхода и без сохранения
+  void Function()? onUnauthorized;
 
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
@@ -48,23 +70,27 @@ class ApiClient {
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri.parse('$baseUrl/v1$path').replace(queryParameters: query?.isEmpty ?? true ? null : query);
 
-  Future<dynamic> get(String path, {Map<String, String>? query}) async {
+  Future<dynamic> get(String path, {Map<String, String>? query, Duration? deadline}) async {
     try {
-      final r = await http.get(_uri(path, query), headers: _headers).timeout(timeout);
+      final r = await http.get(_uri(path, query), headers: _headers).timeout(deadline ?? timeout);
       return _decode(r);
     } on ApiError {
       rethrow;
+    } on TimeoutException {
+      throw ApiError('TIMEOUT', t('net.serverNeOtvetil'));
     } catch (_) {
       throw ApiError('OFFLINE', t('net.netSvyaziSServerom'));
     }
   }
 
-  Future<dynamic> post(String path, Map<String, dynamic> body) async {
+  Future<dynamic> post(String path, Map<String, dynamic> body, {Duration? deadline}) async {
     try {
-      final r = await http.post(_uri(path), headers: _headers, body: jsonEncode(body)).timeout(timeout);
+      final r = await http.post(_uri(path), headers: _headers, body: jsonEncode(body)).timeout(deadline ?? timeout);
       return _decode(r);
     } on ApiError {
       rethrow;
+    } on TimeoutException {
+      throw ApiError('TIMEOUT', t('net.serverNeOtvetil'));
     } catch (_) {
       throw ApiError('OFFLINE', t('net.netSvyaziSServerom'));
     }
@@ -72,7 +98,16 @@ class ApiClient {
 
   dynamic _decode(http.Response r) {
     final text = utf8.decode(r.bodyBytes);
-    final dynamic body = text.isEmpty ? null : jsonDecode(text);
+    dynamic body;
+    try {
+      body = text.isEmpty ? null : jsonDecode(text);
+    } on FormatException {
+      // Шлюз ответил своей страницей: nginx на 502/504 отдаёт HTML.
+      // Раньше разбор падал, ошибку ловил общий catch — и приложение
+      // объявляло офлайн при работающей сети, пряча аварию сервера
+      throw ApiError('GATEWAY', t('net.serverNeOtvetil'), statusCode: r.statusCode);
+    }
+    if (r.statusCode == 401 && token != null) onUnauthorized?.call();
     if (r.statusCode >= 200 && r.statusCode < 300) return body;
     if (body is Map) {
       // Nest заворачивает объект исключения либо в корень, либо в message
@@ -146,8 +181,10 @@ class ApiClient {
   Future<Map<String, dynamic>> act(String orderId, Map<String, dynamic> body) async =>
       (await post('/master/orders/$orderId/actions', body)) as Map<String, dynamic>;
 
+  /// Снимок идёт с долгим дедлайном: 0,5–1 МБ base64 через мобильный
+  /// интернет в подвале за двенадцать секунд не уходят никогда
   Future<Map<String, dynamic>> uploadPhoto(String orderId, Map<String, dynamic> body) async =>
-      (await post('/master/orders/$orderId/photos', body)) as Map<String, dynamic>;
+      (await post('/master/orders/$orderId/photos', body, deadline: uploadTimeout)) as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> sendQuote(String orderId, Map<String, dynamic> body) async =>
       (await post('/master/orders/$orderId/quote', body)) as Map<String, dynamic>;
@@ -163,7 +200,7 @@ class ApiClient {
   Future<Map<String, dynamic>> catalog() async => (await get('/master/catalog')) as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> sync(List<Map<String, dynamic>> ops) async =>
-      (await post('/master/sync', {'ops': ops})) as Map<String, dynamic>;
+      (await post('/master/sync', {'ops': ops}, deadline: uploadTimeout)) as Map<String, dynamic>;
 
   /// Сколько действий ещё ждёт отправки — метрика мониторинга: на сервере
   /// такое не посчитать, очередь копится ровно тогда, когда связи нет
@@ -224,33 +261,10 @@ class ApiClient {
   Future<Map<String, dynamic>> markNotificationsRead({String? id}) async =>
       (await post('/master/notifications/read', {'id': ?id})) as Map<String, dynamic>;
 
-  // ---------- Онбординг (M-02…M-05) ----------
-
-  Future<Map<String, dynamic>> onboardingStatus() async =>
-      (await get('/master/onboarding/status')) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> submitApplication(Map<String, dynamic> body) async =>
-      (await post('/master/onboarding/application', body)) as Map<String, dynamic>;
-
-  /// Отправляем код, а не название: название приходит переведённым, и сервер
-  /// не нашёл бы «Pasport: yoyma va propiska» в своём списке
-  Future<Map<String, dynamic>> uploadDocument(String code, String title, String dataUrl) async =>
-      (await post('/master/onboarding/documents', {'code': code, 'name': title, 'dataUrl': dataUrl}))
-          as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> confirmTools(String skill, String dataUrl) async =>
-      (await post('/master/onboarding/tools', {'skill': skill, 'dataUrl': dataUrl})) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> submitForReview() async =>
-      (await post('/master/onboarding/submit', {})) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> completeModule(String moduleId) async =>
-      (await post('/master/onboarding/training/complete', {'moduleId': moduleId})) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> examQuestions() async => (await get('/master/onboarding/exam')) as Map<String, dynamic>;
-
-  Future<Map<String, dynamic>> submitExam(Map<String, int> answers) async =>
-      (await post('/master/onboarding/exam', {'answers': answers})) as Map<String, dynamic>;
+  // Онбординг из приложения убран: мастера регистрирует и допускает к
+  // заявкам админ, а приложение показывает только причину отказа в доступе.
+  // Серверные эндпоинты /master/onboarding/* остались — ими пользуется
+  // админка, и по ним же вернётся воронка, когда она понадобится.
 
   // ---------- Ветки конвейера (M-12…M-32) ----------
 

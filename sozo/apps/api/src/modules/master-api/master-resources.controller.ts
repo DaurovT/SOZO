@@ -17,6 +17,7 @@ import { MastersService } from '../masters/masters.module';
 import { QualityService } from '../quality/quality.service';
 import { AuditService } from '../platform/audit.service';
 import { NotificationsService } from './notifications.service';
+import { ParametersService } from '../platform/parameters.service';
 import { FieldService } from '../field/field.service';
 import { CrmService } from '../crm/crm.service';
 import { tr } from '../../common/locale';
@@ -51,6 +52,7 @@ export class MasterResourcesController {
     private readonly notificationsSvc: NotificationsService,
     private readonly field: FieldService,
     private readonly crm: CrmService,
+    private readonly params: ParametersService,
   ) {}
 
   private async mine(id: string, masterId: string): Promise<OrderRecord> {
@@ -555,6 +557,20 @@ export class MasterResourcesController {
       minVersion,
       forceUpdate: version ? cmp(version, minVersion) < 0 : false,
       updateMessage: 'Обновите приложение, чтобы продолжить работу',
+      /**
+       * Телефон диспетчерской (параметр №200). Приложению он нужен как
+       * рабочий номер: кнопка «Диспетчеру» на карточке заявки, звонок из
+       * тупика «денег не получил» и из экрана «доступ закрыт». Зашивать его
+       * в сборку нельзя — номер меняется параметром, без пересборки.
+       */
+      dispatcherPhone: this.params.text(200, '+998712000000'),
+      /**
+       * Наценка за срочность (параметр №5). Приложение показывает её в смете
+       * до отправки и до сих пор умножало на зашитые в код 1.3: значение
+       * параметра меняется без пересборки, и мастер видел одну цену, а
+       * клиент — другую.
+       */
+      urgentSurchargePercent: this.orders.urgentSurchargePercent(),
       locales: [
         { code: 'ru', title: 'Русский' },
         { code: 'uz', title: 'Oʻzbekcha' },

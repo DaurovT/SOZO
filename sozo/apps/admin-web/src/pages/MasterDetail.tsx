@@ -139,6 +139,35 @@ export function MasterDetailPage() {
     }
   };
 
+  /**
+   * Доступ мастера к заявкам — одной кнопкой.
+   *
+   * В приложении мастера воронки онбординга больше нет: зарегистрированный
+   * мастер работает, а того, кого система не пропустила сама, пропускает
+   * администратор отсюда. Выпадающий список статусов остаётся для остальных
+   * состояний, но «пустить / не пускать» не должно требовать знания того,
+   * какой именно статус за это отвечает.
+   */
+  const setAccess = async (open: boolean) => {
+    if (!open) {
+      const ok = window.confirm(
+        `Закрыть доступ мастеру ${m.fullName}? Заявки перестанут приходить, приложение покажет причину и телефон диспетчерской. Карточка, история и деньги сохраняются.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const r = await api.post<{ message?: string }>(`/admin/masters/${m.id}/access`, { open });
+      toast(r.message ?? (open ? 'Доступ открыт' : 'Доступ закрыт'));
+      reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const offboard = async () => {
     const ok = window.confirm(
       'Офбординг мастера (ТЗ 8.6): снятие с линии, заморозка выплат до акта сверки, взаимозачёт наличного долга. Продолжить?',
@@ -175,6 +204,32 @@ export function MasterDetailPage() {
       {actionError !== null && <ErrorBanner message={actionError} />}
 
       {m.offboardingNote && <div className="banner banner--warning">{m.offboardingNote}</div>}
+
+      {m.status !== 'offboarding' && (
+        <div className="card" style={{ marginBottom: 'var(--s16)' }}>
+          <div style={{ display: 'flex', gap: 'var(--s12)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div className="semibold">
+                {m.status === 'active' ? 'Доступ к заявкам открыт' : 'Доступ к заявкам закрыт'}
+              </div>
+              <div className="muted">
+                {m.status === 'active'
+                  ? 'Мастер получает офферы и работает в приложении'
+                  : 'Мастер видит в приложении причину и телефон диспетчерской'}
+              </div>
+            </div>
+            {m.status === 'active' ? (
+              <button type="button" className="btn btn--danger" disabled={busy} onClick={() => void setAccess(false)}>
+                Закрыть доступ
+              </button>
+            ) : (
+              <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void setAccess(true)}>
+                Открыть доступ
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="tabs">
         {TABS.map((t) => (

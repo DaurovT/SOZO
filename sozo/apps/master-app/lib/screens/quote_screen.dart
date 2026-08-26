@@ -53,8 +53,18 @@ class _QuoteScreenState extends State<QuoteScreen> {
       );
       sum += item.priceFromTiyin * e.value;
     }
-    return _urgent ? (sum * 1.3).round() : sum;
+    if (!_urgent) return sum;
+    // Коэффициент срочности — параметр системы (№5), а не число в коде:
+    // 1.3 здесь означало, что при смене параметра мастер считает одно,
+    // а сервер выставляет клиенту другое
+    final percent = session.urgentSurchargePercent;
+    if (percent == null) return sum;
+    return sum + (sum * percent / 100).round();
   }
+
+  /// Известна ли наценка. Пока конфигурацию не прочитали, сумма показывается
+  /// без надбавки и с оговоркой — врать точной цифрой хуже, чем сказать прямо
+  bool get _surchargeUnknown => _urgent && session.urgentSurchargePercent == null;
 
   Future<void> _send() async {
     final body = {
@@ -68,7 +78,7 @@ class _QuoteScreenState extends State<QuoteScreen> {
       showOk(context, t('quote.smetaSostavlenaSoglasuyteEe'));
       Navigator.of(context).pop(true);
     } on ApiError catch (e) {
-      if (e.isOffline) {
+      if (e.keepsData) {
         await session.outbox.enqueue(
           orderId: widget.order.id,
           kind: 'quote',
@@ -76,7 +86,7 @@ class _QuoteScreenState extends State<QuoteScreen> {
           title: t('quote.smeta', {'p1': widget.order.number}),
         );
         if (!mounted) return;
-        showOk(context, t('quote.netSetiSmetaUydet'));
+        showOk(context, queuedMessage(e));
         Navigator.of(context).pop(true);
       } else if (mounted) {
         showError(context, e.message);
@@ -193,6 +203,13 @@ class _QuoteScreenState extends State<QuoteScreen> {
                       Money(t('common.ot', {'p1': formatSoums(_totalFrom)}), size: 18, weight: FontWeight.w700),
                     ],
                   ),
+                  if (_surchargeUnknown) ...[
+                    const SizedBox(height: SozoSpace.s8),
+                    Text(
+                      t('quote.nacenkuPoschitaetServer'),
+                      style: const TextStyle(fontSize: 13, color: SozoColors.textSecondary, height: 1.35),
+                    ),
+                  ],
                   const SizedBox(height: SozoSpace.s12),
                   PrimaryButton(
                     label: _picked.isEmpty ? t('quote.vyberitePozicii') : t('quote.sohranitSmetu'),

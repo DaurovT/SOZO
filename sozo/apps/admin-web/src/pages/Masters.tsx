@@ -40,6 +40,7 @@ export function MastersPage() {
   );
   const [modalOpen, setModalOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [fullName, setFullName] = useState('');
@@ -49,6 +50,31 @@ export function MastersPage() {
   const [hasVehicle, setHasVehicle] = useState(false);
 
   const view = useTableView(data ?? [], COLUMNS, { initialSort: 'fullName' });
+
+  /**
+   * Открыть или закрыть мастеру доступ к заявкам прямо из списка.
+   *
+   * В приложении мастера воронки онбординга больше нет: кого система не
+   * пропустила сама, пропускает администратор. Держать это действие только
+   * внутри карточки — значит заставлять открывать её ради одной кнопки,
+   * а список — то место, где видно всех сразу.
+   */
+  const setAccess = async (m: Master, open: boolean) => {
+    if (!open && !window.confirm(`Закрыть доступ мастеру ${m.fullName}? Заявки перестанут приходить.`)) return;
+    setBusy(true);
+    setAccessError(null);
+    try {
+      const r = await api.post<{ message?: string }>(`/admin/masters/${m.id}/access`, { open });
+      toast(r.message ?? (open ? 'Доступ открыт' : 'Доступ закрыт'));
+      reload();
+    } catch (err) {
+      // Отдельное состояние, а не formError: тот показывается внутри модалки
+      // создания кандидата, и отказ по доступу остался бы невидимым
+      setAccessError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -84,6 +110,8 @@ export function MastersPage() {
 
   return (
     <>
+      {accessError !== null && <ErrorBanner message={accessError} />}
+
       <div className="page-header">
         <h1>Мастера</h1>
         <button type="button" className="btn btn--primary" onClick={() => setModalOpen(true)}>
@@ -99,10 +127,11 @@ export function MastersPage() {
               {COLUMNS.map((c) => (
                 <SortableTh key={c.key} column={c} view={view} />
               ))}
+              <th>Доступ к заявкам</th>
             </tr>
           </thead>
           <tbody>
-            {view.visible.length === 0 && <EmptyRow colSpan={COLUMNS.length} />}
+            {view.visible.length === 0 && <EmptyRow colSpan={COLUMNS.length + 1} />}
             {view.visible.map((m) => (
               <tr key={m.id}>
                 <td>
@@ -123,6 +152,28 @@ export function MastersPage() {
                 <td>{GRADE_LABELS[m.grade] ?? m.grade}</td>
                 <td>{TAX_LABELS[m.taxMode] ?? m.taxMode}</td>
                 <td className="num">{m.cashDebtTiyin > 0 ? formatSoums(m.cashDebtTiyin) : '—'}</td>
+                <td>
+                  {m.status !== 'offboarding' &&
+                    (m.status === 'active' ? (
+                      <button
+                        type="button"
+                        className="btn btn--danger"
+                        disabled={busy}
+                        onClick={() => void setAccess(m, false)}
+                      >
+                        Закрыть доступ
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        disabled={busy}
+                        onClick={() => void setAccess(m, true)}
+                      >
+                        Открыть доступ
+                      </button>
+                    ))}
+                </td>
               </tr>
             ))}
           </tbody>

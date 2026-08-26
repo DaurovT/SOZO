@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 
 import '../api/models.dart';
 import '../design_tokens.dart';
+import '../main.dart';
 import '../widgets/figma_icon.dart';
 import '../widgets/app_chrome.dart';
 import '../widgets/common.dart';
+import '../widgets/external_actions.dart';
 import 'order_screen.dart';
 import '../i18n.dart';
 
@@ -38,10 +40,14 @@ class _RouteScreenState extends State<RouteScreen> {
     return LatLng(lat, lng);
   }
 
-  /// Навигатор у мастера уже свой — отдаём адрес в буфер, а не навязываем приложение
+  /// Навигатор у мастера уже свой — отдаём точку географической ссылкой,
+  /// её понимают все три навигатора, которыми здесь пользуются.
+  /// Копирование адреса в буфер оставлено запасным вариантом на случай,
+  /// когда навигатора на телефоне нет вовсе
   Future<void> _navigate(OrderCard o) async {
+    await openNavigation(context, lat: o.lat, lng: o.lng, address: o.address);
+    if (!mounted) return;
     await Clipboard.setData(ClipboardData(text: o.address));
-    if (mounted) showOk(context, t('route.adresSkopirovanVstavteV'));
   }
 
   @override
@@ -278,7 +284,9 @@ class HelperOrderScreen extends StatelessWidget {
                 const SizedBox(width: SozoSpace.s12),
                 Expanded(child: Text(t('route.veduschiyMaster'))),
                 TextButton(
-                  onPressed: () => showOk(context, t('route.zvonokVeduschemu')),
+                  // Номер ведущего в карточку не приходит: звоним в
+                  // диспетчерскую, она соединит. Тост-заглушки здесь больше нет
+                  onPressed: () => callNumber(context, session.dispatcherPhone),
                   child: Text(t('route.pozvonit')),
                 ),
               ],

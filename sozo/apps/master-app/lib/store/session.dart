@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/client.dart';
+import '../i18n.dart';
 import '../push/push.dart';
 import '../api/models.dart';
 import 'outbox.dart';
@@ -17,6 +18,23 @@ class Session extends ChangeNotifier {
     api = ApiClient(baseUrl: defaultBaseUrl);
     outbox = Outbox(api);
     push = PushService(api);
+    // 401 разбирался только в `refreshProfile`: на действии по заявке мастер
+    // получал «Сессия истекла», данные не сохранялись, а приложение делало
+    // вид, что он всё ещё внутри. Теперь протухшая сессия обрабатывается
+    // один раз и в одном месте — очередь при этом остаётся нетронутой
+    api.onUnauthorized = () => unawaited(_sessionExpired());
+  }
+
+  /// Сессия протухла: токен снимаем, очередь и кеш не трогаем — то, что
+  /// мастер успел сделать, уйдёт после повторного входа
+  Future<void> _sessionExpired() async {
+    if (api.token == null) return;
+    api.token = null;
+    profile = null;
+    accessDeniedMessage = t('net.sessiyaIsteklaSohraneno');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kToken);
+    notifyListeners();
   }
 
   /// Версия сборки — сверяется с минимальной серверной (F-60)
@@ -38,10 +56,11 @@ class Session extends ChangeNotifier {
   MasterProfile? profile;
   String? lastPhone;
   List<CatalogItem> catalog = const [];
-  String? accessDeniedMessage;
 
-  /// Состояние воронки онбординга: показывается вместо ленты, пока мастера не активировали
-  Map<String, dynamic>? onboarding;
+  /// Почему сервер не пускает к заявкам: доступ закрыт админом либо ещё не
+  /// открыт. Воронки онбординга в приложении нет — регистрирует и допускает
+  /// мастера админ, приложение только показывает причину на экране входа
+  String? accessDeniedMessage;
   bool ready = false;
   bool forceUpdate = false;
   String? minVersion;
@@ -52,14 +71,32 @@ class Session extends ChangeNotifier {
   int unreadNotifications = 0;
 
   bool get isAuthorized => api.token != null && profile != null;
-  bool get isOnboarding => api.token != null && profile == null && onboarding != null;
+
+  /// Вошёл, но к заявкам не допущен: токен есть, карточки мастера нет
+  /// или доступ закрыт. Экран входа показывает причину и даёт перепроверить
+  bool get isSignedInWithoutAccess => api.token != null && profile == null;
   String get baseUrl => api.baseUrl;
+
+  /// Кто в прошлый раз работал на этом аппарате — по нему решаем, чистить ли
+  /// кеш прайса при входе
+  String? _lastOwner;
+
+  /// Наценка за срочность в процентах — из параметра системы, а не из кода.
+  /// null означает «конфигурацию ещё не читали»: в этом случае смета не
+  /// показывает придуманную цифру, а честно говорит, что посчитает сервер
+  int? urgentSurchargePercent;
+
+  /// Телефон диспетчерской из конфигурации сервера: по нему звонят кнопки
+  /// «Диспетчеру» на карточке заявки и в тупиковых ветках. Хранить его в
+  /// приложении нельзя — номер меняется параметром системы без пересборки
+  String? dispatcherPhone;
 
   Future<void> boot() async {
     final prefs = await SharedPreferences.getInstance();
     api.baseUrl = prefs.getString(_kBase) ?? defaultBaseUrl;
     api.token = prefs.getString(_kToken);
     lastPhone = prefs.getString(_kPhone);
+    _lastOwner = lastPhone;
     _loadCatalogCache(prefs);
     await outbox.load();
     if (api.token != null) {
@@ -88,6 +125,13 @@ class Session extends ChangeNotifier {
     await prefs.setString(_kPhone, phone);
     lastPhone = phone;
     accessDeniedMessage = null;
+    // Вошёл другой мастер — чужая очередь и чужой кеш прайса не его дело
+    await outbox.adoptOwner(phone);
+    if (_lastOwner != null && _lastOwner != phone) {
+      catalog = const [];
+      await prefs.remove(_kCatalog);
+    }
+    _lastOwner = phone;
     unawaited(push.register());
     await refreshProfile();
     await refreshConfig();
@@ -101,13 +145,19 @@ class Session extends ChangeNotifier {
       accessDeniedMessage = null;
     } on ApiError catch (e) {
       if (e.statusCode == 401) {
-        await logout();
+        // Токен уже погашен в `onUnauthorized`: полный logout здесь затирал бы
+        // сообщение «Сессия истекла» и второй раз снимал устройство с push
       } else if (e.statusCode == 403) {
-        // Кандидат или заблокированный: токен валиден, но линии нет.
-        // Заблокированного дальше не пускаем, остальным открываем воронку онбординга.
-        accessDeniedMessage = e.message;
+        // Токен валиден, но к заявкам не допущены: доступ ещё не открыт
+        // или закрыт админом. Две известные причины показываем своим текстом:
+        // он всегда на языке мастера, а серверный перевод этих строк живёт в
+        // словарях бэкенда и может отстать. Всё остальное — как прислал сервер
+        accessDeniedMessage = switch (e.code) {
+          'ACCESS_NOT_OPEN' || 'NOT_A_MASTER' => t('login.dostupZakryt'),
+          'MASTER_BLOCKED' => t('login.dostupZakrytAdminom'),
+          _ => e.message,
+        };
         profile = null;
-        if (e.code != 'MASTER_BLOCKED') await refreshOnboarding();
       } else if (!e.isOffline && !silent) {
         rethrow;
       }
@@ -115,7 +165,6 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Конфигурация приложения: минимальная версия и флаги функций
   Future<void> refreshUnread() async {
     try {
       final r = await api.notifications();
@@ -126,6 +175,8 @@ class Session extends ChangeNotifier {
     }
   }
 
+  /// Конфигурация приложения: минимальная версия, флаги функций,
+  /// телефон диспетчерской
   Future<void> refreshConfig() async {
     try {
       final c = await api.appConfig(appVersion);
@@ -133,23 +184,10 @@ class Session extends ChangeNotifier {
       minVersion = c['minVersion']?.toString();
       updateMessage = c['updateMessage']?.toString();
       features = (c['features'] as Map?)?.cast<String, dynamic>() ?? const {};
+      dispatcherPhone = c['dispatcherPhone']?.toString();
+      urgentSurchargePercent = (c['urgentSurchargePercent'] as num?)?.toInt();
     } on ApiError {
       // офлайн или кандидат без карточки — блокировать работу из-за этого нельзя
-    }
-    notifyListeners();
-  }
-
-  Future<void> refreshOnboarding() async {
-    try {
-      onboarding = await api.onboardingStatus();
-      if (onboarding?['activated'] == true) {
-        // Админ активировал — перечитываем профиль, воронка больше не нужна
-        onboarding = null;
-        profile = MasterProfile.fromJson(await api.me());
-        accessDeniedMessage = null;
-      }
-    } on ApiError {
-      // офлайн — покажем последний известный экран воронки
     }
     notifyListeners();
   }
@@ -184,6 +222,12 @@ class Session extends ChangeNotifier {
     }
   }
 
+  /// Выход из аккаунта.
+  ///
+  /// Чистим не только токен: на одном аппарате работают посменно, и второй
+  /// мастер отправлял очередь первого своим токеном, а прайс видел из чужого
+  /// кеша. Всё, что относится к человеку, уходит вместе с ним; адрес сервера
+  /// и язык остаются — это настройки аппарата.
   Future<void> logout() async {
     // Сначала снимаем устройство, пока токен сессии ещё жив: после обнуления
     // запрос уйдёт без авторизации, а офферы продолжат приходить вышедшему
@@ -191,8 +235,14 @@ class Session extends ChangeNotifier {
     api.token = null;
     profile = null;
     accessDeniedMessage = null;
+    catalog = const [];
+    unreadNotifications = 0;
+    features = const {};
+    // Очередь не трогаем: в ней работа за день. Она привязана к телефону
+    // мастера и не уйдёт под чужим токеном — за этим следит `adoptOwner`
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kToken);
+    await prefs.remove(_kCatalog);
     notifyListeners();
   }
 }

@@ -236,17 +236,29 @@ class _AbsenceDialogState extends State<_AbsenceDialog> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              InkWell(
-                onTap: () => setState(() => _month = DateTime(_month.year, _month.month - 1)),
-                child: const FigmaIcon('chevron-left', size: 18),
+              // Поле нажатия 48: голая иконка 18 в перчатке не ловится,
+              // а промах по стрелке месяца стоит перелистанного календаря
+              SizedBox(
+                width: SozoSize.tap,
+                height: SozoSize.tap,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(SozoSize.tap / 2),
+                  onTap: () => setState(() => _month = DateTime(_month.year, _month.month - 1)),
+                  child: const Center(child: FigmaIcon('chevron-left', size: 20)),
+                ),
               ),
               Text(
                 '${_months[_month.month - 1]} ${_month.year}',
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: SozoColors.text),
               ),
-              InkWell(
-                onTap: () => setState(() => _month = DateTime(_month.year, _month.month + 1)),
-                child: const FigmaIcon('chevron-right', size: 18),
+              SizedBox(
+                width: SozoSize.tap,
+                height: SozoSize.tap,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(SozoSize.tap / 2),
+                  onTap: () => setState(() => _month = DateTime(_month.year, _month.month + 1)),
+                  child: const Center(child: FigmaIcon('chevron-right', size: 20)),
+                ),
               ),
             ],
           ),
@@ -256,7 +268,7 @@ class _AbsenceDialogState extends State<_AbsenceDialog> {
             children: _weekdays
                 .map(
                   (w) => SizedBox(
-                    width: 34,
+                    width: 44,
                     child: Text(
                       w,
                       textAlign: TextAlign.center,
@@ -309,24 +321,26 @@ class _AbsenceDialogState extends State<_AbsenceDialog> {
     final otherMonth = d.month != _month.month;
     final end = _isEnd(d);
     final middle = _inRange(d);
+    // Клетка 44, а не макетные 34: отпуск и больничный отмечают пальцем,
+    // и промах по соседнему дню замечают уже в ответе диспетчера
     return SizedBox(
-      width: 34,
-      height: 34,
+      width: 44,
+      height: 44,
       child: Material(
         color: end
             ? SozoColors.accent
             : middle
             ? SozoColors.accent.withValues(alpha: 0.13)
             : Colors.transparent,
-        borderRadius: BorderRadius.circular(end ? 16 : SozoRadius.s4),
+        borderRadius: BorderRadius.circular(end ? 22 : SozoRadius.s4),
         child: InkWell(
-          borderRadius: BorderRadius.circular(end ? 16 : SozoRadius.s4),
+          borderRadius: BorderRadius.circular(end ? 22 : SozoRadius.s4),
           onTap: otherMonth ? null : () => _tapDay(d),
           child: Center(
             child: Text(
               '${d.day}',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: end ? FontWeight.w700 : FontWeight.w500,
                 color: otherMonth ? dayOutside : SozoColors.text,
               ),

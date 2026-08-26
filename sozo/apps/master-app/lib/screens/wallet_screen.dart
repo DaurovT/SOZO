@@ -7,6 +7,7 @@ import '../main.dart';
 import '../widgets/app_chrome.dart';
 import '../widgets/common.dart';
 import '../widgets/figma_blocks.dart';
+import '../widgets/figma_icon.dart';
 import '../i18n.dart';
 
 /// M-34 «Кошелёк» — полная прозрачность: каждая сумма с расшифровкой до заявки.
@@ -58,7 +59,7 @@ class _WalletScreenState extends State<WalletScreen> {
       showOk(context, t('money.dolgaNetVnositNechego'));
       return;
     }
-    final ctrl = TextEditingController(text: (debt / 100).round().toString());
+    final ctrl = TextEditingController(text: groupDigits((debt / 100).round().toString()));
     final amount = await showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -72,6 +73,10 @@ class _WalletScreenState extends State<WalletScreen> {
             TextField(
               controller: ctrl,
               keyboardType: TextInputType.number,
+              // Разряды проставляются на ходу: без них «200000» и «2000000»
+              // на экране телефона различаются одним символом, и ошибка на
+              // порядок в сумме долга замечается уже после оплаты
+              inputFormatters: [ThousandsFormatter()],
               decoration: InputDecoration(labelText: t('common.summaSum')),
             ),
             const SizedBox(height: SozoSpace.s8),
@@ -80,11 +85,11 @@ class _WalletScreenState extends State<WalletScreen> {
               children: [
                 ActionChip(
                   label: Text(t('money.vesDolg')),
-                  onPressed: () => ctrl.text = (debt / 100).round().toString(),
+                  onPressed: () => ctrl.text = groupDigits((debt / 100).round().toString()),
                 ),
                 ActionChip(
                   label: Text(t('money.polovina')),
-                  onPressed: () => ctrl.text = (debt / 200).round().toString(),
+                  onPressed: () => ctrl.text = groupDigits((debt / 200).round().toString()),
                 ),
               ],
             ),
@@ -93,7 +98,7 @@ class _WalletScreenState extends State<WalletScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(), child: Text(t('common.otmena'))),
           FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(int.tryParse(ctrl.text.trim())),
+            onPressed: () => Navigator.of(ctx).pop(int.tryParse(digitsOf(ctrl.text))),
             child: Text(t('money.oplatit')),
           ),
         ],
@@ -118,11 +123,11 @@ class _WalletScreenState extends State<WalletScreen> {
           ? EmptyView(title: t('money.koshelekNedostupen'), subtitle: _error, icon: 'alert-circle')
           : const Center(child: CircularProgressIndicator());
     }
-    final accrued = (d['accruedTiyin'] as num).toInt();
-    final paid = (d['paidTiyin'] as num).toInt();
-    final due = (d['dueTiyin'] as num).toInt();
-    final debt = (d['cashDebtTiyin'] as num).toInt();
-    final limit = (d['cashLimitTiyin'] as num?)?.toInt() ?? 200000000;
+    final accrued = tiyinOf(d['accruedTiyin']);
+    final paid = tiyinOf(d['paidTiyin']);
+    final due = tiyinOf(d['dueTiyin']);
+    final debt = tiyinOf(d['cashDebtTiyin']);
+    final limit = tiyinOf(d['cashLimitTiyin']) == 0 ? 200000000 : tiyinOf(d['cashLimitTiyin']);
     final sections = ((d['sections'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final blocked = ((d['blocked'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final periods = ((d['periods'] as List?) ?? const []).cast<Map<String, dynamic>>();
@@ -165,6 +170,12 @@ class _WalletScreenState extends State<WalletScreen> {
                 ],
                 _summaryCard(accrued, paid, debt, due),
                 const SizedBox(height: SozoSpace.s12),
+                // «Когда деньги» — вопрос номер один любого мастера, а на
+                // экране не было ни даты, ни периода: только формула
+                if (d['payout'] != null) ...[
+                  _payoutCard((d['payout'] as Map).cast<String, dynamic>()),
+                  const SizedBox(height: SozoSpace.s12),
+                ],
                 _cashCard(debt, limit),
                 if (blocked.isNotEmpty) ...[
                   const SizedBox(height: SozoSpace.s12),
@@ -185,7 +196,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   _detailCard(
                     title: t('money.chaevye'),
                     note: _tips!['note']?.toString(),
-                    value: formatSoums((_tips!['totalTiyin'] as num).toInt()),
+                    value: formatSoums(tiyinOf(_tips!['totalTiyin'])),
                     valueColor: incomeGreen,
                   ),
                 if (d['taxMode'] == 'gph')
@@ -236,6 +247,32 @@ class _WalletScreenState extends State<WalletScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Когда будет выплата. Период и дату последней ведомости считает сервер:
+  /// период — параметр системы, а даты выплат живут в проводках биллинга.
+  /// Приложение их не выдумывает — обещать мастеру деньги «в понедельник»
+  /// хуже, чем честно сказать «раз в неделю, последняя была тогда-то»
+  Widget _payoutCard(Map<String, dynamic> payout) {
+    final last = payout['lastPaidAt']?.toString();
+    return FigmaCard(
+      children: [
+        Row(
+          children: [
+            const FigmaIcon('calendar', size: 20, color: SozoColors.accent),
+            const SizedBox(width: SozoSpace.s12),
+            Expanded(
+              child: Text(t('money.kogdaVyplata'), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+        Text(payout['scheduleText']?.toString() ?? '', style: const TextStyle(fontSize: 15, height: 1.4)),
+        Text(
+          last == null ? t('money.vyplatPokaNeBylo') : t('money.poslednyayaVyplata', {'p1': ymd(last)}),
+          style: const TextStyle(fontSize: 14, color: SozoColors.textSecondary),
+        ),
+      ],
     );
   }
 
@@ -375,7 +412,7 @@ class _WalletScreenState extends State<WalletScreen> {
                       child: Row(
                         children: [
                           Expanded(child: Text(r['title'].toString(), style: const TextStyle(fontSize: 14))),
-                          Money(formatSoums((r['amountTiyin'] as num).toInt()), size: 14, weight: FontWeight.w500),
+                          Money(formatSoums(tiyinOf(r['amountTiyin'])), size: 14, weight: FontWeight.w500),
                         ],
                       ),
                     ),

@@ -50,7 +50,9 @@ class _OfferSheetState extends State<OfferSheet> {
       setState(() => _left = math.max(0, _left - 1));
       if (_left == 0) {
         _timer?.cancel();
-        // Таймаут = отказ. Закрываем молча: мастер уже занят чем-то другим.
+        // Таймаут = отказ, но не молча: экран, исчезнувший сам по себе,
+        // мастер читает как сбой приложения, а не как «время вышло»
+        showOk(context, t('offer.vremyaVyshlo'));
         Navigator.of(context).maybePop();
       }
     });
