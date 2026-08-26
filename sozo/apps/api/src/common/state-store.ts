@@ -87,19 +87,39 @@ export class StateStore implements OnModuleInit {
 
   flush(): void {
     const data: Record<string, unknown> = {};
+    let failed = 0;
     for (const [key, part] of this.parts) {
       try {
         data[key] = part.snapshot();
       } catch (e) {
+        failed += 1;
+        /**
+         * Раздел, чей снимок упал, берётся из ПРЕДЫДУЩЕГО состояния.
+         *
+         * Раньше он просто выпадал: файл атомарно подменялся без него, и на
+         * следующем старте модуль поднимался с сида — то есть одна ошибка в
+         * сборке снимка стирала весь раздел молча. Данные, которые не удалось
+         * сериализовать сейчас, никуда не делись: последний удачный снимок
+         * ближе к правде, чем пустота.
+         */
+        const previous = this.loaded[key];
+        if (previous !== undefined) data[key] = previous;
         // eslint-disable-next-line no-console
-        console.error(`[StateStore] снимок раздела ${key} не собран:`, e);
+        console.error(`[StateStore] снимок раздела ${key} не собран, оставляю прежний:`, e);
       }
+    }
+    if (failed) {
+      // eslint-disable-next-line no-console
+      console.error(`[StateStore] разделов с неудачным снимком: ${failed} — состояние записано частично устаревшим`);
     }
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
       writeFileSync(tmp, JSON.stringify(data, null, 1), 'utf8');
       renameSync(tmp, this.file); // атомарная подмена — файл не бьётся при падении
+      // Запомненное состояние — то, что реально записано: следующий неудачный
+      // снимок должен опираться на него, а не на то, что было при старте
+      this.loaded = data;
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[StateStore] запись состояния не удалась:', e);

@@ -1,8 +1,11 @@
-import { Body, Controller, Get, Module, OnModuleInit, Param, Post, Put, UseGuards, Injectable, NotFoundException } from '@nestjs/common';
+import { Body, Controller, Get, Module, OnModuleInit, Param, Post, Put, Req, UseGuards, Injectable, NotFoundException } from '@nestjs/common';
 import { uuidv7 } from '@sozo/kernel';
 import { AuthGuard, Roles } from '../identity/auth.guard';
+import type { JwtClaims } from '../../common/jwt';
+import { AuditService } from '../platform/audit.service';
 import { IdentityService } from '../identity/identity.service';
 import { StateStore } from '../../common/state-store';
+import { EventBus } from '../../common/event-bus';
 import { AffiliationService } from './affiliation.service';
 import { dbFailure } from '../../common/db-failure';
 import { Prisma } from '@prisma/client';
@@ -122,6 +125,7 @@ export class MastersService implements OnModuleInit {
     private readonly store: StateStore,
     private readonly identity: IdentityService,
     private readonly prisma: PrismaService,
+    private readonly bus: EventBus,
   ) {
     if (!this.prisma.enabled) {
       this.store.register(
@@ -135,6 +139,18 @@ export class MastersService implements OnModuleInit {
     }
     // Телефон из карточки мастера даёт роль master при входе (PRD-02 §2)
     this.identity.registerRoleProvider((phone) => (this.masters.some((m) => m.phone === phone) ? ['master'] : []));
+    /**
+     * Грейд мастера для расчёта его доли.
+     *
+     * Отдаётся справкой, а не импортом: доля считается при закрытии заявки, а
+     * заявки не должны знать про реестр мастеров (DEV-07 §3). Грейд — тот же,
+     * что показан мастеру в приложении, и в этом весь смысл: обещанные 57%
+     * золотого грейда и фактические 55% расходились именно потому, что это
+     * были два разных числа в двух разных местах.
+     */
+    this.bus.registerProbe<{ masterId: string }, string | null>('masters.grade', (q) => {
+      return this.masters.find((m) => m.id === q.masterId)?.grade ?? null;
+    });
   }
 
   private loaded = false;
@@ -315,7 +331,10 @@ export class MastersService implements OnModuleInit {
 @Controller('admin/masters')
 @UseGuards(AuthGuard)
 export class MastersController {
-  constructor(private readonly masters: MastersService) {}
+  constructor(
+    private readonly masters: MastersService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get()
   @Roles('admin', 'accountant')
@@ -360,6 +379,45 @@ export class MastersController {
     if (!m.skillTags.includes(b.skill)) m.skillTags.push(b.skill);
     this.masters.update(id, {});
     return m;
+  }
+
+  /**
+   * Открыть и закрыть доступ мастера к заявкам.
+   *
+   * Единственная ручка, которой решается «пускать или не пускать»: приложение
+   * мастера воронку онбординга больше не показывает, и мастер, которого
+   * система не пропустила сама, ждёт именно этого действия администратора.
+   * Отдельный эндпоинт, а не выбор статуса в списке: закрытие доступа — то,
+   * что потом ищут в аудите поимённо, и оно не должно теряться среди правок
+   * рейтинга и грейда.
+   *
+   * Открытие ставит `active` — только в этом статусе мастеру уходят офферы.
+   * Закрытие ставит `blocked`: карточка, история и деньги остаются, доступ
+   * пропадает до следующего открытия.
+   */
+  @Post(':id/access')
+  @Roles('admin')
+  access(@Param('id') id: string, @Body() b: { open?: boolean; reason?: string }, @Req() req: { auth: JwtClaims }) {
+    const m = this.masters.get(id);
+    const open = b?.open !== false;
+    if (m.status === 'offboarding') {
+      throw new NotFoundException({
+        code: 'MASTER_OFFBOARDING',
+        message: 'Мастер в офбординге: доступ возвращается только отменой офбординга',
+      });
+    }
+    const updated = this.masters.update(id, { status: open ? 'active' : 'blocked' });
+    this.audit.write({
+      actorPhone: req.auth.phone,
+      action: open ? 'master.access_opened' : 'master.access_closed',
+      entity: 'MasterProfile',
+      entityId: id,
+      payload: { from: m.status, to: updated.status, reason: b?.reason },
+    });
+    return {
+      ...updated,
+      message: open ? 'Доступ открыт — мастер получает заявки' : 'Доступ закрыт — заявки мастеру не приходят',
+    };
   }
 
   /** Офбординг (ТЗ 8.6): снятие с линии → заморозка выплат → взаимозачёт → акт сверки */

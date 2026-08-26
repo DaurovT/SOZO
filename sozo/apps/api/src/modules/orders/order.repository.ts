@@ -110,6 +110,37 @@ export interface OrderRecord {
   };
   /** Чаевые мастеру (C-21) — идут мастеру целиком, в расчёт заявки не входят */
   tipTiyin?: number;
+  /**
+   * ---- Серверные факты для guard'ов графа (DEV-10 §5) ----
+   *
+   * Всё, что ниже, раньше приезжало флагами в теле запроса и потому ничего не
+   * проверяло: guard читал то, что ему прислал вызывающий. Теперь это записи
+   * на заявке — у каждой есть автор и время, и её видно в карточке.
+   */
+  /** «Отпустить без оплаты» и прочие исключения — под личную ответственность диспетчера */
+  dispatcherSanction?: { reason: string; by: string; at: string };
+  /** Наличные собраны мастером на месте — снимает гейт завершения, но не закрывает заявку */
+  cashCollected?: { by: string; amountTiyin: number; at: string };
+  /** Модерация пакета фото и чеков (переход «Проверена») */
+  moderation?: { passed: boolean; by: string; at: string };
+  /** Аварийная: клиент отказался от сметы восстановления */
+  restorationDeclined?: { by: string; at: string };
+  /** Осмотр: чек-лист заполнен мастером */
+  inspectionChecklistAt?: string;
+  /** Гарантийная: вина квалифицирована 0/50/100% */
+  warrantyFaultPercent?: number;
+  /** B2B разовая без договора: отметка предоплаты (ТЗ 8.3) */
+  prepayment?: { amountTiyin: number; by: string; at: string };
+  /**
+   * Лимиты точки на момент оценки (матрица ТЗ 5.1).
+   *
+   * Считаются сервисным слоем при постановке сметы и хранятся снимком:
+   * лимит точки может измениться завтра, а решение об автостарте принималось
+   * по тому, что было в момент оценки.
+   */
+  approval?: { withinOrderLimit: boolean; monthlyLimitOk: boolean; at: string };
+  /** Заявка из подписанной позиции акта осмотра — граф from_defect (DEV-10 §4.6) */
+  fromDefect?: { actId: string; itemId: string; estimatedAt?: string };
   lines: OrderLineRec[];
   /** База до скидок — от неё считается доля мастера (ТЗ 3.7) */
   baseFromTiyin: number;
@@ -132,6 +163,8 @@ export interface OrderRecord {
    * заявка всё равно уедет — обещания «только этот мастер» платформа не даёт.
    */
   preferredMasterId?: string;
+  /** Ключ идемпотентности создания из приложения (заголовок Idempotency-Key) */
+  idempotencyKey?: string;
   /**
    * Срок по договору для аварийной заявки (ТЗ 18 п.2).
    *
@@ -190,6 +223,8 @@ export interface OrderRecord {
     sourceChannel: 'partner_store' | 'master_own' | 'client_self' | 'company_stock';
     hasReceipt: boolean;
     priceTier?: 'economy' | 'standard' | 'premium';
+    /** Ключ операции клиента — повтор при обрыве связи не заводит второй материал */
+    clientOpUuid?: string;
     at: string;
   }>;
   totalMaterialTiyin: number;
@@ -217,8 +252,27 @@ export interface OrderRepository {
     entry: { from: OrderStatus | null; to: OrderStatus; action: string; actorPhone?: string; reason?: string; clientOpUuid?: string },
     patch?: Partial<Pick<OrderRecord, 'masterId' | 'masterName'>>,
   ): Promise<OrderRecord | 'version_conflict' | 'duplicate'>;
-  /** Сохранить состояние после мутации вложенных коллекций заявки */
-  touch(): void;
+  /**
+   * Сохранить состояние после мутации вложенных коллекций заявки.
+   *
+   * `orderId` — какую именно заявку правили. Без него пишется весь набор, и
+   * это было единственным поведением: добавление одного материала при
+   * нескольких тысячах заявок порождало тысячи операций удаления и вставки в
+   * последовательной очереди записи. Указывать заявку стоит везде, где она
+   * под рукой; безымянный вызов остаётся для правок, которые трогают многое
+   * сразу.
+   */
+  touch(orderId?: string): void;
+  /**
+   * Синхронный снимок заявки.
+   *
+   * Оба хранилища держат заявки в памяти, и async у чтений — след будущей
+   * базы, а не настоящей асинхронности. Нужен справкам через шину: их
+   * спрашивают из синхронного кода (переход наряда-допуска), и превращать
+   * ради этого весь путь в асинхронный значит менять полдюжины сигнатур
+   * ради обращения к Map.
+   */
+  peek(tenantId: string, id: string): OrderRecord | undefined;
 }
 
 @Injectable()
@@ -286,7 +340,14 @@ export class InMemoryOrderRepository implements OrderRepository {
   }
 
   /** Мутации вкладок карточки (сметы, фото, материалы, переназначение) — сохраняем явно */
-  touch(): void {
+  touch(_orderId?: string): void {
+    // Файловое хранилище пишет снимок целиком: писать «одну заявку» здесь
+    // нечем, и разделять нечего
     this.store.persist();
+  }
+
+  peek(tenantId: string, id: string): OrderRecord | undefined {
+    const o = this.orders.get(id);
+    return o && o.tenantId === tenantId ? o : undefined;
   }
 }

@@ -16,7 +16,15 @@ const CANCELLABLE: OrderStatus[] = [
   'in_progress',
   'addwork_approval',
 ];
-const DISPUTABLE: OrderStatus[] = ['completed', 'verified', 'awaiting_payment', 'closed'];
+/**
+ * Откуда можно открыть спор.
+ *
+ * `rated` добавлен: оценка не должна закрывать окно спора досрочно. Клиент,
+ * поставивший звёзды на второй день, терял оставшиеся 70 часов из своих 72 —
+ * а оценка и претензия про разное: первая про впечатление, вторая про деньги
+ * и качество. Само окно по-прежнему считает guard `within_72h_after_completed`.
+ */
+const DISPUTABLE: OrderStatus[] = ['completed', 'verified', 'awaiting_payment', 'closed', 'rated'];
 
 function overlays(): TransitionDef[] {
   return [

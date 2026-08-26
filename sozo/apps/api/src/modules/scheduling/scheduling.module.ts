@@ -8,8 +8,11 @@ import { PricingModule } from '../pricing/pricing.module';
 import { PricingService } from '../pricing/pricing.service';
 import { AuditService } from '../platform/audit.service';
 import type { JwtClaims } from '../../common/jwt';
+import { localDateKey } from '../../common/tz';
 
-const today = (): string => new Date().toISOString().slice(0, 10);
+// Местная дата: `toISOString()` даёт UTC, и с 00:00 до 05:00 по Ташкенту
+// «сегодня» оказывалось вчерашним днём
+const today = (): string => localDateKey();
 
 /** D-05 ленты мастеров, D-04 ёмкость дня, D-18 лист ожидания (PRD-03) */
 @Controller('dispatch/scheduling')

@@ -5,6 +5,7 @@ import { dbFailure } from '../../common/db-failure';
 import { queue } from '../../common/pg-mirror';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
+import { localDateKey, localMinutesOfDay } from '../../common/tz';
 
 /**
  * Планировщик ёмкости (PRD-05 §2, ТЗ 17.3). Сетка 30-минутных слотов.
@@ -19,6 +20,15 @@ export const LANE_FREEZE_HOURS = 2; // параметр №29
 
 export interface ShiftRec {
   id: string;
+  /**
+   * Владелец.
+   *
+   * У смен, броней и листа ожидания поля тенанта не было вовсе — оно
+   * появлялось только в момент записи в базу, из окружения запроса. Пока
+   * тенант один, это незаметно; со вторым лента одного владельца считалась
+   * бы по сменам обоих.
+   */
+  tenantId: string;
   masterId: string;
   masterName: string;
   date: string; // YYYY-MM-DD
@@ -30,6 +40,7 @@ export interface ShiftRec {
 
 export interface BookingRec {
   id: string;
+  tenantId: string;
   shiftId: string;
   masterId: string;
   orderId: string;
@@ -46,6 +57,7 @@ export interface BookingRec {
 }
 
 export interface WaitlistEntry {
+  tenantId: string;
   orderId: string;
   orderNumber: string;
   normHours: number;
@@ -85,12 +97,15 @@ export class SchedulingService implements OnModuleInit {
       () => ({ shifts: this.shifts, bookings: this.bookings, waitlist: this.waitlist }),
       (d) => {
         const data = d as { shifts: ShiftRec[]; bookings: BookingRec[]; waitlist: WaitlistEntry[] };
+        // Записи из снимков, сделанных до появления владельца, достаются
+        // системному тенанту: иначе они разом исчезли бы из всех выборок
+        const own = systemContext().tenantId;
         this.shifts.length = 0;
-        this.shifts.push(...(data.shifts ?? []));
+        this.shifts.push(...(data.shifts ?? []).map((x) => ({ ...x, tenantId: x.tenantId ?? own })));
         this.bookings.length = 0;
-        this.bookings.push(...(data.bookings ?? []));
+        this.bookings.push(...(data.bookings ?? []).map((x) => ({ ...x, tenantId: x.tenantId ?? own })));
         this.waitlist.length = 0;
-        this.waitlist.push(...(data.waitlist ?? []));
+        this.waitlist.push(...(data.waitlist ?? []).map((x) => ({ ...x, tenantId: x.tenantId ?? own })));
       },
     );
   }
@@ -109,16 +124,20 @@ export class SchedulingService implements OnModuleInit {
       this.loaded = true;
       return;
     }
+    // Скоуп по владельцу и на чтении: RLS на этих таблицах есть, но полагаться
+    // только на неё значит зависеть от того, что контекст выставлен верно
+    const loadTenant = this.tenant();
     const d = await this.prisma.withContext(async (tx) => ({
-      shifts: await tx.shift.findMany(),
-      bookings: await tx.booking.findMany(),
-      waitlist: await tx.waitlistEntry.findMany({ orderBy: { at: 'asc' } }),
+      shifts: await tx.shift.findMany({ where: { tenantId: loadTenant } }),
+      bookings: await tx.booking.findMany({ where: { tenantId: loadTenant } }),
+      waitlist: await tx.waitlistEntry.findMany({ where: { tenantId: loadTenant }, orderBy: { at: 'asc' } }),
     }));
     if (d.shifts.length) {
       this.shifts.length = 0;
       this.shifts.push(
         ...d.shifts.map((x) => ({
           id: x.id,
+          tenantId: x.tenantId,
           masterId: x.masterId,
           masterName: x.masterName,
           date: x.date.toISOString().slice(0, 10),
@@ -134,6 +153,7 @@ export class SchedulingService implements OnModuleInit {
       this.bookings.push(
         ...d.bookings.map((x) => ({
           id: x.id,
+          tenantId: x.tenantId,
           shiftId: x.shiftId,
           masterId: x.masterId,
           orderId: x.orderId,
@@ -154,6 +174,7 @@ export class SchedulingService implements OnModuleInit {
       this.waitlist.length = 0;
       this.waitlist.push(
         ...d.waitlist.map((x) => ({
+          tenantId: x.tenantId,
           orderId: x.orderId,
           orderNumber: x.orderNumber,
           normHours: Number(x.normHours),
@@ -200,41 +221,68 @@ export class SchedulingService implements OnModuleInit {
     });
   }
 
+  /** Владелец текущего запроса */
+  private tenant(): string {
+    return (currentDbContext() ?? systemContext()).tenantId;
+  }
+
   private async writeAll(): Promise<void> {
-    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    const tenantId = this.tenant();
     // Снимок до первого await: бронь ссылается на смену, и добавленная по
     // ходу записи бронь упёрлась бы во внешний ключ (см. permit.repository)
     const shifts = [...this.shifts];
     const bookings = [...this.bookings];
     const waitlist = [...this.waitlist];
+    /**
+     * Запись без `deleteMany({})`.
+     *
+     * Раньше каждая правка стирала брони, лист ожидания и смены ЦЕЛИКОМ — по
+     * всем владельцам сразу — и переписывала из памяти процесса. При деплое
+     * старый и новый процесс живут вместе несколько секунд: новый принимает
+     * бронь, старый обрабатывает любую правку и стирает её, переписав всё из
+     * устаревшего снимка. Бронь исчезала бесследно, а окно клиенту уже названо.
+     *
+     * Теперь: свои записи переписываются точечно, а удаляется только то, что
+     * принадлежит этому владельцу, отсутствует в снимке И создано раньше
+     * снимка. Строка, появившаяся уже после того, как снимок сделан, — чужая
+     * работа, и трогать её нельзя.
+     */
+    const takenAt = new Date();
+    const shiftIds = shifts.map((x) => x.id);
+    const bookingIds = bookings.map((x) => x.id);
     await this.prisma.withContext(async (tx) => {
       // Порядок обязателен: бронь ссылается на смену
-      await tx.booking.deleteMany({});
-      await tx.waitlistEntry.deleteMany({});
-      await tx.shift.deleteMany({});
+      await tx.booking.deleteMany({ where: { tenantId, id: { notIn: bookingIds }, createdAt: { lt: takenAt } } });
+      await tx.waitlistEntry.deleteMany({
+        where: { tenantId, orderId: { notIn: waitlist.map((x) => x.orderId) }, at: { lt: takenAt } },
+      });
+      await tx.shift.deleteMany({ where: { tenantId, id: { notIn: shiftIds }, createdAt: { lt: takenAt } } });
       for (const x of shifts) {
-        await tx.shift.create({
-          data: {
-            id: x.id, tenantId, masterId: x.masterId, masterName: x.masterName,
-            date: new Date(`${x.date}T00:00:00Z`), startMin: x.startMin, endMin: x.endMin,
-            isDuty: x.isDuty, zone: x.zone ?? null,
-          },
-        });
+        const data = {
+          tenantId, masterId: x.masterId, masterName: x.masterName,
+          date: new Date(`${x.date}T00:00:00Z`), startMin: x.startMin, endMin: x.endMin,
+          isDuty: x.isDuty, zone: x.zone ?? null,
+        };
+        await tx.shift.upsert({ where: { id: x.id }, create: { id: x.id, ...data }, update: data });
       }
       for (const x of bookings) {
-        await tx.booking.create({
-          data: {
-            id: x.id, tenantId, shiftId: x.shiftId, masterId: x.masterId, orderId: x.orderId,
-            orderNumber: x.orderNumber, startMin: x.startMin, endMin: x.endMin, slots: x.slots,
-            normHours: x.normHours, bufferMin: x.bufferMin, anchored: x.anchored, priority: x.priority,
-            clientWindowFromMin: x.clientWindow[0], clientWindowToMin: x.clientWindow[1],
-            createdAt: new Date(x.createdAt),
-          },
+        const data = {
+          tenantId, shiftId: x.shiftId, masterId: x.masterId, orderId: x.orderId,
+          orderNumber: x.orderNumber, startMin: x.startMin, endMin: x.endMin, slots: x.slots,
+          normHours: x.normHours, bufferMin: x.bufferMin, anchored: x.anchored, priority: x.priority,
+          clientWindowFromMin: x.clientWindow[0], clientWindowToMin: x.clientWindow[1],
+        };
+        await tx.booking.upsert({
+          where: { id: x.id },
+          create: { id: x.id, createdAt: new Date(x.createdAt), ...data },
+          update: data,
         });
       }
       for (const x of waitlist) {
-        await tx.waitlistEntry.create({
-          data: {
+        await tx.waitlistEntry.upsert({
+          where: { tenantId_orderId: { tenantId, orderId: x.orderId } },
+          update: { orderNumber: x.orderNumber, normHours: x.normHours, priority: x.priority },
+          create: {
             tenantId, orderId: x.orderId, orderNumber: x.orderNumber,
             normHours: x.normHours, priority: x.priority, at: new Date(x.at),
           },
@@ -260,11 +308,11 @@ export class SchedulingService implements OnModuleInit {
     return { ...booking, date: shift?.date ?? '' };
   }
 
-  createShift(data: Omit<ShiftRec, 'id'>): ShiftRec {
+  createShift(data: Omit<ShiftRec, 'id' | 'tenantId'> & { tenantId?: string }): ShiftRec {
     if (data.endMin <= data.startMin) throw new BadRequestException({ code: 'SHIFT_RANGE_INVALID' });
     const dup = this.shifts.find((s) => s.masterId === data.masterId && s.date === data.date);
     if (dup) throw new BadRequestException({ code: 'SHIFT_EXISTS', message: 'У мастера уже есть смена на эту дату' });
-    const shift: ShiftRec = { id: uuidv7(), ...data };
+    const shift: ShiftRec = { id: uuidv7(), ...data, tenantId: data.tenantId ?? this.tenant() };
     this.shifts.push(shift);
     this.scheduleWrite();
     this.store.persist();
@@ -359,8 +407,17 @@ export class SchedulingService implements OnModuleInit {
   availableWindows(date: string, normHours: number, opts: { now?: Date; skipDuty?: boolean } = {}) {
     const { slots, totalMin } = this.slotsFor(normHours);
     const now = opts.now ?? new Date();
-    const isToday = date === now.toISOString().slice(0, 10);
-    const freezeUntilMin = isToday ? now.getHours() * 60 + now.getMinutes() + LANE_FREEZE_HOURS * 60 : -1;
+    /**
+     * «Сегодня» и «сейчас» — по местному времени, а не по UTC.
+     *
+     * `toISOString().slice(0,10)` даёт UTC-дату, `getHours()` — часы сервера,
+     * а он живёт в UTC. Ташкент — UTC+5, и заморозка «горячей зоны» не
+     * отсекала ничего: в полдень по Ташкенту клиенту предлагались окна,
+     * которые уже прошли.
+     */
+    const isToday = date === localDateKey(now);
+    const nowMin = localMinutesOfDay(now) ?? 0;
+    const freezeUntilMin = isToday ? nowMin + LANE_FREEZE_HOURS * 60 : -1;
 
     const windows = new Map<number, { startMin: number; masters: string[] }>();
     for (const shift of this.listShifts(date)) {
@@ -392,6 +449,33 @@ export class SchedulingService implements OnModuleInit {
       }));
   }
 
+  /**
+   * Первый слот, куда мастер помещается на эту дату.
+   *
+   * Нужен авто-назначению: оно ставило мастера на заявку и никогда не
+   * занимало его ёмкость — единственным вызывающим `book()` во всём коде был
+   * контроллер ручного бронирования. При этом отсев кандидатов построен
+   * именно на загрузке ленты, поэтому десять авто-назначений подряд выбирали
+   * одного и того же мастера: `loadPercent` у него оставался нулевым.
+   */
+  firstFreeSlot(masterId: string, date: string, normHours: number, now = new Date()): number | null {
+    const shift = this.shifts.find((s) => s.masterId === masterId && s.date === date);
+    if (!shift || shift.isDuty) return null;
+    const { totalMin } = this.slotsFor(normHours);
+    const lane = this.lane(masterId, date);
+    const busy = lane.bookings.map((b) => [b.startMin, b.endMin] as const);
+    const isToday = date === localDateKey(now);
+    const freezeUntil = isToday ? (localMinutesOfDay(now) ?? 0) + LANE_FREEZE_HOURS * 60 : -1;
+    for (let start = shift.startMin; start + totalMin <= shift.endMin; start += SLOT_MINUTES) {
+      if (start < freezeUntil) continue;
+      if (start >= 22 * 60 || start < 7 * 60) continue;
+      if (busy.some(([bs, be]) => start < be && start + totalMin > bs)) continue;
+      if ((lane.busyMin + totalMin) / Math.max(lane.shiftMin, 1) > DAY_PLAN_CAP) return null;
+      return start;
+    }
+    return null;
+  }
+
   /** Бронирование: проверка ёмкости, пересечений и лимита плана дня */
   book(params: {
     masterId: string;
@@ -410,6 +494,21 @@ export class SchedulingService implements OnModuleInit {
     if (this.bookings.some((b) => b.orderId === params.orderId)) {
       throw new BadRequestException({ code: 'ALREADY_BOOKED', message: 'Заявка уже забронирована — сначала снимите бронь' });
     }
+    /**
+     * Инварианты держит бронирование, а не витрина окон.
+     *
+     * Проверки «не дежурному», «не ночью» и «не в прошлом» стояли только в
+     * `availableWindows` — то есть в том, что показывают клиенту. Прямой
+     * вызов с идентификатором дежурного или вчерашней датой проходил, и
+     * дежурный, которого держат под аварии, оказывался забит плановой
+     * работой. Витрина — удобство; правило должно жить там, где запись.
+     */
+    if (shift.isDuty && !params.force) {
+      throw new BadRequestException({
+        code: 'DUTY_MASTER',
+        message: 'Дежурный держится под аварии — плановые работы на него не бронируются (ТЗ 17.3)',
+      });
+    }
     const { slots, bufferMin, totalMin } = this.slotsFor(params.normHours);
     const endMin = params.startMin + totalMin;
     if (params.startMin < shift.startMin || endMin > shift.endMin) {
@@ -421,8 +520,18 @@ export class SchedulingService implements OnModuleInit {
       throw new BadRequestException({ code: 'SLOT_BUSY', message: `Пересечение с бронью ${clash.orderNumber} (${HHMM(clash.startMin)}–${HHMM(clash.endMin)})` });
     }
     const now = params.now ?? new Date();
-    const isToday = params.date === now.toISOString().slice(0, 10);
-    const freezeUntil = now.getHours() * 60 + now.getMinutes() + LANE_FREEZE_HOURS * 60;
+    const today = localDateKey(now);
+    const isToday = params.date === today;
+    const freezeUntil = (localMinutesOfDay(now) ?? 0) + LANE_FREEZE_HOURS * 60;
+    if (params.date < today && !params.force) {
+      throw new BadRequestException({ code: 'DATE_IN_PAST', message: `Дата ${params.date} уже прошла — бронь в прошлое не ставится` });
+    }
+    if ((params.startMin >= 22 * 60 || params.startMin < 7 * 60) && !params.force) {
+      throw new BadRequestException({
+        code: 'NIGHT_WINDOW',
+        message: 'Ночь 22:00–07:00 — плановые работы не бронируются (ТЗ 17.3); аварийные ставятся с подтверждением',
+      });
+    }
     if (isToday && params.startMin < freezeUntil && !params.force) {
       throw new BadRequestException({
         code: 'LANE_FROZEN',
@@ -437,6 +546,7 @@ export class SchedulingService implements OnModuleInit {
     }
     const rec: BookingRec = {
       id: uuidv7(),
+      tenantId: shift.tenantId,
       shiftId: shift.id,
       masterId: params.masterId,
       orderId: params.orderId,
@@ -473,7 +583,7 @@ export class SchedulingService implements OnModuleInit {
 
   addToWaitlist(orderId: string, orderNumber: string, normHours: number, priority = QUEUE_PRIORITY.waitlist): void {
     if (this.waitlist.some((w) => w.orderId === orderId)) return;
-    this.waitlist.push({ orderId, orderNumber, normHours, priority, at: new Date().toISOString() });
+    this.waitlist.push({ tenantId: this.tenant(), orderId, orderNumber, normHours, priority, at: new Date().toISOString() });
     this.scheduleWrite();
     this.store.persist();
   }

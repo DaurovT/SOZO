@@ -61,6 +61,9 @@ export class DispatchController {
     const order = await this.orders.transition('t0', id, parsed.data, req.auth.phone, {
       masterId,
       masterName: master?.fullName,
+      // Роли решают, какие утверждения о мире от этого актора принимать:
+      // dev-флаги телефонного канала — только у диспетчера и админа
+      roles: req.auth.roles,
     });
     this.audit.write({
       actorPhone: req.auth.phone,

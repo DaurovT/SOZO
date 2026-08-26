@@ -4,6 +4,7 @@ import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
 import { EventBus } from '../../common/event-bus';
 import { PgMirror } from '../../common/pg-mirror';
+import { fromLocal, localDateKey, localHour } from '../../common/tz';
 
 /**
  * Качество: жалобы (D-10, ТЗ 17.10) и споры (D-11, ТЗ 4.2).
@@ -67,6 +68,8 @@ export interface DisputeRec {
   handledByPhone?: string;
   comment?: string;
   escalationReason?: string;
+  /** Кто эскалировал — чтобы он же не оказался и судьёй (ТЗ 4.2) */
+  escalatedByPhone?: string;
   createdAt: string;
   resolvedAt?: string;
 }
@@ -223,12 +226,12 @@ export class QualityService implements OnModuleInit {
 
   /** Окно работы с жалобами 8:00–22:00: ночная жалоба стартует таймер с 8:00 (ТЗ 17.10) */
   private slaStart(now: Date): Date {
-    const h = now.getHours();
+    // Окно местное: сервер живёт в UTC, Ташкент — UTC+5, и «8:00–22:00»
+    // по `getHours()` означало 13:00–03:00 по Ташкенту (см. common/tz)
+    const h = localHour(now);
     if (h >= 8 && h < 22) return now;
-    const next = new Date(now);
-    if (h >= 22) next.setDate(next.getDate() + 1);
-    next.setHours(8, 0, 0, 0);
-    return next;
+    const dayKey = h >= 22 ? localDateKey(new Date(now.getTime() + 86_400_000)) : localDateKey(now);
+    return fromLocal(dayKey, 8 * 60);
   }
 
   fileComplaint(data: {
@@ -399,22 +402,57 @@ export class QualityService implements OnModuleInit {
     return d;
   }
 
-  /** «Диспетчер не судит собственные заявки» — эскалация старшему (ТЗ 4.2) */
-  escalate(id: string, reason: string): DisputeRec {
+  /**
+   * «Диспетчер не судит собственные заявки» — эскалация старшему (ТЗ 4.2).
+   *
+   * Правило обходилось в два запроса: проверка самосуда снималась при статусе
+   * «эскалирован», а сама эскалация не проверяла актора вообще. Достаточно
+   * было эскалировать спор и тут же разрешить его тем же телефоном. Теперь
+   * эскалация помнит, кто её сделал, и резолюция сверяется с этим тоже.
+   */
+  escalate(id: string, reason: string, byPhone?: string): DisputeRec {
     const d = this.dispute(id);
+    if (byPhone && d.openedByPhone === byPhone) {
+      throw new BadRequestException({
+        code: 'SELF_ESCALATE_FORBIDDEN',
+        message: 'Эскалацию делает старший смены, а не тот, кто открыл спор (ТЗ 4.2)',
+      });
+    }
     d.status = 'escalated';
     d.escalationReason = reason;
+    d.escalatedByPhone = byPhone;
     this.store.persist();
     return d;
   }
 
   resolveDispute(id: string, params: { resolution: 'for_client' | 'for_master' | 'compromise'; refundTiyin?: number; comment: string; handledByPhone: string }): DisputeRec {
     const d = this.dispute(id);
+    /**
+     * Повторная резолюция не проводит возврат второй раз.
+     *
+     * Проверки «уже разрешён» здесь не было — при том что у жалоб такая
+     * проверка есть, — а контроллер после резолюции безусловно проводил
+     * возврат. Два нажатия «Разрешить» или повтор запроса по таймауту давали
+     * две проводки на одну сумму и задвоенный возврат клиенту.
+     */
+    if (d.status === 'resolved') {
+      throw new BadRequestException({
+        code: 'DISPUTE_ALREADY_RESOLVED',
+        message: `Спор уже разрешён ${d.resolvedAt ?? ''} — исправление только сторно проводки`.trim(),
+      });
+    }
     if (!params.comment?.trim()) throw new BadRequestException({ code: 'COMMENT_REQUIRED', message: 'Комментарий резолюции обязателен (уходит в аудит)' });
-    if (params.resolution !== 'for_master' && !params.refundTiyin) {
+    const refund = params.refundTiyin ?? 0;
+    // Отрицательная сумма проходила обе проверки насквозь: `!refundTiyin`
+    // для −1 ложно, `> amountTiyin` — тоже. Проводка не создавалась, но
+    // запись о споре оставалась искажённой
+    if (!Number.isSafeInteger(refund) || refund < 0) {
+      throw new BadRequestException({ code: 'REFUND_INVALID', message: 'Сумма возврата — целое неотрицательное число тийинов' });
+    }
+    if (params.resolution !== 'for_master' && refund <= 0) {
       throw new BadRequestException({ code: 'REFUND_REQUIRED', message: 'Для резолюции в пользу клиента или компромисса укажите сумму возврата' });
     }
-    if ((params.refundTiyin ?? 0) > d.amountTiyin) {
+    if (refund > d.amountTiyin) {
       throw new BadRequestException({ code: 'REFUND_TOO_BIG', message: 'Возврат больше суммы заявки' });
     }
     d.status = 'resolved';

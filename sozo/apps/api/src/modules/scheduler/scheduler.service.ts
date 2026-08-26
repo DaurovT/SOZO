@@ -9,6 +9,8 @@ import { BillingService } from '../billing/billing.service';
 import { CrmService } from '../crm/crm.service';
 import { OrdersService } from '../orders/orders.service';
 import { ParametersService } from '../platform/parameters.service';
+import { currentDbContext, systemContext } from '../../common/db-context';
+import { SlaService } from '../sla/sla.service';
 
 /**
  * Движок таймеров и эскалаций (PRD-05 §8 — 54 таймера; DEV-07 §5 — воркеры).
@@ -27,6 +29,11 @@ export interface TimerRun {
 
 const CALLOUT_TIYIN = 5_000_000;
 
+/** Владелец, от чьего имени работает планировщик вне запроса */
+function schedulerTenant(): string {
+  return (currentDbContext() ?? systemContext()).tenantId;
+}
+
 @Injectable()
 export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly runs: TimerRun[] = [];
@@ -41,6 +48,25 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
    * не должен — иначе забытый сдвиг незаметно смещает всю работу таймеров.
    */
   private dayOffset = 0;
+  /**
+   * Сухой прогон: считаем, но ничего не делаем.
+   *
+   * Симуляция дней вперёд выполняла БОЕВЫЕ действия: выставляла счета на
+   * абонентку, авто-отменяла заявки на T+72, приостанавливала организации и
+   * рассылала уведомления живым подписчикам — до шестидесяти дней за один
+   * вызов. Комментарий в коде обещал обратное.
+   *
+   * Флаг поднимается только на время симуляции и гасит всё, что выходит
+   * наружу или меняет состояние: события, проводки, переходы заявок, статусы
+   * организаций и отметки «сделано». Считанные цифры остаются — ради них
+   * симуляцию и запускают.
+   */
+  private dryRun = false;
+  /** Что уже записано в базу: прогоны и отметки неизменяемы после записи */
+  private readonly savedRuns = new Set<string>();
+  private readonly savedDone = new Set<string>();
+  /** Тик не должен накладываться на тик: расписание и ручной запуск сходятся */
+  private ticking = false;
 
   /** Журнал прогонов и отметки «сделано» — в базе (DEV-19, m36) */
   private readonly mirror: PgMirror;
@@ -54,17 +80,23 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly crm: CrmService,
     private readonly orders: OrdersService,
     private readonly params: ParametersService,
+    private readonly sla: SlaService,
   ) {
     this.mirror = new PgMirror(prisma, 'Scheduler', {
       load: async (tx) => {
         const [runs, done] = await Promise.all([
-          tx.timerRun.findMany({ orderBy: { at: 'asc' }, take: 200 }),
-          tx.timerDone.findMany(),
+          // Последние 200, а не первые: `asc` брал самые старые записи за всю
+          // историю, и «последний прогон» показывал прошлогоднее
+          tx.timerRun.findMany({ where: { tenantId: schedulerTenant() }, orderBy: { at: 'desc' }, take: 200 }),
+          // Ключи «сделано» — свои: чужие сваливались в один Set, а сам ключ
+          // тенанта не содержит, и отметка соседа гасила бы напоминание здесь
+          tx.timerDone.findMany({ where: { tenantId: schedulerTenant() } }),
         ]);
         if (runs.length) {
           this.runs.length = 0;
           this.runs.push(
-            ...runs.map((r) => ({
+            // Вернули порядок «старые → новые»: журнал читают сверху вниз
+            ...[...runs].reverse().map((r) => ({
               id: r.id,
               timer: r.timer,
               title: r.title,
@@ -79,7 +111,16 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         return runs.length + done.length;
       },
       save: async (tx, tenantId) => {
+        /**
+         * Пишем только новое.
+         *
+         * Раньше на каждое планирование перебирался весь список — по одному
+         * upsert на запись, — и список этот растёт неограниченно. Прогоны и
+         * отметки «сделано» неизменяемы после записи, поэтому достаточно
+         * помнить, что уже записано.
+         */
         for (const r of this.runs) {
+          if (this.savedRuns.has(r.id)) continue;
           await tx.timerRun.upsert({
             where: { id: r.id },
             create: {
@@ -88,26 +129,32 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
             },
             update: {},
           });
+          this.savedRuns.add(r.id);
         }
         for (const key of this.done) {
+          if (this.savedDone.has(key)) continue;
           await tx.timerDone.upsert({
             where: { tenantId_key: { tenantId, key } },
             create: { tenantId, key },
             update: {},
           });
+          this.savedDone.add(key);
         }
       },
     });
     this.store.register(
       'scheduler',
-      () => ({ runs: this.runs.slice(-200), done: [...this.done], dayOffset: this.dayOffset }),
+      // dayOffset в снимок НЕ попадает: виртуальное время — инструмент
+      // разбора, а не состояние системы. Оно переживало рестарт, и сервер
+      // просыпался в выдуманном дне, продолжая слать по нему уведомления
+      () => ({ runs: this.runs.slice(-200), done: [...this.done] }),
       (d) => {
-        const data = d as { runs: TimerRun[]; done: string[]; dayOffset: number };
+        const data = d as { runs: TimerRun[]; done: string[] };
         this.runs.length = 0;
         this.runs.push(...(data.runs ?? []));
         this.done.clear();
         for (const k of data.done ?? []) this.done.add(k);
-        this.dayOffset = data.dayOffset ?? 0;
+        this.dayOffset = 0;
       },
     );
   }
@@ -131,6 +178,39 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   /** Виртуальное «сейчас» (учитывает симуляцию дней) */
   now(): Date {
     return new Date(Date.now() + this.dayOffset * 86_400_000);
+  }
+
+  /**
+   * Побочное действие таймера.
+   *
+   * В сухом прогоне не выполняется — и это единственное, чем симуляция
+   * отличается от боевого тика. Возвращает `false`, если действие пропущено,
+   * чтобы счётчики в журнале честно показывали «столько бы сделали».
+   */
+  private commit(fn: () => void): boolean {
+    if (this.dryRun) return false;
+    fn();
+    return true;
+  }
+
+  /**
+   * Запись в аудит.
+   *
+   * В сухом прогоне не пишется: журнал действий — тоже состояние системы, и
+   * шестьдесят виртуальных дней оставляли бы в нём шестьдесят дней событий,
+   * которых не было.
+   */
+  private auditWrite(rec: Parameters<AuditService['write']>[0]): void {
+    if (this.dryRun) return;
+    this.audit.write(rec);
+  }
+
+  /** Отметка «сделано»: в сухом прогоне не ставится, иначе боевой тик её пропустит */
+  private markDone(key: string): void {
+    if (this.dryRun) return;
+    this.done.add(key);
+    this.mirror.schedule();
+    this.store.persist();
   }
 
   history(limit = 50): TimerRun[] {
@@ -163,6 +243,18 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
    * пустой тик расписания в журнал не пишется, чтобы не засорять его.
    */
   async tick(manual: boolean): Promise<TimerRun[]> {
+    // Тики не накладываются: расписание и ручной запуск сходятся легко, а
+    // счётчики и отметки «сделано» этого не переживают
+    if (this.ticking) return [];
+    this.ticking = true;
+    try {
+      return await this.runTimers(manual);
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private async runTimers(manual: boolean): Promise<TimerRun[]> {
     const before = this.runs.length;
     await this.urgentSurchargeRelease(manual); // #22
     await this.approvalEscalation(manual); // #7–9
@@ -173,6 +265,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     await this.addressDetailsReminder(manual); // C-50, ТЗ §17.17
     await this.warrantyExpiring(manual); // ТЗ §17.12
     await this.careTouch(manual); // ТЗ §17.12 — сервисное касание
+    await this.slaBreaches(manual); // DEV-15 §7.2
     this.balanceChecker(manual); // #42
     this.gphExpiry(manual); // A-11 — алерт за 14 дней
     return this.runs.slice(before).reverse();
@@ -188,7 +281,20 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         ['new', 'estimated', 'assigned', 'master_departed'].includes(o.status) &&
         now - new Date(o.createdAt).getTime() > 3 * 3_600_000,
     );
+    let affectedCount = 0;
     for (const o of affected) {
+      /**
+       * Снятие наценки — один раз на заявку и с сохранением.
+       *
+       * Раньше поля правились напрямую: заявка не помечалась к записи, версия
+       * не поднималась, ключа идемпотентности не было. После рестарта клиент
+       * снова видел +30%, таймер срабатывал второй раз и писал второй аудит.
+       */
+      const key = `urgent_release:${o.id}`;
+      if (this.done.has(key)) continue;
+      this.markDone(key);
+      affectedCount += 1;
+      if (this.dryRun) continue;
       o.urgency = 'normal';
       // Снять флаг мало: наценка вшита в итог при создании, и без пересчёта
       // клиент продолжал бы видеть +30% после обещания их убрать
@@ -198,7 +304,9 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         o.totalToTiyin = Math.floor((o.baseToTiyin * (100 - discount)) / 100);
         o.urgentSurchargePercent = undefined;
       }
-      this.audit.write({
+      // Без этого правка живёт только в памяти и умирает с процессом
+      this.orders.touchOrder();
+      this.auditWrite({
         actorPhone: 'система',
         action: 'timer.urgent_surcharge_released',
         entity: 'Order',
@@ -206,7 +314,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         payload: { number: o.number, rule: 'не начали за 3 ч — наценка «Срочно» снята (ТЗ 17.3)' },
       });
     }
-    this.log('#22', 'Снятие наценки «Срочно»', affected.length ? `снята у ${affected.length} заявок` : 'нет кандидатов', affected.length, sim);
+    this.log('#22', 'Снятие наценки «Срочно»', affectedCount ? `снята у ${affectedCount} заявок` : 'нет кандидатов', affectedCount, sim);
   }
 
   /** #7–9: эскалация утверждений T+24/48, авто-отмена T+72 (ТЗ 5.3) */
@@ -220,7 +328,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       const waitedH = (now - new Date(o.statusLog.at(-1)?.at ?? o.createdAt).getTime()) / 3_600_000;
       if (waitedH >= 72) {
         try {
-          await this.orders.transition('t0', o.id, { action: 'cancel', version: o.version, reason: 'Молчание утверждающего T+72 (авто-отмена, ТЗ 5.3)' }, 'система');
+          // Отмена заявки — необратимое боевое действие: в сухом прогоне
+          // только считаем, сколько заявок отменилось бы
+          if (!this.dryRun) {
+            await this.orders.transition('t0', o.id, { action: 'cancel', version: o.version, reason: 'Молчание утверждающего T+72 (авто-отмена, ТЗ 5.3)' }, 'система');
+          }
           cancelled += 1;
         } catch {
           /* критичные дефекты не отменяются — правило графа */
@@ -231,19 +343,18 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         // двое суток до авто-отмены
         const key = `approval_escalated:${o.id}`;
         if (this.done.has(key)) continue;
-        this.done.add(key);
-        this.mirror.schedule();
-        this.audit.write({ actorPhone: 'система', action: 'timer.approval_escalated', entity: 'Order', entityId: o.id, payload: { number: o.number, waitedH: Math.round(waitedH) } });
+        this.markDone(key);
+        this.auditWrite({ actorPhone: 'система', action: 'timer.approval_escalated', entity: 'Order', entityId: o.id, payload: { number: o.number, waitedH: Math.round(waitedH) } });
         // ТЗ §5.3: на T+24 повторное напоминание уходит уже двумя каналами.
         // Молчание утверждающего стоит клиенту суток простоя, и одного
         // push, который человек мог смахнуть не глядя, здесь мало
-        this.bus.publish('order.approval_escalated', {
+        this.commit(() => this.bus.publish('order.approval_escalated', {
           orderId: o.id,
           number: o.number,
           amountTiyin: o.quotes.at(-1)?.amountTiyin ?? o.totalFromTiyin,
           waitedH: Math.round(waitedH),
           approvers: this.approversOf(o),
-        });
+        }));
         escalated += 1;
       }
     }
@@ -274,9 +385,8 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         const stage = h >= 72 ? 'T+72' : 'T+24';
         const key = `payment_reminder:${o.id}:${stage}`;
         if (this.done.has(key)) continue;
-        this.done.add(key);
-        this.mirror.schedule();
-        this.audit.write({
+        this.markDone(key);
+        this.auditWrite({
           actorPhone: 'система',
           action: stage === 'T+72' ? 'timer.payment_reminder_sms' : 'timer.payment_reminder_push',
           entity: 'Order',
@@ -291,13 +401,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
          * клиент. Дальше доставку решает движок уведомлений — он же решает,
          * что T+72 уходит SMS, а T+24 обходится push.
          */
-        this.bus.publish('order.payment_reminder', {
+        this.commit(() => this.bus.publish('order.payment_reminder', {
           orderId: o.id,
           number: o.number,
           clientPhone: o.clientPhone,
           amountTiyin: o.quotes.at(-1)?.amountTiyin ?? o.totalFromTiyin,
           stage,
-        });
+        }));
         notified += 1;
       }
     }
@@ -318,17 +428,14 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     for (const org of this.crm.list()) {
       if (org.status !== 'active' || !org.subscriptionTiyin) continue;
       try {
-        this.billing.issueSubscriptionInvoice(org.id, org.name, org.subscriptionTiyin);
+        // Счёт — документ, по которому платят: в сухом прогоне не выставляем
+        if (!this.dryRun) this.billing.issueSubscriptionInvoice(org.id, org.name, org.subscriptionTiyin);
         issued += 1;
       } catch {
         /* период закрыт — пропускаем */
       }
     }
-    if (issued) {
-      this.done.add(key);
-      this.mirror.schedule();
-      this.mirror.schedule();
-    }
+    if (issued) this.markDone(key);
     this.log('#15', 'Начисление абоненток (1-е число)', `выставлено СФ: ${issued}`, issued, sim);
   }
 
@@ -350,8 +457,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
             this.ageDays(i.issuedAt) >= 10,
         );
       if (unpaid) {
-        this.crm.update(org.id, { status: 'suspended' });
-        this.audit.write({ actorPhone: 'система', action: 'timer.org_suspended', entity: 'Organization', entityId: org.id, payload: { period, rule: 'неоплата абонентки к 10-му (ТЗ 8.3)' } });
+        // Приостановка организации закрывает ей приём заявок — не в симуляции
+        this.commit(() => {
+          this.crm.update(org.id, { status: 'suspended' });
+          this.auditWrite({ actorPhone: 'система', action: 'timer.org_suspended', entity: 'Organization', entityId: org.id, payload: { period, rule: 'неоплата абонентки к 10-му (ТЗ 8.3)' } });
+        });
         suspended += 1;
       }
     }
@@ -424,9 +534,8 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (!stage) continue;
       const key = `dunning:${inv.id}:${stage[0]}`;
       if (this.done.has(key)) continue; // один этап дунинга — одно уведомление
-      this.done.add(key);
-      this.mirror.schedule();
-      this.audit.write({
+      this.markDone(key);
+      this.auditWrite({
         actorPhone: 'система',
         action: 'timer.dunning',
         entity: 'Invoice',
@@ -441,7 +550,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
        * признак, который у нас есть. Слать всем подряд нельзя — счёт
        * организации не касается человека, который вызывает электрика.
        */
-      this.bus.publish('invoice.dunning', {
+      this.commit(() => this.bus.publish('invoice.dunning', {
         invoiceId: inv.id,
         number: inv.number,
         organizationId: inv.organizationId,
@@ -450,7 +559,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
         ageDays,
         stage: stage[1],
         recipients: this.orgApprovers(inv.organizationId),
-      });
+      }));
       touched += 1;
     }
     this.log('#15–17', 'Дунинг дебиторки', touched ? `новых этапов дунинга: ${touched}` : 'нет новых этапов', touched, sim);
@@ -485,14 +594,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (leftH > hours || leftH < 0) continue;
       const key = `address_details:${o.id}`;
       if (this.done.has(key)) continue;
-      this.done.add(key);
-      this.mirror.schedule();
-      this.bus.publish('order.address_details_missing', {
+      this.markDone(key);
+      this.commit(() => this.bus.publish('order.address_details_missing', {
         orderId: o.id,
         number: o.number,
         clientPhone: o.clientPhone,
         hoursLeft: Math.max(0, Math.round(leftH)),
-      });
+      }));
       sent += 1;
     }
     this.log('#C-50', 'Напоминание о деталях адреса', sent ? `напомнили по ${sent} заявкам` : 'нет кандидатов', sent, sim);
@@ -520,14 +628,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (leftDays > noticeDays || leftDays < 0) continue;
       const key = `warranty_expiring:${o.id}`;
       if (this.done.has(key)) continue;
-      this.done.add(key);
-      this.mirror.schedule();
-      this.bus.publish('order.warranty_expiring', {
+      this.markDone(key);
+      this.commit(() => this.bus.publish('order.warranty_expiring', {
         orderId: o.id,
         number: o.number,
         clientPhone: o.clientPhone,
         daysLeft: Math.max(0, Math.round(leftDays)),
-      });
+      }));
       sent += 1;
     }
     this.log('#W-7', 'Окончание гарантии', sent ? `предупреждено: ${sent}` : 'нет кандидатов', sent, sim);
@@ -555,14 +662,13 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (passedDays < afterDays) continue;
       const key = `care_touch:${o.id}`;
       if (this.done.has(key)) continue;
-      this.done.add(key);
-      this.mirror.schedule();
-      this.bus.publish('order.care_touch', {
+      this.markDone(key);
+      this.commit(() => this.bus.publish('order.care_touch', {
         orderId: o.id,
         number: o.number,
         clientPhone: o.clientPhone,
         subject: o.lines[0]?.name ?? o.description.slice(0, 40),
-      });
+      }));
       sent += 1;
     }
     this.log('#C-27', 'Касание «Как дела»', sent ? `отправлено: ${sent}` : 'нет кандидатов', sent, sim);
@@ -572,7 +678,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private balanceChecker(sim: boolean): void {
     const check = this.billing.balanceCheck();
     if (!check.ok) {
-      this.audit.write({ actorPhone: 'система', action: 'timer.balance_check_failed', entity: 'Billing', payload: check });
+      this.auditWrite({ actorPhone: 'система', action: 'timer.balance_check_failed', entity: 'Billing', payload: check });
     }
     this.log('#42', 'Баланс-чекер', check.ok ? 'баланс сходится' : `РАСХОЖДЕНИЕ ${check.discrepancyTiyin} тийин`, check.ok ? 0 : 1, sim);
   }
@@ -582,20 +688,101 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     this.log('#48', 'Проверка сроков договоров ГПХ', 'алерты видны в карточках мастеров', 0, sim);
   }
 
+  /**
+   * Просрочка SLA объектов (DEV-15 §7.2).
+   *
+   * Таймера SLA в планировщике не было вовсе: `check()` звали только руками
+   * из контроллера, а значит нарушение не фиксировалось до тех пор, пока
+   * кто-нибудь не нажмёт кнопку. Светофор в кабинете оператора при этом
+   * показывал зелёное — не потому что успевали, а потому что никто не считал.
+   */
+  private async slaBreaches(sim: boolean): Promise<void> {
+    if (this.dryRun) {
+      // В сухом прогоне не фиксируем: нарушение — факт, по которому считают
+      // штрафы оператору, и виртуальные дни его порождать не должны
+      this.log('#SLA', 'Просрочка SLA объектов', 'сухой прогон: не фиксируем', 0, sim);
+      return;
+    }
+    const breached = this.sla.check(schedulerTenant(), this.now());
+    for (const st of breached) {
+      this.auditWrite({
+        actorPhone: 'система',
+        action: 'timer.sla_breached',
+        entity: 'Order',
+        entityId: st.orderId,
+        payload: { breached: st.breached, resolutionDue: st.resolutionDue },
+      });
+    }
+    this.log('#SLA', 'Просрочка SLA объектов', breached.length ? `новых нарушений: ${breached.length}` : 'нарушений нет', breached.length, sim);
+  }
+
   /** Dev: сдвиг виртуального времени на N дней вперёд с прогоном таймеров */
-  async simulateDays(days: number): Promise<TimerRun[]> {
+  /**
+   * Прогон дней вперёд. По умолчанию СУХОЙ.
+   *
+   * Считает, что случилось бы, и ничего не делает: ни счетов, ни отмен, ни
+   * приостановок, ни уведомлений живым подписчикам. Раньше это было
+   * единственным поведением — и оно было боевым: прогон до шестидесяти дней
+   * реально выставлял счета, авто-отменял заявки на T+72, приостанавливал
+   * организации и рассылал сообщения. Вопреки комментарию в коде.
+   *
+   * `apply: true` возвращает прежнее поведение там, где оно нужно осознанно
+   * — на стенде и в прогонах, которые проверяют месячный цикл целиком.
+   *
+   * Виртуальное время возвращается на место в `finally` — иначе сервер
+   * остаётся жить в выдуманном дне, а тик по расписанию работает по нему.
+   */
+  async simulateDays(days: number, opts: { apply?: boolean } = {}): Promise<TimerRun[]> {
     const out: TimerRun[] = [];
-    for (let i = 0; i < Math.min(days, 60); i += 1) {
-      this.dayOffset += 1;
-      out.push(...(await this.tick(true)));
+    const savedOffset = this.dayOffset;
+    // Применение — только по явному требованию и под запись в аудит:
+    // раньше оно было единственным поведением и никак не называлось
+    this.dryRun = opts.apply !== true;
+    try {
+      for (let i = 0; i < Math.min(days, 60); i += 1) {
+        this.dayOffset += 1;
+        out.push(...(await this.tick(true)));
+      }
+    } finally {
+      /**
+       * Сухой прогон возвращает часы на место: ничего не произошло, и жить
+       * в выдуманном дне после него не за чем. Прогон с применением часы
+       * оставляет — иначе последующие тики пересчитают то же самое по
+       * реальному времени и отправят заново то, что уже отправлено.
+       *
+       * В снимок состояния смещение не попадает ни в одном случае: рестарт
+       * обязан вернуть сервер в настоящий день.
+       */
+      if (this.dryRun) this.dayOffset = savedOffset;
+      this.dryRun = false;
     }
     this.store.persist();
     return out;
   }
 
+  /**
+   * Сброс виртуального времени.
+   *
+   * Отметки «сделано» больше НЕ чистятся. Раньше сброс очищал весь список, и
+   * следующий тик считал, что напоминаний не было никогда: заново уходили все
+   * напоминания об оплате, все этапы дунинга и заново выставлялись счета на
+   * абонентку — по всей базе должников разом. Виртуальное время и журнал
+   * отправленного — разные вещи, и связывать их было ошибкой.
+   */
   resetClock(): void {
     this.dayOffset = 0;
-    this.done.clear();
     this.store.persist();
+  }
+
+  /**
+   * Отдельная кнопка на случай, когда отметки действительно надо снять
+   * (разбор инцидента на dev-стенде). Названа тем, что делает.
+   */
+  clearDeliveryMarks(): { cleared: number } {
+    const cleared = this.done.size;
+    this.done.clear();
+    this.savedDone.clear();
+    this.store.persist();
+    return { cleared };
   }
 }

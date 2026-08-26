@@ -52,7 +52,17 @@ export class BuildingsService {
     private readonly bus: EventBus,
     private readonly subs: SubscriptionsService,
     private readonly crm: CrmService,
-  ) {}
+  ) {
+    /**
+     * Справка о принадлежности человека к оператору.
+     *
+     * Её спрашивает скоуп кабинета и подписки: модуль подписок объекты
+     * импортировать не может — объекты импортируют его (DEV-07 §3 п.8).
+     */
+    this.bus.registerProbe<{ phone: string; operatorOrgId: string }, boolean>('buildings.is_operator_staff', (q) =>
+      this.isOperatorStaff('t0', q.phone, q.operatorOrgId),
+    );
+  }
 
   /**
    * Матчинг адреса заявки на объект (DEV-15 §2).
@@ -679,6 +689,27 @@ export class BuildingsService {
     return orgs.size === 1 ? [...orgs][0] : null;
   }
 
+  /**
+   * Числится ли телефон в штате хотя бы одного объекта этого оператора.
+   *
+   * В отличие от `operatorOfPhone`, отвечает на прямой вопрос «свой ли он для
+   * этого кабинета» и не теряет ответ, когда человек работает сразу у двух
+   * операторов: тогда `operatorOfPhone` возвращает null, и сужение молча не
+   * применялось ни к кому.
+   */
+  /** Числится ли телефон в штате хоть какого-нибудь объекта — грубый, но честный фильтр */
+  staffOfAnyBuilding(tenantId: string, phone: string): boolean {
+    if (!phone) return false;
+    return this.repo.listBuildings(tenantId).some((b) => this.repo.listStaff(tenantId, b.id).some((s) => s.userPhone === phone));
+  }
+
+  isOperatorStaff(tenantId: string, phone: string, operatorOrgId: string): boolean {
+    if (!phone) return false;
+    return this.repo
+      .listBuildings(tenantId, operatorOrgId)
+      .some((b) => this.repo.listStaff(tenantId, b.id).some((s) => s.userPhone === phone));
+  }
+
   listStaff(tenantId: string, buildingId: string) {
     return this.repo.listStaff(tenantId, buildingId);
   }
@@ -771,6 +802,8 @@ export class BuildingsService {
       buildingId,
       zoneKey: dto.zoneKey,
       unitId: dto.unitId ?? null,
+      routingFailedReason: null,
+      routingFailedAt: null,
       authorPhone: dto.authorPhone,
       source: dto.source ?? 'walkthrough',
       categoryId: category.id,
@@ -818,7 +851,38 @@ export class BuildingsService {
     o.routedTo = 'order';
     o.routedEntityId = orderId;
     o.status = 'routed';
+    // Прошлая неудача перестала быть актуальной — заявка есть
+    o.routingFailedReason = null;
+    o.routingFailedAt = null;
     this.repo.saveObservation(o);
+  }
+
+  /**
+   * Замечание не удалось превратить в заявку — причина остаётся на нём.
+   *
+   * Раньше неудача автоматической маршрутизации была видна только в логе
+   * сервера: аварийное замечание висело «открытым», заявки не было, и это
+   * не показывалось нигде. Теперь причина лежит рядом с замечанием, и
+   * кабинет оператора может её показать.
+   */
+  markObservationRoutingFailed(tenantId: string, observationId: string, reason: string): void {
+    const o = this.repo.getObservation(tenantId, observationId);
+    if (!o) return;
+    o.routingFailedReason = reason;
+    o.routingFailedAt = new Date().toISOString();
+    this.repo.saveObservation(o);
+  }
+
+  /**
+   * Замечание по идентификатору.
+   *
+   * Нужно подписчику, который делает из аварийного замечания заявку: он
+   * обязан быть идемпотентным (шина повторяет доставку), а признак «заявка
+   * уже создана» живёт на самом замечании — то же поле, которое видит
+   * кабинет. Двух состояний для одного факта заводить не стоит.
+   */
+  getObservation(tenantId: string, id: string): ObservationRecord | undefined {
+    return this.repo.getObservation(tenantId, id);
   }
 
   listObservations(tenantId: string, buildingId: string, status?: ObservationRecord['status']) {

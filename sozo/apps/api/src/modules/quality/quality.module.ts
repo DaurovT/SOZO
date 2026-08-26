@@ -128,7 +128,11 @@ class QualityController {
 
   @Post('disputes/:id/escalate')
   escalate(@Param('id') id: string, @Body() b: { reason?: string }, @Req() req: { auth: JwtClaims }) {
-    const rec = this.quality.escalate(id, b?.reason ?? 'Диспетчер не судит собственные заявки — передано старшему смены (ТЗ 4.2)');
+    const rec = this.quality.escalate(
+      id,
+      b?.reason ?? 'Диспетчер не судит собственные заявки — передано старшему смены (ТЗ 4.2)',
+      req.auth.phone,
+    );
     this.audit.write({ actorPhone: req.auth.phone, action: 'dispute.escalated', entity: 'Order', entityId: rec.orderId });
     return rec;
   }
@@ -144,7 +148,16 @@ class QualityController {
     @Req() req: { auth: JwtClaims },
   ) {
     const before = this.quality.dispute(id);
-    if (before.openedByPhone === req.auth.phone && before.openedByRole === 'dispatcher' && before.status !== 'escalated') {
+    /**
+     * Самосуд запрещён и после эскалации.
+     *
+     * Раньше проверка снималась любым статусом «эскалирован», а эскалация не
+     * смотрела на актора вовсе: тот же диспетчер эскалировал спор и тут же
+     * его разрешал. Теперь эскалацию делает кто-то другой, и его телефон
+     * записан — значит открывший спор не может быть его судьёй ни на каком
+     * маршруте.
+     */
+    if (before.openedByPhone === req.auth.phone && before.openedByRole === 'dispatcher') {
       throw new BadRequestException({
         code: 'SELF_JUDGE_FORBIDDEN',
         message: 'Диспетчер не судит собственные заявки — эскалируйте старшему смены (ТЗ 4.2)',

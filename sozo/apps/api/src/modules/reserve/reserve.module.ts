@@ -24,6 +24,19 @@ export interface DamageCase {
   masterName?: string;
   status: 'filed' | 'review' | 'approved' | 'rejected' | 'paid';
   resolution?: string;
+  /**
+   * Контроль четырёх глаз (PRD-04 §1.3): кто подготовил выплату и кто её
+   * подтвердил вторым.
+   *
+   * «Двойное подтверждение» было булевым полем в теле запроса — оно никого не
+   * идентифицировало и нигде не записывалось, а в аудите оставался один
+   * человек. То есть контроля четырёх глаз не существовало: галочку ставил
+   * тот же администратор, который нажимал «выплатить».
+   */
+  payoutRequestedBy?: string;
+  payoutRequestedAt?: string;
+  payoutConfirmedBy?: string;
+  payoutConfirmedAt?: string;
   createdAt: string;
 }
 
@@ -168,15 +181,39 @@ export class ReserveController {
     return c;
   }
 
-  /** Выплата из фонда — двойное подтверждение (PRD-04 §1.3) */
+  /**
+   * Выплата из фонда — контроль четырёх глаз (PRD-04 §1.3).
+   *
+   * Два запроса от двух РАЗНЫХ администраторов, а не галочка в теле одного:
+   * первый готовит выплату, второй подтверждает. Оба телефона записываются на
+   * дело и уходят в аудит — иначе спрашивать за выплату не с кого.
+   */
   @Post('cases/:id/pay')
   @Roles('admin')
   pay(@Param('id') id: string, @Body() body: { secondAdminConfirmed?: boolean }, @Req() req: { auth: JwtClaims }) {
-    if (!body?.secondAdminConfirmed) {
-      throw new BadRequestException({ code: 'SECOND_ADMIN_REQUIRED', message: 'Выплата из фонда ущербов требует двойного подтверждения' });
-    }
     const c = this.reserve.get(id);
     if (c.status !== 'approved') throw new BadRequestException({ code: 'CASE_NOT_APPROVED' });
+    const actor = req.auth.phone;
+    if (!c.payoutRequestedBy) {
+      c.payoutRequestedBy = actor;
+      c.payoutRequestedAt = new Date().toISOString();
+      this.reserve.touch();
+      this.audit.write({ actorPhone: actor, action: 'damage.payout_requested', entity: 'DamageCase', entityId: id, payload: { amountTiyin: c.amountTiyin } });
+      throw new BadRequestException({
+        code: 'SECOND_ADMIN_REQUIRED',
+        message: `Выплата подготовлена. Подтвердить должен другой администратор — не ${actor}`,
+        requestedBy: actor,
+      });
+    }
+    if (c.payoutRequestedBy === actor) {
+      throw new BadRequestException({
+        code: 'SAME_ADMIN_FORBIDDEN',
+        message: 'Подтверждает другой администратор: подготовивший выплату не подтверждает её сам (PRD-04 §1.3)',
+        requestedBy: c.payoutRequestedBy,
+      });
+    }
+    c.payoutConfirmedBy = actor;
+    c.payoutConfirmedAt = new Date().toISOString();
     c.status = 'paid';
     this.reserve.touch();
     this.bus.publish('damage.payout', {
@@ -186,7 +223,13 @@ export class ReserveController {
       masterId: c.masterId,
       description: c.description,
     });
-    this.audit.write({ actorPhone: req.auth.phone, action: 'damage.paid', entity: 'DamageCase', entityId: id });
+    this.audit.write({
+      actorPhone: actor,
+      action: 'damage.paid',
+      entity: 'DamageCase',
+      entityId: id,
+      payload: { amountTiyin: c.amountTiyin, requestedBy: c.payoutRequestedBy, confirmedBy: actor },
+    });
     return c;
   }
 }

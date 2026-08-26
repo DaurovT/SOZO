@@ -22,6 +22,7 @@ import { MastersService } from '../masters/masters.module';
 import { AuditService } from '../platform/audit.service';
 import { MasterPhotoService } from './photo.service';
 import { AccessService } from '../access/access.service';
+import { ParametersService } from '../platform/parameters.service';
 import { tr } from '../../common/locale';
 
 /**
@@ -46,6 +47,7 @@ export class MasterOpsController {
     private readonly photos: MasterPhotoService,
     private readonly referralsSvc: ReferralsService,
     private readonly access: AccessService,
+    private readonly params: ParametersService,
   ) {}
 
   private async mine(id: string, masterId: string): Promise<OrderRecord> {
@@ -647,7 +649,7 @@ export class MasterOpsController {
       const t = new Date(o.statusLog.find((l) => l.to === 'closed')?.at ?? o.createdAt).getTime();
       return t >= from && t <= to;
     });
-    const shareOf = (o: OrderRecord) => Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, 550n));
+    const shareOf = (o: OrderRecord) => Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(o))));
 
     // Возмещения материалов — не доход, налогом не облагаются
     const reimbursements = inPeriod.flatMap((o) =>
@@ -673,6 +675,16 @@ export class MasterOpsController {
       accruedTiyin: payout?.accruedTiyin ?? 0,
       paidTiyin: payout?.paidTiyin ?? 0,
       dueTiyin: payout?.dueTiyin ?? 0,
+      /**
+       * «Когда деньги» — первый вопрос мастера, и до этого экран кошелька
+       * на него не отвечал вовсе. Период берём из параметра №65, дату —
+       * из проводок: выдумывать «выплата в понедельник» нельзя, ведомость
+       * закрывает бухгалтер.
+       */
+      payout: {
+        scheduleText: `Выплата: ${this.params.text(65, 'раз в неделю')}`,
+        lastPaidAt: this.billing.lastPayoutAt(m.id),
+      },
       cashDebtTiyin: m.cashDebtTiyin,
       cashLimitTiyin: 200_000_000,
       taxMode: m.taxMode,

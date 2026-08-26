@@ -25,6 +25,9 @@ function hintFor(devices: number, status: string, detail?: string): string {
       'Team ID (ровно 10 символов), Key ID и что ключ .p8 загружен именно для этого iOS-приложения'
     );
   }
+  if (detail?.includes('token_gone')) {
+    return 'Токен устройства снят: приложение переустановлено или удалено. Пусть человек откроет приложение и войдёт — токен зарегистрируется заново';
+  }
   if (detail?.includes('404') || detail?.includes('UNREGISTERED')) {
     return 'Токен устройства мёртв — приложение удалили или переустановили. Строка снята, вернётся при следующем входе';
   }
@@ -99,10 +102,19 @@ export class DevicesController {
    * «уведомления приходят после выхода».
    */
   @Post('revoke')
-  revoke(@Body() body: { token?: string }) {
+  revoke(@Body() body: { token?: string }, @Req() req: { auth: JwtClaims }) {
     const token = body.token?.trim();
     if (!token) throw new BadRequestException({ code: 'TOKEN_REQUIRED', message: 'Не передан токен устройства' });
-    return { revoked: this.devices.revoke(token) };
+    /**
+     * Снять можно только свой токен.
+     *
+     * Токен принимался телом и не сверялся с телефоном из авторизации — в
+     * отличие от соседних регистрации и списка доставок, где сверка есть.
+     * Зная чужой FCM-токен, можно было отключить человеку уведомления;
+     * эксплуатация ограничена тем, что токен ещё нужно откуда-то взять, но
+     * проверка здесь стоит одну строку.
+     */
+    return { revoked: this.devices.revokeOwn(token, req.auth.phone) };
   }
 
   /**

@@ -29,6 +29,9 @@ import type { OrderRecord, OrderRepository } from './order.repository';
 @Injectable()
 export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
   private readonly orders = new Map<string, OrderRecord>();
+  /** Заявки, которые правили с прошлой записи; пусто и `dirtyAll` — писать нечего */
+  private readonly dirty = new Set<string>();
+  private dirtyAll = false;
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
 
@@ -97,6 +100,10 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
   }
 
   async findById(tenantId: string, id: string): Promise<OrderRecord | undefined> {
+    return this.peek(tenantId, id);
+  }
+
+  peek(tenantId: string, id: string): OrderRecord | undefined {
     const o = this.orders.get(id);
     return o && o.tenantId === tenantId ? o : undefined;
   }
@@ -132,8 +139,19 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
     return order;
   }
 
-  touch(): void {
+  /**
+   * Отложенная запись правок карточки.
+   *
+   * Пишутся только заявки, которые действительно менялись. Раньше сброс
+   * таймера перезаписывал ВЕСЬ набор: одно добавление материала при
+   * нескольких тысячах заявок означало тысячи операций удаления и вставки,
+   * выстроенных в последовательную очередь. Безымянный вызов по-прежнему
+   * пишет всё — его делают правки, которые трогают многое сразу.
+   */
+  touch(orderId?: string): void {
     if (!this.loaded) return;
+    if (orderId) this.dirty.add(orderId);
+    else this.dirtyAll = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       // Через общую очередь: на заявку ссылаются проводки и брони, и запись
@@ -152,7 +170,12 @@ export class PrismaOrderRepository implements OrderRepository, OnModuleInit {
   private async flush(): Promise<void> {
     // Снимок до первого await: заявка, добавленная по ходу записи, попадёт
     // в следующий проход, а не сломает текущий
-    for (const o of [...this.orders.values()]) await this.writeOne(o);
+    const all = this.dirtyAll;
+    const ids = [...this.dirty];
+    this.dirtyAll = false;
+    this.dirty.clear();
+    const targets = all ? [...this.orders.values()] : ids.map((id) => this.orders.get(id)).filter((o): o is OrderRecord => !!o);
+    for (const o of targets) await this.writeOne(o);
   }
 
   /** Заявка целиком: коллекции переписываются, разницу не вычисляем */

@@ -33,6 +33,7 @@ import { ClientProfilesService } from './client-profiles.service';
 import { ClientNotificationsService } from './client-notifications.service';
 import { ClientViewService } from './client-view.service';
 import { DemoSeedService } from './demo-seed.service';
+import { localDateKey, localHour } from '../../common/tz';
 
 /** Категории под лицензией — до договора с лицензиатом их не показываем (ТЗ 17.8) */
 const CLOSED_CATEGORY = /газ|лифт/i;
@@ -671,6 +672,13 @@ export class ClientB2CController {
     }
     return {
       releaseNumber: release.number,
+      // Цена выезда и наценка «Срочно» — чтобы приложению не приходилось
+      // выводить их самому. Без первой визард показывал «Итого: от 0 сум» там,
+      // где человек не назвал ни одной работы; без второй он считал наценку по
+      // зашитым 30%, а сервер — по параметру 5, и суммы расходились.
+      // Позиция выезда ищется тем же правилом, что и в `firstRunHints`
+      visitPriceTiyin: this.visitPriceTiyin(),
+      urgentSurchargePercent: this.orders.urgentSurchargePercent(),
       categories: [...byCategory.entries()]
         .map(([name, items]) => ({
           // Само название категории остаётся русским: приложение отправляет
@@ -689,6 +697,12 @@ export class ClientB2CController {
         .sort((a, b) => a.order - b.order),
       note: 'Цена «от» — типовой случай, не оферта. Точную стоимость мастер называет до начала работ.',
     };
+  }
+
+  /** Цена «выезд и диагностика» из активного релиза прайса, если она в нём есть */
+  private visitPriceTiyin(): number | null {
+    const it = this.pricing.active().items.find((i) => /выезд|диагност|осмотр/i.test(i.name));
+    return it?.priceFromTiyin ?? null;
   }
 
   private item(it: ReturnType<PricingService['active']>['items'][number]) {
@@ -771,7 +785,7 @@ export class ClientB2CController {
     for (let i = 0; i < daysAhead; i++) {
       const d = new Date(start);
       d.setDate(d.getDate() + i);
-      const date = d.toISOString().slice(0, 10);
+      const date = localDateKey(d);
       const windows = this.sched.availableWindows(date, normHours);
       // Пустой день не показываем вовсе: серые «занятые» слоты клиенту не нужны
       if (!windows.length) continue;
@@ -784,7 +798,9 @@ export class ClientB2CController {
       normHours,
       days: out,
       // Ночью «Срочно» не предлагаем: действует ночной тариф, наценки не стакаются
-      urgentAvailable: new Date().getHours() >= 7 && new Date().getHours() < 22,
+      // Местный час, а не UTC: сервер живёт в UTC, Ташкент — UTC+5, и
+      // «Срочно» было недоступно клиенту с 07:00 до 12:00 и доступно в 02:00
+      urgentAvailable: localHour() >= 7 && localHour() < 22,
       waitlistAvailable: true,
     };
   }
@@ -990,10 +1006,19 @@ export class ClientB2CController {
       accessAt?: string;
       source?: 'category' | 'search' | 'repeat' | 'emergency';
     },
-    @Req() req: AppRequest,
+    @Req() req: AppRequest & { headers?: Record<string, string | string[] | undefined> },
   ) {
     const phone = this.phone(req);
     const profile = this.profiles.get(phone);
+    /**
+     * Ключ идемпотентности — заголовком, как принято у платёжных API.
+     *
+     * Приложение держит его в черновике, поэтому он переживает выгрузку
+     * процесса: повторное «Отправить» после таймаута вернёт ту же заявку, а
+     * не заведёт вторую. Длину ограничиваем — заголовок приходит снаружи.
+     */
+    const rawKey = req.headers?.['idempotency-key'];
+    const idempotencyKey = (Array.isArray(rawKey) ? rawKey[0] : rawKey)?.trim().slice(0, 128) || undefined;
     const address = b.address?.trim();
     if (!address) throw new BadRequestException({ code: 'ADDRESS_REQUIRED', message: 'Укажите улицу и дом' });
 
@@ -1018,6 +1043,7 @@ export class ClientB2CController {
         description: b.description?.trim(),
         urgency,
         source: 'app',
+        idempotencyKey,
         promoCode: b.promoCode,
         items,
         // «Запомнить мастера» с прошлой заявки: распределение поднимет его выше,
@@ -1056,7 +1082,13 @@ export class ClientB2CController {
       phone,
     );
 
-    const saveCount = this.photos.saveMany(order, b.photos);
+    /**
+     * Повтор по ключу возвращает уже созданную заявку — фото к ней не
+     * дописываем: они уже приложены первым, доехавшим до сервера запросом.
+     * Иначе повторное «Отправить» после таймаута дало бы десять снимков.
+     */
+    const isRepeat = !!idempotencyKey && order.photos.length > 0;
+    const saveCount = isRepeat ? order.photos.length : this.photos.saveMany(order, b.photos);
     if (b.saveAddress) {
       this.profiles.saveAddress(phone, { street: address, floor: b.floor, hasLift: b.hasLift, lat: b.lat, lng: b.lng });
     }

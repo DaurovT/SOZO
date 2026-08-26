@@ -432,7 +432,22 @@ export class ClientOrdersController {
     // идут по чекам, и скидывать с них значит платить за них из своего кармана.
     // Долю мастера скидка не трогает (ТЗ 3.7), она от базовой стоимости работ
     const phone = this.phone(req);
-    const promo = (b?.promoCode ?? order.promoCode ?? '').trim();
+    const promo = (b?.promoCode ?? '').trim();
+    /**
+     * Скидка вычитается ровно один раз.
+     *
+     * `totalFromTiyin` уже посчитан со скидкой при создании заявки, а здесь
+     * она вычиталась из него ещё раз: промо 15% на базе 1 000 000 давало итог
+     * 850 000, клиент платил 722 500, а биллинг при закрытии проводил
+     * выручку 850 000 — недобор 127 500 на каждой такой заявке, и клиринг не
+     * сходился. Через клиентское приложение промо применялось один раз, через
+     * этот маршрут дважды: результат зависел от канала.
+     *
+     * Поэтому промокод здесь можно только ДОБАВИТЬ к заявке, у которой его не
+     * было. Если он уже применён при создании — сумма к оплате берётся из
+     * заявки как есть.
+     */
+    let discountTiyin = 0;
     let discountPercent = order.promoDiscountPercent ?? 0;
     if (promo && !order.promoDiscountPercent) {
       const all = await this.orders.list('t0');
@@ -440,12 +455,16 @@ export class ClientOrdersController {
         (o) => o.clientPhone === phone && o.id !== order.id && o.status !== 'cancelled',
       );
       discountPercent = this.promo.redeemFor(promo, phone, isFirst);
+      discountTiyin = Math.floor((order.totalFromTiyin * discountPercent) / 100);
+      // Скидка ложится на саму заявку — иначе биллинг проведёт выручку без неё
+      order.totalFromTiyin -= discountTiyin;
+      order.totalToTiyin -= Math.floor((order.totalToTiyin * discountPercent) / 100);
       order.promoCode = promo.toUpperCase();
       order.promoDiscountPercent = discountPercent;
       this.profiles.markPromoUsed(phone, promo, order.number);
+      this.orders.touchOrder();
     }
-    const discountTiyin = Math.floor((order.totalFromTiyin * discountPercent) / 100);
-    const amountTiyin = order.totalFromTiyin + order.totalMaterialTiyin - discountTiyin;
+    const amountTiyin = order.totalFromTiyin + order.totalMaterialTiyin;
     if (provider === 'cash') {
       // Наличные принимает мастер: приложение клиента только сообщает выбор
       order.payment = { provider, amountTiyin, status: 'pending', at: new Date().toISOString() };
@@ -460,15 +479,23 @@ export class ClientOrdersController {
       };
     }
 
-    // TODO(интеграция): здесь будет вызов мерчант-SDK и ожидание вебхука.
-    // Пока проводим платёж сразу — иначе экран оплаты нечем проверить.
+    /**
+     * Платёж проводится заглушкой — мерчанта в системе нет (HANDOVER §3).
+     *
+     * Это известный блокер, и трогать его здесь не место: без заглушки
+     * заявки перестали бы закрываться вовсе. Новое и исправленное — другое:
+     * заглушка ОДНОВРЕМЕННО фиксировала приёмку. Ядро считает приёмку
+     * зафиксированной по одному факту наличия объекта `order.acceptance`, и
+     * один вызов `POST /v1/app/orders/<id>/pay` на своей заявке снимал
+     * приёмочный гейт графа B2B: «оплачено», «принято», закрытие проходит —
+     * без кода, без подписи, без участия ответственного на точке.
+     *
+     * Приёмка — отдельное действие человека, а не следствие платежа.
+     * Клиент подтверждает работу в приложении (`POST …/accept`), мастер
+     * вводит названный код, ответственный подписывает. Оплата означает
+     * ровно то, что она означает: деньги.
+     */
     order.payment = { provider, amountTiyin, status: 'succeeded', at: new Date().toISOString() };
-    order.acceptance ??= {
-      method: 'client_app',
-      signerName: this.profiles.get(this.phone(req)).fullName || this.phone(req),
-      note: 'Приёмка зафиксирована успешной оплатой в приложении',
-      at: new Date().toISOString(),
-    };
     this.orders.touchOrder();
     this.log(req, order, 'payment_succeeded', { provider, amountTiyin, promoCode: order.promoCode ?? null });
     return {
@@ -476,7 +503,8 @@ export class ClientOrdersController {
       payment: order.payment,
       promoCode: order.promoCode ?? null,
       discountTiyin,
-      message: discountTiyin > 0 ? `Оплата прошла, скидка −${discountPercent}% учтена` : 'Оплата прошла. Приёмка подтверждена',
+      acceptanceFixed: !!order.acceptance,
+      message: discountTiyin > 0 ? `Оплата прошла, скидка −${discountPercent}% учтена` : 'Оплата прошла',
     };
   }
 

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '../identity/auth.guard';
+import { AuthGuard, Roles } from '../identity/auth.guard';
+import { BuildingScopeGuard } from './building-scope.guard';
 import { OBSERVATION_CATEGORIES, RESOURCE_LABELS, ZONE_TYPE_INFO } from '@sozo/contracts';
 import { BuildingsService } from './buildings.service';
 import type { JwtClaims } from '../../common/jwt';
@@ -9,11 +10,12 @@ import type { JwtClaims } from '../../common/jwt';
  * Тенант 't0' — до мультитенантности из JWT, как в остальных контроллерах.
  */
 @Controller('buildings')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, BuildingScopeGuard)
 export class BuildingsController {
   constructor(private readonly buildings: BuildingsService) {}
 
   @Post()
+  @Roles('admin', 'dispatcher')
   create(@Body() body: { name: string; address: string; buildingType?: 'residential' | 'business_center' | 'mixed'; emergencyPhone?: string; internalBufferMin?: number; hasServiceLift?: boolean; parkingRules?: string; wasteRules?: string }) {
     return this.buildings.createBuilding('t0', body);
   }

@@ -205,6 +205,20 @@ export class DeviceTokensService implements OnModuleInit {
    * фоновом обновлении токена, которое приложение делает и после выхода,
    * потому что FCM живёт в процессе, а не в сессии.
    */
+  /**
+   * Снятие своего токена: телефон из авторизации должен совпасть с владельцем.
+   *
+   * Отдельный метод, а не параметр к `revoke`: внутренние вызовы (токен
+   * отвергнут поставщиком) владельца не проверяют по определению, и смешивать
+   * два разных права в одной сигнатуре — способ однажды забыть проверку.
+   */
+  revokeOwn(token: string, phone: string): boolean {
+    const found = this.items.find((d) => d.token === token && !d.revokedAt);
+    if (!found) return false;
+    if (found.phone !== phone) return false; // чужой токен: молча ничего не делаем
+    return this.revoke(token);
+  }
+
   revoke(token: string): boolean {
     const found = this.items.find((d) => d.token === token && !d.revokedAt);
     if (!found) return false;

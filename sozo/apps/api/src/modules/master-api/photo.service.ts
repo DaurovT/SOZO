@@ -23,17 +23,36 @@ export class MasterPhotoService {
 
   async save(
     order: OrderRecord,
-    params: { stage: string; dataUrl?: string; note?: string; geo?: { lat: number; lng: number } | null; clientOpUuid?: string; masterName: string },
-  ): Promise<{ duplicate: boolean; count: number; geoMissing: boolean; stage: PhotoStage }> {
+    params: {
+      stage: string;
+      dataUrl?: string;
+      /**
+       * Тот же снимок под именем, которым его шлёт экран наряда-допуска.
+       *
+       * `permit_screen.dart:330` отправляет `{stage, data}`, а сервис читал
+       * только `dataUrl` — регулярное выражение не совпадало, и каждая
+       * попытка вернуть фото вскрытия давала `IMAGE_REQUIRED`. Тот же payload
+       * уходил в офлайн-очередь и падал там же, блокируя всю цепочку по
+       * заявке. Принимаем оба имени: ломать приложение ради красоты ключа —
+       * плохая сделка.
+       */
+      data?: string;
+      note?: string;
+      geo?: { lat: number; lng: number } | null;
+      clientOpUuid?: string;
+      masterName: string;
+    },
+  ): Promise<{ id: string; duplicate: boolean; count: number; geoMissing: boolean; stage: PhotoStage }> {
     const stage = params.stage as PhotoStage;
     if (!STAGES.includes(stage)) {
       throw new BadRequestException({ code: 'STAGE_INVALID', message: 'Стадия: before | during | after | receipt' });
     }
     // Идемпотентность офлайн-очереди: повторная отправка снимка не плодит дубли
-    if (params.clientOpUuid && order.photos.some((p) => p.id === params.clientOpUuid)) {
-      return { duplicate: true, count: order.photos.filter((p) => p.stage === stage).length, geoMissing: false, stage };
+    const existing = params.clientOpUuid ? order.photos.find((p) => p.id === params.clientOpUuid) : undefined;
+    if (existing) {
+      return { id: existing.id!, duplicate: true, count: order.photos.filter((p) => p.stage === stage).length, geoMissing: false, stage };
     }
-    const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(params.dataUrl ?? '');
+    const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(params.dataUrl ?? params.data ?? '');
     if (!m) throw new BadRequestException({ code: 'IMAGE_REQUIRED', message: 'Ожидается data:image/...;base64,...' });
     const ext = MIME_EXT[m[1].toLowerCase()];
     if (!ext) throw new BadRequestException({ code: 'MIME_UNSUPPORTED', message: 'Поддерживаются JPEG, PNG, WebP' });
@@ -44,8 +63,9 @@ export class MasterPhotoService {
     if (!existsSync(PHOTO_DIR)) mkdirSync(PHOTO_DIR, { recursive: true });
     const file = `${uuidv7()}.${ext}`;
     writeFileSync(resolve(PHOTO_DIR, file), buf);
+    const id = params.clientOpUuid ?? uuidv7();
     order.photos.push({
-      id: params.clientOpUuid ?? uuidv7(),
+      id,
       stage,
       source: `камера мастера ${params.masterName}${params.note ? ` · ${params.note}` : ''}`,
       file,
@@ -53,6 +73,9 @@ export class MasterPhotoService {
       at: new Date().toISOString(),
     });
     this.orders.touchOrder();
-    return { duplicate: false, count: order.photos.filter((p) => p.stage === stage).length, geoMissing: !params.geo, stage };
+    // `id` возвращается наружу: приложение читает его из ответа, чтобы
+    // сослаться на снимок в переходе наряда, а эндпоинт такого поля не
+    // отдавал вовсе — и ссылаться было не на что
+    return { id, duplicate: false, count: order.photos.filter((p) => p.stage === stage).length, geoMissing: !params.geo, stage };
   }
 }

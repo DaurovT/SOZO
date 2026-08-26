@@ -70,10 +70,17 @@ async function newOrder(token, description) {
   return r.body.id;
 }
 const iso = (hours) => new Date(Date.now() + hours * 3600_000).toISOString();
+/** Однопиксельный PNG: фото-гейты проверяют существование снимка, а не его содержимое */
+const PIXEL_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const errText = (b) => (typeof b.message === 'object' ? b.message.code ?? b.message.message : b.message) ?? '';
 
 async function setupBuilding(token, { name, address, org, plan, kind, fee }) {
-  const b = (await call('/buildings', { token, body: { name, address, emergencyPhone: '+998711234567', serviceFeeBps: fee ?? 500 } })).body;
+  // Часы работ круглосуточные: набор гоняют в любое время суток, а guard
+  // «часы работ объекта соблюдены» теперь настоящий и считает по местному
+  // времени (Ташкент). Про часы есть отдельная проверка ниже — здесь они
+  // не должны делать прогон зависящим от того, когда его запустили
+  const b = (await call('/buildings', { token, body: { name, address, emergencyPhone: '+998711234567', serviceFeeBps: fee ?? 500, workFrom: '00:00', workTo: '23:59' } })).body;
   await call(`/buildings/${b.id}/units`, { token, body: { number: '12', riserIds: ['R1'] } });
   await call(`/buildings/${b.id}/units`, { token, body: { number: '16', riserIds: ['R1'] } });
   await call(`/buildings/${b.id}/zones`, { token, body: { zoneType: 'water_riser', label: 'Стояк ХВС', riserId: 'R1' } });
@@ -233,7 +240,18 @@ async function main() {
 
   await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'submit', clientOpUuid: uuid() } });
   await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'approve', clientOpUuid: uuid() } });
-  await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'schedule', clientOpUuid: uuid() } });
+
+  // Бронь под наряд обязана лежать внутри согласованного окна: guard
+  // «booking_created_within_permit_window» раньше был константой true
+  const outside = await call(`/permits/${p.id}/transitions`, {
+    token: t,
+    body: { action: 'schedule', clientOpUuid: uuid(), bookingFrom: iso(20), bookingTo: iso(22) },
+  });
+  check('бронь вне окна наряда отклоняется', outside.status >= 400, errText(outside.body));
+  await call(`/permits/${p.id}/transitions`, {
+    token: t,
+    body: { action: 'schedule', clientOpUuid: uuid(), bookingFrom: iso(1), bookingTo: iso(3) },
+  });
 
   const noPass = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid(), photoId: uuid() } });
   check('вскрытие без действующего пропуска отклоняется', noPass.status >= 400, errText(noPass.body));
@@ -242,16 +260,50 @@ async function main() {
   const noPhoto = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid() } });
   check('вскрытие без фото отклоняется', noPhoto.status >= 400, errText(noPhoto.body));
 
-  const opened = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid(), photoId: uuid() } });
+  // Фото должно СУЩЕСТВОВАТЬ, а не просто быть строкой в теле запроса
+  const ghost = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid(), photoId: uuid() } });
+  check('вскрытие с несуществующим фото отклоняется', ghost.status >= 400, errText(ghost.body));
+
+  const shotBefore = (await call(`/dispatch/orders/${ordMain}/photos`, {
+    token: t,
+    body: { stage: 'before', dataUrl: PIXEL_PNG, note: 'до вскрытия' },
+  })).body;
+  const opened = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'open', clientOpUuid: uuid(), photoId: shotBefore.id } });
   check('вскрытие с фото и пропуском проходит', opened.body.status === 'opened', opened.body.status);
 
   const closeNoPhoto = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'close', clientOpUuid: uuid() } });
   check('закрытие без фото восстановления отклоняется', closeNoPhoto.status >= 400, errText(closeNoPhoto.body));
 
+  const shotAfter = (await call(`/dispatch/orders/${ordMain}/photos`, {
+    token: t,
+    body: { stage: 'after', dataUrl: PIXEL_PNG, note: 'после восстановления' },
+  })).body;
+
+  // Наряд с отключением не закрывается, пока подача не восстановлена —
+  // ровно тот случай, ради которого guard и написан
+  const closeNoRestore = await call(`/permits/${p.id}/transitions`, {
+    token: t,
+    body: { action: 'close', clientOpUuid: uuid(), photoId: shotAfter.id, zoneSecured: true },
+  });
+  check('закрытие без восстановления подачи отклоняется', closeNoRestore.status >= 400, errText(closeNoRestore.body));
+
+  const shut = (await call(`/buildings/${uk}/shutdowns`, {
+    token: t,
+    body: { resourceType: 'cold_water', riserId: 'R1', plannedFrom: iso(0), plannedTo: iso(2), reason: 'Замена крана на стояке', orderId: ordMain },
+  })).body;
+  await call(`/shutdowns/${shut.id}/start`, { token: t, method: 'POST' });
+  await call(`/shutdowns/${shut.id}/restore`, { token: t, method: 'POST' });
+
+  const closeNoSecure = await call(`/permits/${p.id}/transitions`, {
+    token: t,
+    body: { action: 'close', clientOpUuid: uuid(), photoId: shotAfter.id },
+  });
+  check('закрытие без подтверждения сдачи зоны отклоняется', closeNoSecure.status >= 400, errText(closeNoSecure.body));
+
   const op = uuid();
-  const closed = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'close', clientOpUuid: op, photoId: uuid() } });
-  const repeat = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'close', clientOpUuid: op, photoId: uuid() } });
-  check('закрытие с фото проходит', closed.body.status === 'closed');
+  const closed = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'close', clientOpUuid: op, photoId: shotAfter.id, zoneSecured: true } });
+  const repeat = await call(`/permits/${p.id}/transitions`, { token: t, body: { action: 'close', clientOpUuid: op, photoId: shotAfter.id, zoneSecured: true } });
+  check('закрытие с фото проходит', closed.body.status === 'closed', errText(closed.body));
   check('повтор той же операции офлайн-синка не меняет version', repeat.body.version === closed.body.version, `${closed.body.version} → ${repeat.body.version}`);
 
   // ---------------------------------------------------------------

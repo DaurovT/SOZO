@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { createPermitStateMachine, uuidv7, type PermitContext } from '@sozo/kernel';
-import type { PermitAction, PassType } from '@sozo/contracts';
+import { randomInt } from 'node:crypto';
+import { PERMIT_TERMINAL_STATUSES, type PermitAction, type PassType } from '@sozo/contracts';
 import { EventBus } from '../../common/event-bus';
+import { localMinutesOfDay } from '../../common/tz';
 import { BuildingsService } from '../buildings/buildings.service';
 import { PermitLinksService, newLinkCode } from './permit-links.service';
 import { InMemoryPermitRepository, type PermitRecord, type PassRecord, type ShutdownRecord, type UnitAccessRequest } from './permit.repository';
@@ -179,8 +181,20 @@ export class AccessService {
   transition(
     tenantId: string,
     id: string,
-    req: { action: PermitAction; clientOpUuid: string; reason?: string; windowFrom?: string; windowTo?: string; photoId?: string },
-    actor: { phone: string; isApprover: boolean; scopedToBuilding: boolean; isDispatcher?: boolean },
+    req: {
+      action: PermitAction;
+      clientOpUuid: string;
+      reason?: string;
+      windowFrom?: string;
+      windowTo?: string;
+      photoId?: string;
+      /** Окно брони, которую ставят под этот наряд — проверяется на попадание в окно наряда */
+      bookingFrom?: string;
+      bookingTo?: string;
+      /** Явное подтверждение мастера, что зона сдана и закрыта */
+      zoneSecured?: boolean;
+    },
+    actor: { phone: string; isApprover: boolean; scopedToBuilding: boolean; isDispatcher?: boolean; isClient?: boolean },
     at?: Date,
   ): PermitRecord {
     const opKey = `${id}:${req.action}:${req.clientOpUuid}`;
@@ -188,18 +202,39 @@ export class AccessService {
     if (seen) return this.get(tenantId, seen);
 
     const p = this.get(tenantId, id);
+    const now = at ?? new Date();
+    /**
+     * Семь проверок наряда-допуска были тождественно истинны.
+     *
+     * `resourceRestored` и `zoneSecuredConfirmed` равнялись `action === 'close'`
+     * — то есть выполнялись самим фактом нажатия «Закрыть»: наряд на стояке с
+     * отключением воды закрывался, не восстановив подачу.
+     * `escalationChainExhausted` равнялся `action === 'auto_approve'`: авто-
+     * согласие молчанием срабатывало по одному истечению SLA, не пройдя
+     * цепочку эскалации. `clientOrDispatcherConfirmed`,
+     * `bookingWithinPermitWindow`, `buildingWorkHoursRespected` и
+     * `actorScopedToBuilding` были просто `true` — согласующий любого
+     * оператора подписывал наряд в любом доме.
+     *
+     * Ниже каждая из них считается по тому, что действительно записано.
+     */
     const ctx = this.context(p, {
       actorIsOperatorApprover: actor.isApprover,
-      actorScopedToBuilding: actor.scopedToBuilding,
+      // Согласующий — только для СВОЕГО объекта, а не «для любого»
+      actorScopedToBuilding:
+        actor.scopedToBuilding && (actor.isDispatcher === true || this.isStaffOfBuilding(p, actor.phone)),
       alternativeWindowValid: Boolean(req.windowFrom && req.windowTo),
-      clientOrDispatcherConfirmed: true,
+      // Новое окно принимает клиент или диспетчер, а не кто угодно
+      clientOrDispatcherConfirmed: actor.isDispatcher === true || actor.isClient === true,
       reasonFromDictionary: Boolean(req.reason),
-      photoBeforeOpening: req.action === 'open' ? Boolean(req.photoId) : false,
-      photoAfterRestore: req.action === 'close' ? Boolean(req.photoId) : false,
-      resourceRestored: req.action === 'close',
-      zoneSecuredConfirmed: req.action === 'close',
+      photoBeforeOpening: req.action === 'open' ? this.photoExists(p, req.photoId) : false,
+      photoAfterRestore: req.action === 'close' ? this.photoExists(p, req.photoId) : false,
+      resourceRestored: this.resourceRestored(p),
+      zoneSecuredConfirmed: req.action === 'close' && req.zoneSecured === true,
+      bookingWithinPermitWindow: this.bookingWithinWindow(p, req.bookingFrom, req.bookingTo),
+      buildingWorkHoursRespected: this.workHoursRespected(p, req.bookingFrom, req.bookingTo),
       dispatcherOverride: actor.isDispatcher ?? false,
-      escalationChainExhausted: req.action === 'auto_approve',
+      escalationChainExhausted: this.escalationExhausted(p, now),
     }, at);
 
     const res = this.sm.validate(p.status, req.action, ctx);
@@ -331,13 +366,21 @@ export class AccessService {
     return { approved, skippedCritical, failed };
   }
 
-  /** Выпуск пропуска при назначении мастера (DEV-15 §6) */
+  /**
+   * Выпуск пропуска при назначении мастера (DEV-15 §6).
+   *
+   * Резервный код — из криптографического источника и восьмизначный.
+   * Шестизначный `Math.random()` при полном отсутствии ограничения частоты
+   * запросов перебирается за 900 тысяч обращений, а по коду охрана пускает и
+   * страница показывает имя гостя, номер машины и квартиру. Ссылки
+   * согласования в соседнем модуле сделаны правильно — здесь то же самое.
+   */
   issuePass(tenantId: string, dto: Omit<PassRecord, 'id' | 'tenantId' | 'status' | 'qrToken' | 'fallbackCode'>): PassRecord {
     const rec: PassRecord = {
       id: uuidv7(),
       tenantId,
       qrToken: uuidv7().replace(/-/g, ''),
-      fallbackCode: String(Math.floor(100_000 + Math.random() * 899_999)),
+      fallbackCode: String(randomInt(10_000_000, 100_000_000)),
       status: 'active',
       ...dto,
     };
@@ -453,6 +496,30 @@ export class AccessService {
   ): UnitAccessRequest {
     const r = this.repo.getUnitAccess(tenantId, id);
     if (!r) throw new NotFoundException({ code: 'UNIT_ACCESS_NOT_FOUND', message: 'Запрос не найден' });
+    /**
+     * Решает житель ЭТОГО помещения, а не любой, кто знает идентификатор.
+     *
+     * Соседний список запросов аккуратно скоупится по помещениям жителя, а
+     * решение передавало идентификатор сюда напрямую — и проверялись только
+     * существование и статус. Токеном любого клиента можно было согласиться
+     * за соседа на вход мастера в его квартиру, а в ответе приходили метка
+     * квартиры, причина, окно и имя мастера.
+     *
+     * Владение ссылкой — тоже право решать: страница по коду из SMS
+     * рассчитана ровно на жителя без установленного приложения, и там
+     * телефона нет. Такие вызовы приходят с `byPhone` вида `link:<код>`, и
+     * их подлинность держит сам код — личный, одноразовый и отзываемый.
+     */
+    if (dto.byPhone && !dto.byPhone.startsWith('link:')) {
+      const residents = this.buildings.listResidents(tenantId, r.unitId);
+      const isResident = residents.some((x) => x.userPhone === dto.byPhone);
+      if (!isResident) {
+        throw new ForbiddenException({
+          code: 'NOT_A_RESIDENT',
+          message: 'Решение по доступу принимает житель этого помещения',
+        });
+      }
+    }
     if (r.status !== 'requested') {
       throw new ConflictException({
         code: 'ALREADY_DECIDED',
@@ -627,12 +694,116 @@ export class AccessService {
    * Гейт заявки: можно ли переводить в «В работе» (DEV-10 §3 правило 9).
    * Для аварийной — правило снято.
    */
+  /**
+   * Можно ли начинать работы: есть ли по заявке открытый наряд-допуск.
+   *
+   * Блокирующими считались все наряды, кроме `opened` и `closed`, — то есть и
+   * `rejected`, и `cancelled`, и `expired`. Мёртвый наряд блокировал заявку
+   * навсегда: отклонил оператор — старт невозможен, а выписать новый и
+   * открыть его не помогало, потому что старый продолжал блокировать.
+   * Заявка застревала в `master_departed` без легального выхода, кроме отмены.
+   *
+   * Правило простое и совпадает с жизнью: если хоть один наряд по заявке
+   * открыт — работать можно. Если ни одного открытого нет — ждём тот, что
+   * ещё живой; терминальные (отклонён, отменён, истёк) не держат ничего, они
+   * уже часть истории.
+   */
+  /** Числится ли актор в штате объекта этого наряда */
+  private isStaffOfBuilding(p: PermitRecord, phone: string): boolean {
+    const b = this.buildings.listBuildings(p.tenantId).find((x) => x.id === p.buildingId);
+    return !!b?.operatorOrgId && this.buildings.isOperatorStaff(p.tenantId, phone, b.operatorOrgId);
+  }
+
+  /**
+   * Существует ли снимок с таким идентификатором.
+   *
+   * Раньше проверялось наличие строки в теле запроса — то есть достаточно
+   * было прислать `"photoId":"x"`. Снимки живут в заявке, а импортировать
+   * заявки в допуски нельзя (DEV-07 §3), поэтому спрашиваем через шину.
+   */
+  private photoExists(p: PermitRecord, photoId?: string): boolean {
+    if (!photoId) return false;
+    const answers = this.bus.probe<{ orderId: string; photoId: string }, boolean>('orders.photo_exists', {
+      orderId: p.orderId,
+      photoId,
+    });
+    // Никто не отвечает (заявок в сборке нет) — факт не выдумываем
+    return answers.length > 0 && answers.some(Boolean);
+  }
+
+  /**
+   * Восстановлен ли ресурс, который наряд отключал.
+   *
+   * Наряд без отключения ничего не восстанавливает — для него проверка
+   * выполнена по определению (`resource_restored_if_shutdown` в ядре).
+   */
+  private resourceRestored(p: PermitRecord): boolean {
+    if (!p.requiresShutdown) return true;
+    const mine = this.repo.listShutdowns(p.tenantId, p.buildingId).filter((s) => s.orderId === p.orderId);
+    if (!mine.length) return false;
+    return mine.every((s) => s.status === 'restored' || s.status === 'cancelled');
+  }
+
+  /** Бронь мастера должна лежать внутри согласованного окна наряда */
+  private bookingWithinWindow(p: PermitRecord, from?: string, to?: string): boolean {
+    if (!p.windowFrom || !p.windowTo) return false;
+    if (!from || !to) return false;
+    const f = Date.parse(from);
+    const t = Date.parse(to);
+    if (!Number.isFinite(f) || !Number.isFinite(t) || t <= f) return false;
+    return f >= Date.parse(p.windowFrom) && t <= Date.parse(p.windowTo);
+  }
+
+  /** Часы работ объекта — из паспорта дома, а не «всегда можно» */
+  private workHoursRespected(p: PermitRecord, from?: string, to?: string): boolean {
+    if (!from || !to) return false;
+    const b = this.buildings.listBuildings(p.tenantId).find((x) => x.id === p.buildingId);
+    if (!b) return false;
+    const minutes = (hhmm: string) => {
+      const [h, m] = (hhmm ?? '').split(':').map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+    const open = minutes(b.workFrom ?? '08:00');
+    const close = minutes(b.workTo ?? '20:00');
+    // Часы объекта местные, и сравнивать их надо с местным временем: сервер
+    // живёт в UTC, Ташкент — UTC+5 (см. common/tz)
+    const inRange = (iso: string) => {
+      const local = localMinutesOfDay(iso);
+      return local !== null && local >= open && local <= close;
+    };
+    return inRange(from) && inRange(to);
+  }
+
+  /**
+   * Цепочка эскалации пройдена: всем согласующим объекта — основному и
+   * резервному — ушло приглашение, и срок SLA истёк.
+   *
+   * Раньше это равнялось «действие называется auto_approve», то есть авто-
+   * согласие молчанием срабатывало по одному истечению SLA, ни к кому не
+   * обратившись повторно.
+   */
+  private escalationExhausted(p: PermitRecord, now: Date): boolean {
+    if (!p.slaDeadline || Date.parse(p.slaDeadline) > now.getTime()) return false;
+    const approvers = this.buildings.approvers(p.tenantId, p.buildingId);
+    if (!approvers.length) return true; // некому эскалировать — цепочка исчерпана сразу
+    const notified = new Set(this.permitLinks(p.id).map((l) => l.approverPhone));
+    return approvers.every((a) => notified.has(a.userPhone));
+  }
+
   canStartOrder(tenantId: string, orderId: string): { ok: boolean; reason?: string } {
     const permits = this.repo.byOrder(tenantId, orderId);
     if (!permits.length) return { ok: true };
-    const blocking = permits.filter((p) => !p.isEmergency && p.status !== 'opened' && p.status !== 'closed');
-    if (!blocking.length) return { ok: true };
-    return { ok: false, reason: `AccessPermitRequired: наряд в статусе ${blocking[0].status}` };
+    if (permits.some((p) => p.status === 'opened' || p.status === 'closed' || p.isEmergency)) return { ok: true };
+    const alive = permits.filter((p) => !PERMIT_TERMINAL_STATUSES.includes(p.status as never));
+    if (!alive.length) {
+      return {
+        ok: false,
+        reason:
+          'Наряд-допуск по заявке закрыт без открытия (отклонён, отменён или истёк). ' +
+          'Выпишите новый наряд и дождитесь согласования',
+      };
+    }
+    return { ok: false, reason: `AccessPermitRequired: наряд в статусе ${alive[0].status}` };
   }
 
   // ============================================================

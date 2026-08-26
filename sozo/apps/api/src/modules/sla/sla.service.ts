@@ -4,6 +4,7 @@ import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
 import { PgMirror, APP_TENANT } from '../../common/pg-mirror';
 import { EventBus } from '../../common/event-bus';
+import { fromLocal, localDateKey, localMinutesOfDay } from '../../common/tz';
 
 export type SlaPriority = 'critical' | 'high' | 'normal' | 'low';
 export type SlaScope = 'private' | 'common_area' | 'both';
@@ -37,6 +38,14 @@ export interface SlaStateRecord {
   reached: SlaBreachFlag[];
   /** накопленное время в паузах, не засчитываемое в SLA */
   pausedMs: number;
+  /**
+   * Когда работа устранена.
+   *
+   * Нужен светофору: список нарушений только пополнялся, и заявка оставалась
+   * красной навсегда — даже после того, как её сделали. Нарушение остаётся в
+   * истории (по нему считают штрафы), а гореть перестаёт.
+   */
+  closedAt?: string;
 }
 
 /**
@@ -50,7 +59,7 @@ export class SlaService implements OnModuleInit {
   private states = new Map<string, SlaStateRecord>();
   private readonly mirror: PgMirror;
 
-  constructor(store: StateStore, private readonly bus: EventBus, prisma: PrismaService) {
+  constructor(private readonly store: StateStore, private readonly bus: EventBus, prisma: PrismaService) {
     store.register(
       'sla',
       () => ({ policies: [...this.policies.values()], states: [...this.states.values()] }),
@@ -188,22 +197,69 @@ export class SlaService implements OnModuleInit {
       .sort((a, b) => b.s - a.s)[0]?.p;
   }
 
+  /**
+   * Рабочие часы обслуживания, местное время.
+   *
+   * Настройка `workingHoursOnly` у политики загружалась и не использовалась
+   * ни в одном расчёте: срок «устранение за 8 ч, только рабочие часы» у
+   * заявки, принятой в 17:00 пятницы, давал дедлайн 01:00 субботы — SLA
+   * сгорал ночью, когда никто не работает. Теперь минуты действительно
+   * отсчитываются по рабочему окну.
+   */
+  private static readonly WORK_FROM_MIN = 9 * 60;
+  private static readonly WORK_TO_MIN = 18 * 60;
+
+  /**
+   * Прибавить рабочие минуты к моменту.
+   *
+   * Считает по местному времени (сервер живёт в UTC — см. common/tz) и
+   * перешагивает через нерабочие часы, а не через календарные сутки: важно
+   * не «через сколько дней», а «сколько человек реально мог работать».
+   */
+  private addWorkingMinutes(from: Date, minutes: number): Date {
+    const { WORK_FROM_MIN: open, WORK_TO_MIN: close } = SlaService;
+    let cursor = from.getTime();
+    let left = minutes;
+    // Ограничение на случай кривой политики: год рабочих часов — заведомо
+    // ошибка ввода, и вечный цикл здесь хуже неверного дедлайна
+    for (let guard = 0; guard < 2000 && left > 0; guard += 1) {
+      const day = localDateKey(cursor);
+      const nowMin = localMinutesOfDay(cursor) ?? 0;
+      if (nowMin < open) {
+        cursor = fromLocal(day, open).getTime();
+        continue;
+      }
+      if (nowMin >= close) {
+        cursor = fromLocal(localDateKey(cursor + 86_400_000), open).getTime();
+        continue;
+      }
+      const availableToday = close - nowMin;
+      if (left <= availableToday) return new Date(cursor + left * 60_000);
+      left -= availableToday;
+      cursor = fromLocal(localDateKey(cursor + 86_400_000), open).getTime();
+    }
+    return new Date(cursor);
+  }
+
   /** Постановка дедлайнов на заявку. Часы считаются от момента принятия. */
   start(tenantId: string, orderId: string, policy: SlaPolicyRecord, at = new Date()): SlaStateRecord {
     const t = at.getTime();
+    const due = (min: number): string =>
+      policy.workingHoursOnly ? this.addWorkingMinutes(at, min).toISOString() : new Date(t + min * 60_000).toISOString();
     const rec: SlaStateRecord = {
       orderId,
       tenantId,
       policyId: policy.id,
-      responseDue: new Date(t + policy.responseMin * 60_000).toISOString(),
-      arrivalDue: new Date(t + policy.arrivalMin * 60_000).toISOString(),
-      resolutionDue: new Date(t + policy.resolutionMin * 60_000).toISOString(),
+      responseDue: due(policy.responseMin),
+      arrivalDue: due(policy.arrivalMin),
+      resolutionDue: due(policy.resolutionMin),
       breached: [],
       reached: [],
       pausedMs: 0,
     };
     this.states.set(orderId, rec);
     this.mirror.schedule();
+    this.store.persist();
     return rec;
   }
 
@@ -254,18 +310,53 @@ export class SlaService implements OnModuleInit {
       for (const [flag, due] of flags) {
         if (!st.reached.includes(flag) && !st.breached.includes(flag) && Date.parse(due) <= now.getTime()) {
           st.breached.push(flag);
-          this.bus.publish('sla.breached', { orderId: st.orderId, flag, due });
+          // Ключ события — заявка и этап: повторный прогон проверки не
+          // публикует то же нарушение второй раз
+          this.bus.publish('sla.breached', { orderId: st.orderId, flag, due }, `sla.breached:${st.orderId}:${flag}`);
           if (!breachedNow.includes(st)) breachedNow.push(st);
         }
       }
     }
+    /**
+     * Выставленные флаги сохраняются.
+     *
+     * Раньше проверка правила состояние в памяти и не записывала его: после
+     * рестарта те же нарушения публиковались заново — и заново уходили
+     * уведомления по каждому. Здесь это особенно заметно, потому что рестарт
+     * на этой машине происходит при каждой сборке.
+     */
+    if (breachedNow.length) {
+      this.mirror.schedule();
+      this.store.persist();
+    }
     return breachedNow;
   }
 
+  /**
+   * Пересчёт после устранения: заявка перестаёт быть красной.
+   *
+   * Список нарушений только пополнялся, и заявка оставалась красной навсегда
+   * — даже когда работу давно сделали. Нарушение из истории не стирается (это
+   * факт, по которому считают штрафы оператору), но текущее состояние
+   * перестаёт быть «горит»: горит то, что ещё не сделано.
+   */
+  resolved(tenantId: string, orderId: string, at = new Date()): void {
+    const st = this.states.get(orderId);
+    if (!st || st.tenantId !== tenantId) return;
+    if (!st.reached.includes('resolution')) this.markReached(tenantId, orderId, 'resolution', at);
+    st.closedAt = at.toISOString();
+    this.states.set(orderId, st);
+    this.mirror.schedule();
+    this.store.persist();
+  }
+
   /** Светофор для U-01 и D-02: жёлтый на 80% дедлайна, красный при нарушении */
-  status(tenantId: string, orderId: string, now = new Date()): 'green' | 'amber' | 'red' | 'none' {
+  status(tenantId: string, orderId: string, now = new Date()): 'green' | 'amber' | 'red' | 'done' | 'none' {
     const st = this.states.get(orderId);
     if (!st || st.tenantId !== tenantId) return 'none';
+    // Работа устранена — светофор гаснет. Нарушения остаются в истории и в
+    // отчёте оператору, но «красным» помечают то, что ещё горит
+    if (st.closedAt || st.reached.includes('resolution')) return 'done';
     if (st.breached.length) return 'red';
     const due = Date.parse(st.resolutionDue);
     const policy = this.policies.get(st.policyId);

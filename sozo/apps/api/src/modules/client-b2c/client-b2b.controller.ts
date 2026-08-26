@@ -23,6 +23,7 @@ import type { OrderRecord } from '../orders/order.repository';
 import { AppGuard, type AppRequest } from './app.guard';
 import { ClientPhotoService } from './client-photo.service';
 import { ClientViewService } from './client-view.service';
+import { localDateKey, localHour } from '../../common/tz';
 
 /** Роль в точке выводится из карточки, а не из JWT: уволили — доступ исчез (A-09) */
 type SiteRole = 'staff' | 'site_manager' | 'org_manager';
@@ -362,7 +363,9 @@ export class ClientB2BController {
     const { org, loc } = this.site(req, locationId);
     const access = loc.access;
     const [dayMin, nightMin] = org.terms.slaEmergencyMin;
-    const hour = new Date().getHours();
+    // Ночной тариф считается по местному часу: на UTC-сервере ночь по
+    // `getHours()` приходилась на 02:00–12:00 по Ташкенту
+    const hour = localHour();
     const isNight = hour < 7 || hour >= 22;
     return {
       dispatcherPhone: this.params.text(200, '+998712000000'),
@@ -422,7 +425,7 @@ export class ClientB2BController {
     const kindTitle =
       b?.kind === 'water' ? 'Вода' : b?.kind === 'electricity' ? 'Электрика' : b?.kind === 'gas' ? 'Газ' : 'Авария';
     const [dayMin, nightMin] = org.terms.slaEmergencyMin;
-    const hour = new Date().getHours();
+    const hour = localHour();
     const slaMinutes = hour < 7 || hour >= 22 ? nightMin : dayMin;
 
     const order = await this.orders.create(
@@ -1173,7 +1176,13 @@ export class ClientB2BController {
     this.field.decide(id, { id: rep.id, fullName: rep.fullName, phone: rep.phone }, decisions);
 
     const created: string[] = [];
+    // Позиции без оценки на месте считает офис — заявку по ним здесь не заводим
+    const pendingPricing: Array<{ itemId: string; description: string }> = [];
     for (const item of this.field.acceptedPending(id)) {
+      if (item.estimateTiyin === null) {
+        pendingPricing.push({ itemId: item.id, description: `${item.category}: ${item.description}` });
+        continue;
+      }
       const order = await this.orders.create(
         't0',
         {
@@ -1186,7 +1195,22 @@ export class ClientB2BController {
           organizationId: org.id,
           locationId: loc.id,
           source: 'app',
-          fromDefect: { actId: id, itemId: item.id },
+          /**
+           * Цена и дата оценки едут из самой позиции акта.
+           *
+           * Без цены заявка создавалась с нулевой сметой, а граф from_defect
+           * не содержит ни составления, ни подтверждения сметы — проставить
+           * её потом было нечем, и каждая заявка из подписанного акта
+           * выполнялась бесплатно. Без даты не работал единственный guard
+           * этого графа: свежесть оценки жёстко проставлялась как true, и
+           * заявка по акту годичной давности уходила в работу по старым ценам.
+           */
+          fromDefect: {
+            actId: id,
+            itemId: item.id,
+            estimatedAt: act.createdAt,
+            estimateTiyin: item.estimateTiyin,
+          },
         },
         this.phone(req),
       );
@@ -1203,9 +1227,12 @@ export class ClientB2BController {
     return {
       ok: true,
       createdOrders: created,
+      pendingPricing,
       message: created.length
-        ? `${created.length} заявок передано диспетчеру`
-        : 'Решение записано',
+        ? `${created.length} заявок передано диспетчеру${pendingPricing.length ? `; ${pendingPricing.length} позиций уйдут на расчёт в офис` : ''}`
+        : pendingPricing.length
+          ? `Решение записано; ${pendingPricing.length} позиций уйдут на расчёт в офис`
+          : 'Решение записано',
     };
   }
 
@@ -1321,7 +1348,7 @@ export class ClientB2BController {
         code: v.code,
         nominalTiyin: v.nominalTiyin,
         expiresAt: v.expiresAt,
-        expired: v.expiresAt < new Date().toISOString().slice(0, 10),
+        expired: v.expiresAt < localDateKey(),
       })),
       history: (account?.history ?? []).slice().reverse(),
       rules: 'Баллы начисляются за заявки, оформленные через приложение: 1% от стоимости работ',

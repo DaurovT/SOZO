@@ -376,6 +376,22 @@ export const permitTransitionSchema = z.object({
   windowFrom: z.string().datetime().optional(),
   windowTo: z.string().datetime().optional(),
   photoId: z.string().uuid().optional(),
+  /**
+   * Окно брони, которую ставят под этот наряд.
+   *
+   * Guard'ы «бронь внутри окна наряда» и «часы работ объекта соблюдены»
+   * раньше были константами `true`: проверять было нечего, потому что окно
+   * брони до сервера не доезжало.
+   */
+  bookingFrom: z.string().datetime().optional(),
+  bookingTo: z.string().datetime().optional(),
+  /**
+   * Зона сдана и закрыта — явное подтверждение мастера.
+   *
+   * Guard `zone_secured_confirmed` равнялся `action === 'close'`, то есть
+   * выполнялся самим нажатием «Закрыть» и не значил ничего.
+   */
+  zoneSecured: z.boolean().optional(),
 });
 export type PermitTransitionRequest = z.infer<typeof permitTransitionSchema>;
 

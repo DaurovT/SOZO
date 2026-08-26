@@ -66,12 +66,26 @@ export class PhotosController {
     return photo;
   }
 
-  /** Отдача файла: только по валидному токену (аналог signed URL) */
+  /**
+   * Отдача файла: валидный токен И право на эту заявку.
+   *
+   * Раньше проверялась только подпись JWT — ни владельца заявки, ни роли, —
+   * поэтому любой токен отдавал любой снимок, включая часовой токен публичной
+   * веб-карточки. Имена файлов uuidv7, перебор нереален, но привязки к заявке
+   * у файла не было вовсе, а фото по заявке — это адрес, лицо и документы.
+   */
   @Get('photos/:file')
   @Header('Cache-Control', 'private, max-age=3600')
-  serve(@Param('file') file: string, @Query('token') token: string | undefined, @Res() res: Response) {
-    if (!token || !verifyJwt(token)) throw new UnauthorizedException({ code: 'TOKEN_INVALID' });
+  async serve(@Param('file') file: string, @Query('token') token: string | undefined, @Res() res: Response) {
+    const claims = token ? verifyJwt(token) : null;
+    if (!claims) throw new UnauthorizedException({ code: 'TOKEN_INVALID' });
     if (!/^[a-f0-9-]+\.(jpg|png|webp)$/i.test(file)) throw new BadRequestException({ code: 'FILE_NAME_INVALID', message: 'Недопустимое имя файла' });
+    const owner = await this.orders.orderByPhotoFile('t0', file);
+    if (!owner) throw new NotFoundException({ code: 'PHOTO_NOT_FOUND' });
+    const mayMaster = !!claims.roles?.includes('master') && !!owner.masterId;
+    if (!this.orders.mayView(owner, { phone: claims.phone, roles: claims.roles }) && !mayMaster) {
+      throw new UnauthorizedException({ code: 'PHOTO_FORBIDDEN', message: 'Снимок относится к чужой заявке' });
+    }
     const path = resolve(PHOTO_DIR, file);
     if (!path.startsWith(PHOTO_DIR) || !existsSync(path)) throw new NotFoundException({ code: 'PHOTO_NOT_FOUND' });
     const ext = file.split('.').pop()!.toLowerCase();

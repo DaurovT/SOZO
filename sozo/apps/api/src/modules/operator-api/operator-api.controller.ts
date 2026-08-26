@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../identity/auth.guard';
+import { OperatorScopeGuard } from './operator-scope.guard';
 import type { JwtClaims } from '../../common/jwt';
 import { BuildingsService } from '../buildings/buildings.service';
 import { AccessService } from '../access/access.service';
@@ -8,6 +9,7 @@ import { OrdersService } from '../orders/orders.service';
 import { MastersService } from '../masters/masters.module';
 import { AffiliationService } from '../masters/affiliation.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { localDateKey } from '../../common/tz';
 
 /**
  * Кабинет эксплуатирующей организации (PRD-07). Модуль агрегирует данные доменных
@@ -15,7 +17,7 @@ import { SchedulingService } from '../scheduling/scheduling.service';
  * Скоуп по оператору — до RLS проверяется здесь; после M7-E0-S5 останется как первый слой.
  */
 @Controller('operator')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, OperatorScopeGuard)
 export class OperatorApiController {
   constructor(
     private readonly buildings: BuildingsService,
@@ -200,7 +202,7 @@ export class OperatorApiController {
    */
   @Get(':orgId/masters')
   operatorMasters(@Param('orgId') orgId: string, @Query('date') date?: string) {
-    const day = date ?? new Date().toISOString().slice(0, 10);
+    const day = date ?? localDateKey();
     const affiliations = this.affiliation.listByOrg('t0', orgId);
     const all = this.masters.list();
     const rows = affiliations.map((a) => {

@@ -162,17 +162,38 @@ export class StockController {
     return this.stock.items.map((i) => ({ ...i, belowMin: i.qtyOnHand < i.minQty }));
   }
 
+  /**
+   * Заведение позиции склада.
+   *
+   * Количество, минимум и себестоимость брались из тела без единой проверки,
+   * а в базе на них стоят CHECK-ограничения (`m29_catalogs`). Позиция с
+   * количеством −1 отвечала 200 OK, после чего КАЖДАЯ запись склада падала на
+   * ограничении — а ошибка зеркала гасится в лог. Ни один товар и ни одно
+   * движение больше не сохранялись, приложение при этом молчало, и
+   * обнаруживалось это при рестарте потерей всего с момента поломки.
+   *
+   * Проверяем ровно то, что проверяет база, — и до записи, а не после.
+   */
   @Post('items')
   @Roles('admin')
   addItem(@Body() b: any) {
+    const name = String(b?.name ?? '').trim();
+    if (!name) throw new BadRequestException({ code: 'NAME_REQUIRED', message: 'Название позиции обязательно' });
+    const nonNegativeInt = (v: unknown, field: string): number => {
+      const n = Number(v ?? 0);
+      if (!Number.isSafeInteger(n) || n < 0) {
+        throw new BadRequestException({ code: 'VALUE_INVALID', message: `${field}: целое неотрицательное число`, value: String(v) });
+      }
+      return n;
+    };
     const rec: StockItemRec = {
       id: uuidv7(),
       category: b.category ?? 'other',
-      name: b.name,
+      name,
       unit: b.unit ?? 'шт',
-      qtyOnHand: b.qtyOnHand ?? 0,
-      minQty: b.minQty ?? 0,
-      costTiyin: b.costTiyin ?? 0,
+      qtyOnHand: nonNegativeInt(b.qtyOnHand, 'Количество'),
+      minQty: nonNegativeInt(b.minQty, 'Минимальный остаток'),
+      costTiyin: nonNegativeInt(b.costTiyin, 'Себестоимость'),
     };
     this.stock.items.push(rec);
     this.stock.touch();
@@ -190,11 +211,36 @@ export class StockController {
   @Roles('admin')
   move(@Body() b: { stockItemId: string; type: StockMovementRec['type']; qty: number; masterId?: string; masterName?: string; priceTiyin?: number; comment?: string }, @Req() req: { auth: JwtClaims }) {
     const item = this.stock.item(b.stockItemId);
-    if (!b.qty || b.qty <= 0) throw new BadRequestException({ code: 'QTY_NOT_POSITIVE' });
+    // Целочисленность, а не только положительность: перемещение на 0,5 штуки
+    // проходило проверку и роняло запись на CHECK в базе
+    if (!Number.isSafeInteger(b.qty) || b.qty <= 0) {
+      throw new BadRequestException({ code: 'QTY_INVALID', message: 'Количество — целое положительное число', value: String(b.qty) });
+    }
+    if (b.priceTiyin !== undefined && (!Number.isSafeInteger(b.priceTiyin) || b.priceTiyin < 0)) {
+      throw new BadRequestException({ code: 'PRICE_INVALID', message: 'Цена — целое неотрицательное число тийинов' });
+    }
     const outgoing = b.type === 'sale_to_master' || b.type === 'write_off' || b.type === 'temp_use';
     if (outgoing && item.qtyOnHand < b.qty) throw new BadRequestException({ code: 'NOT_ENOUGH_STOCK', message: `На складе ${item.qtyOnHand} ${item.unit}` });
     if (b.type === 'sale_to_master' && (!b.masterId || !b.priceTiyin)) {
       throw new BadRequestException({ code: 'MASTER_AND_PRICE_REQUIRED', message: 'Продажа мастеру: нужны мастер и цена' });
+    }
+    /**
+     * Остаток считается из движений и проверяется ещё раз перед записью.
+     *
+     * Внутри одного процесса блок синхронный, но ни транзакции, ни условного
+     * UPDATE здесь нет: при перекрытии процессов на деплое два «продал 8 из
+     * 10» проходят оба, и удержание из ведомости уходит дважды. Пересчёт по
+     * журналу движений — второй слой: он ловит расхождение памяти с журналом
+     * до того, как оно станет отрицательным остатком.
+     */
+    const fromJournal = this.stock.movements
+      .filter((mv) => mv.stockItemId === item.id)
+      .reduce((sum, mv) => sum + (mv.type === 'sale_to_master' || mv.type === 'write_off' || mv.type === 'temp_use' ? -mv.qty : mv.qty), 0);
+    if (outgoing && fromJournal < b.qty && fromJournal !== item.qtyOnHand) {
+      throw new BadRequestException({
+        code: 'STOCK_RACE',
+        message: `Остаток изменился, пока готовилось движение: в журнале ${fromJournal} ${item.unit}. Обновите карточку`,
+      });
     }
     item.qtyOnHand += outgoing ? -b.qty : b.qty;
     const rec: StockMovementRec = {

@@ -3,6 +3,7 @@ import { AccessController } from './access.controller';
 import { UnitAccessPageController } from './unit-access-page.controller';
 import { PublicBuildingController } from './public-building.controller';
 import { AccessService } from './access.service';
+import { AccessScopeGuard } from './access-scope.guard';
 import { InMemoryPermitRepository } from './permit.repository';
 import { PermitLinksService } from './permit-links.service';
 import { PermitPageController } from './permit-page.controller';
@@ -16,7 +17,7 @@ import { BuildingsModule } from '../buildings/buildings.module';
 @Module({
   imports: [BuildingsModule],
   controllers: [AccessController, PermitPageController, PublicBuildingController, UnitAccessPageController],
-  providers: [AccessService, InMemoryPermitRepository, PermitLinksService],
+  providers: [AccessService, InMemoryPermitRepository, PermitLinksService, AccessScopeGuard],
   exports: [AccessService],
 })
 export class AccessModule {}

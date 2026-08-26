@@ -82,7 +82,10 @@ export class MasterOutputController {
 
     // Светофор SLA по закрытым заявкам периода. `none` — заявки вне политики,
     // их нельзя записывать ни в зелёные, ни в красные
-    const sla = { green: 0, amber: 0, red: 0, none: 0 };
+    // `done` — заявка устранена, светофор погашен: у закрытых заявок это
+    // обычное состояние, и складывать его с зелёными нельзя — зелёное значит
+    // «успеваем», а не «успели»
+    const sla = { green: 0, amber: 0, red: 0, done: 0, none: 0 };
     for (const o of closed) sla[this.sla.status('t0', o.id)] += 1;
 
     let walksDone = 0;

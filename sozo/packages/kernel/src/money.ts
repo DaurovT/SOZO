@@ -32,6 +32,25 @@ export function roundTo100Soums(amountTiyin: bigint, direction: RoundDirection):
     : amountTiyin - remainder + ROUND_STEP_TIYIN; // начисление больше — в пользу мастера
 }
 
+/** Доля мастера по умолчанию, промилле (55%). Перекрывается коэффициентом релиза прайса */
+export const MASTER_SHARE_DEFAULT_PERMILLE = 550n;
+
+/** Надбавка золотого грейда: 57% вместо 55% (ТЗ 7.4) */
+export const GOLD_SHARE_BONUS_PERMILLE = 20n;
+
+/**
+ * Ставка доли мастера — единственное место, где она собирается.
+ *
+ * Раньше её было два: рейтинг возвращал 570 промилле золотому грейду, и это
+ * показывалось мастеру в приложении, а все восемь мест фактического расчёта
+ * хардкодили 550. Владелец мог поставить в релизе 600 — валидатор
+ * unit-экономики пропускал активацию по этой ставке, а биллинг продолжал
+ * начислять 550, и ни один отчёт расхождения не показывал.
+ */
+export function sharePermilleFor(grade: string | null | undefined, basePermille = MASTER_SHARE_DEFAULT_PERMILLE): bigint {
+  return grade === 'gold' ? basePermille + GOLD_SHARE_BONUS_PERMILLE : basePermille;
+}
+
 /** Доля мастера: от базовой B2C × наценки; скидки клиенту долю не трогают (ТЗ 3.7). sharePermille: 550 = 55%. */
 export function masterShare(baseWorkTiyin: bigint, surchargeMultiplierPermille: bigint, sharePermille: bigint): bigint {
   const withSurcharge = (baseWorkTiyin * surchargeMultiplierPermille) / 1000n;
@@ -61,8 +80,14 @@ export const PRO_PRICE_PER_OBJECT_TIYIN = 300_000_000n;
 
 export class ServiceFeeAboveCapError extends Error {
   constructor(public readonly bps: bigint) {
-    super(`Ставка сервисного сбора ${bps} б.п. выше потолка ${SERVICE_FEE_CAP_BPS} б.п.`);
-    this.name = 'ServiceFeeAboveCap';
+    // Сообщение называет настоящую причину: отрицательная ставка — это не
+    // «выше потолка», и разбор инцидента по такому тексту уводит не туда
+    super(
+      bps < 0n
+        ? `Ставка сервисного сбора не может быть отрицательной: ${bps} б.п.`
+        : `Ставка сервисного сбора ${bps} б.п. выше потолка ${SERVICE_FEE_CAP_BPS} б.п.`,
+    );
+    this.name = bps < 0n ? 'ServiceFeeNegative' : 'ServiceFeeAboveCap';
   }
 }
 

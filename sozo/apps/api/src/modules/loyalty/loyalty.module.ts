@@ -20,7 +20,21 @@ import type { JwtClaims } from '../../common/jwt';
 export interface LoyaltyAccount {
   phone: string;
   balanceTiyin: number;
-  history: Array<{ id: string; kind: 'accrual' | 'voucher' | 'storno'; amountTiyin: number; note: string; at: string }>;
+  history: Array<{
+    id: string;
+    kind: 'accrual' | 'voucher' | 'storno';
+    amountTiyin: number;
+    note: string;
+    /**
+     * Заявка, породившая движение.
+     *
+     * Раньше история писалась без ссылки: начисление нельзя было ни найти по
+     * заявке, ни отменить при возврате — вид «сторно» был объявлен в типе и
+     * не создавался нигде.
+     */
+    orderId?: string;
+    at: string;
+  }>;
 }
 
 export interface VoucherRec {
@@ -149,18 +163,76 @@ export class LoyaltyService implements OnModuleInit {
 
   onModuleInit(): void {
     void this.mirror.init();
-    this.bus.subscribe<OrderClosedEvent>('order.closed', (e) => {
-      if (e.graphType !== 'b2b' || !e.organizationId || !e.clientPhone) return;
-      try {
-        const org = this.crm.get(e.organizationId);
+    /**
+     * Начисление за закрытую B2B-заявку.
+     *
+     * Пустой `catch` убран: он гасил всё подряд, и потерянное начисление не
+     * оставляло следа вообще. Теперь молча пропускается ровно один случай —
+     * удалённая организация, — а всё остальное поднимается наверх, и шина
+     * повторит доставку (см. common/event-bus).
+     */
+    this.bus.subscribe<OrderClosedEvent>(
+      'order.closed',
+      (e) => {
+        if (e.graphType !== 'b2b' || !e.organizationId || !e.clientPhone) return;
+        let org;
+        try {
+          org = this.crm.get(e.organizationId);
+        } catch {
+          return; // организации больше нет — начислять некому
+        }
         if (!org.terms.loyaltyEnabled) return; // только как опция договора (ТЗ 17.14)
         const accrual = Math.floor((e.baseWorkTiyin || 0) / 100); // 1% от базы работ, без материалов
         if (accrual <= 0) return;
-        this.accrue(e.clientPhone, accrual, `1% от работ по ${e.number}`);
-      } catch {
-        /* организация могла быть удалена — начисление пропускается */
-      }
-    });
+        // Ключ идемпотентности — сама заявка: повтор доставки события не
+        // начислит баллы второй раз
+        this.accrue(e.clientPhone, accrual, `1% от работ по ${e.number}`, e.orderId);
+      },
+      'loyalty.order_closed',
+      { retry: true },
+    );
+
+    /**
+     * Отмена заявки и возврат по спору снимают начисленное.
+     *
+     * Подписки на эти события не было ни здесь, ни в биллинге: заявку
+     * сторнировали, а баллы оставались, и выданный на них ваучер отозвать
+     * было нечем. Снимаем ровно то, что начислили по этой заявке.
+     */
+    this.bus.subscribe<{ orderId: string; number: string; clientPhone?: string }>(
+      'order.cancelled',
+      (e) => this.reverseFor(e.orderId, `Отмена заявки ${e.number}`),
+      'loyalty.order_cancelled',
+      { retry: true },
+    );
+    this.bus.subscribe<{ orderId: string; orderNumber: string }>(
+      'dispute.refunded',
+      (e) => this.reverseFor(e.orderId, `Возврат по спору ${e.orderNumber}`),
+      'loyalty.dispute_refunded',
+      { retry: true },
+    );
+  }
+
+  /**
+   * Снять начисление по заявке.
+   *
+   * Баланс может уйти в минус — и это правильно: человек уже получил ваучер
+   * на баллы, которых больше нет, и долг должен быть виден, а не списан
+   * молча. Отзывать выданный ваучер платформа не может физически.
+   */
+  reverseFor(orderId: string, note: string): void {
+    if (!orderId) return;
+    for (const acc of this.accounts.values()) {
+      const accrued = acc.history.filter((h) => h.kind === 'accrual' && h.orderId === orderId);
+      if (!accrued.length) continue;
+      if (acc.history.some((h) => h.kind === 'storno' && h.orderId === orderId)) continue; // уже сторнировано
+      const total = accrued.reduce((sum, h) => sum + h.amountTiyin, 0);
+      if (total <= 0) continue;
+      acc.balanceTiyin -= total;
+      acc.history.push({ id: uuidv7(), kind: 'storno', amountTiyin: -total, note, orderId, at: new Date().toISOString() });
+      this.store.persist();
+      this.bus.publish('loyalty.reversed', { phone: acc.phone, amountTiyin: total, balanceTiyin: acc.balanceTiyin, note });
+    }
   }
 
   private account(phone: string): LoyaltyAccount {
@@ -172,10 +244,13 @@ export class LoyaltyService implements OnModuleInit {
     return acc;
   }
 
-  accrue(phone: string, amountTiyin: number, note: string): void {
+  accrue(phone: string, amountTiyin: number, note: string, orderId?: string): void {
     const acc = this.account(phone);
+    // По одной заявке начисляем один раз: повтор доставки события, повтор
+    // запроса или переигровка не должны удваивать баллы
+    if (orderId && acc.history.some((h) => h.kind === 'accrual' && h.orderId === orderId)) return;
     acc.balanceTiyin += amountTiyin;
-    acc.history.push({ id: uuidv7(), kind: 'accrual', amountTiyin, note, at: new Date().toISOString() });
+    acc.history.push({ id: uuidv7(), kind: 'accrual', amountTiyin, note, orderId, at: new Date().toISOString() });
     this.tryIssueVoucher(acc);
     this.store.persist();
     // Начисление — уведомление низкого приоритета (PRD-01 §5): человеку

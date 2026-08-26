@@ -687,6 +687,17 @@ export interface ObservationRecord {
   routedEntityId: string | null;
   resolvedPhotoId: string | null;
   resolvedAt: string | null;
+  /**
+   * Почему замечание не стало заявкой.
+   *
+   * Аварийное замечание маршрутизируется автоматически, и до сих пор
+   * единственным следом неудачи была строка в логе: замечание оставалось в
+   * журнале «открытым», аварийной заявки не было, и никто об этом не узнавал.
+   * Причина, записанная на самом замечании, видна в кабинете рядом с ним —
+   * там, где на неё посмотрят.
+   */
+  routingFailedReason: string | null;
+  routingFailedAt: string | null;
   /** к какому замечанию присоединились дубликаты */
   joinedBy: string[];
   createdAt: string;

@@ -6,6 +6,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { PgMirror } from '../../common/pg-mirror';
 import { NotificationsService } from './notifications.service';
 import { tr } from '../../common/locale';
+import { stableUuid } from '../../common/stable-uuid';
 
 /**
  * Офферы и смена мастера (PRD-02 §3, экраны M-02, M-04).
@@ -190,10 +191,23 @@ export class MasterOffersService {
           // Геожурнал append-only: по нему разбирают спор «мастер не выехал»,
           // и переписывать его нельзя
           for (const g of st.geoLog.slice(-200)) {
+            /**
+             * Идентификатор события — устойчивый UUID из мастера и времени.
+             *
+             * Было `where: { id: \`${masterId}-${at}\` }`, а в `create` та же
+             * строка, обрезанная до 36 символов. Колонка типа uuid: `where`
+             * получал заведомо невалидное значение и запрос падал — а падение
+             * гасится в зеркале, поэтому геожурнал не записывался в базу
+             * НИКОГДА и молча. Разбирать по нему спор «мастер не выехал»
+             * после рестарта было нечем. Обрезанная же строка совпадала с
+             * `masterId` целиком, так что все события мастера ещё и схлопнулись
+             * бы в одну строку.
+             */
+            const id = stableUuid(`${st.masterId}|${g.at}|${g.event}`);
             await tx.masterGeoEvent.upsert({
-              where: { id: `${st.masterId}-${g.at}` },
+              where: { id },
               create: {
-                id: `${st.masterId}-${g.at}`.slice(0, 36),
+                id,
                 tenantId, masterId: st.masterId, event: g.event,
                 lat: g.lat, lng: g.lng, orderId: g.orderId ?? null, at: new Date(g.at),
               },
@@ -334,6 +348,18 @@ export class MasterOffersService {
     return this.offers
       .filter((o) => o.masterId === masterId && o.status === 'pending')
       .map((o) => ({ ...o, secondsLeft: Math.max(0, Math.round((new Date(o.expiresAt).getTime() - Date.now()) / 1000)) }) as OfferRec);
+  }
+
+  /** Снять оффер: заявку взял кто-то другой или её назначил диспетчер */
+  revokeOffer(id: string, reason: string): OfferRec {
+    const o = this.get(id);
+    if (o.status === 'pending') {
+      o.status = 'revoked';
+      o.declineReason = reason;
+      o.respondedAt = new Date().toISOString();
+      this.store.persist();
+    }
+    return o;
   }
 
   accept(id: string, masterId: string): OfferRec {

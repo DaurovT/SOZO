@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { masterShare, roundTo100Soums, uuidv7, serviceFee, SERVICE_FEE_CAP_BPS } from '@sozo/kernel';
-import { EventBus, type OrderClosedEvent } from '../../common/event-bus';
+import { masterShare, roundTo100Soums, uuidv7, serviceFee, SERVICE_FEE_CAP_BPS, MASTER_SHARE_DEFAULT_PERMILLE } from '@sozo/kernel';
+import { EventBus, type OrderCancelledEvent, type OrderClosedEvent } from '../../common/event-bus';
 import { dbFailure } from '../../common/db-failure';
 import { queue } from '../../common/pg-mirror';
 import { StateStore } from '../../common/state-store';
@@ -8,6 +8,7 @@ import { CrmService } from '../crm/crm.service';
 import { ParametersService } from '../platform/parameters.service';
 import { PrismaService } from '../../common/prisma.service';
 import { currentDbContext, systemContext } from '../../common/db-context';
+import { stableUuid } from '../../common/stable-uuid';
 
 /** План счетов — упрощённый контур PRD-05 §4.3 (полный — с миграцией на Prisma) */
 const ACCOUNTS: Array<{ code: string; name: string; kind: 'asset' | 'liability' | 'income' | 'expense' }> = [
@@ -22,6 +23,13 @@ const ACCOUNTS: Array<{ code: string; name: string; kind: 'asset' | 'liability' 
   { code: 'master_share_expense', name: 'Расход: доли мастеров', kind: 'expense' },
   { code: 'reserve_expense', name: 'Расход: отчисления в резервный фонд', kind: 'expense' },
   { code: 'provider_fees', name: 'Расход: комиссии платёжных провайдеров', kind: 'expense' },
+  /**
+   * Сервисный сбор объекта до сих пор существовал только как событие и строка
+   * в реестре оператора: в балансе платформы обязательства перед операторами
+   * не было вовсе, а раздел «Кому мы должны» показывал ноль при реальном долге.
+   */
+  { code: 'operator_payable', name: 'Кредиторка операторам (сервисный сбор)', kind: 'liability' },
+  { code: 'service_fee_expense', name: 'Расход: сервисный сбор объектов', kind: 'expense' },
   { code: 'opening', name: 'Стартовые остатки (капитал)', kind: 'liability' },
 ];
 
@@ -46,7 +54,7 @@ export interface InvoiceRec {
   number: string;
   organizationId: string;
   organizationName: string;
-  kind: 'subscription' | 'overlimit' | 'one_off_prepayment';
+  kind: 'subscription' | 'overlimit' | 'one_off_prepayment' | 'penalty';
   amountTiyin: number;
   status: 'issued' | 'paid';
   issuedAt: string;
@@ -60,6 +68,24 @@ export interface InvoiceRec {
    */
   vatTiyin: number;
   vatRatePercent: number;
+  /**
+   * Сколько пеней по этому счёту уже предъявлено отдельным счётом.
+   *
+   * Без этой отметки расчёт пеней — чистая функция от текущей даты, и второе
+   * нажатие в тот же день выставляет ровно такой же счёт второй раз. Храним
+   * предъявленное, а начисляем разницу: пени растут каждый день, поэтому
+   * «уже выставляли» — не то же самое, что «больше нельзя».
+   */
+  penaltyChargedTiyin?: number;
+  /**
+   * Заявка, по которой выставлен счёт (материалы отдельным документом).
+   *
+   * Нужна разбору «за что этот счёт» и идемпотентности: повторная доставка
+   * события закрытия не должна присылать клиенту второй счёт за те же
+   * материалы. Сама проверка идёт по журналу проводок — он append-only и
+   * переживает рестарт, — а поле здесь держит связь для отчётов.
+   */
+  orderId?: string;
 }
 
 /**
@@ -107,28 +133,53 @@ export class BillingService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.loadFromDb();
-    this.bus.subscribe<OrderClosedEvent>('order.closed', (e) => this.onOrderClosed(e));
+    /**
+     * Справка для заявок: можно ли сейчас провести закрытие.
+     *
+     * Заявка обязана узнать это ДО перехода в «Закрыта» — иначе закрытие
+     * проходит, событие уходит в outbox и висит там до переоткрытия периода,
+     * а диспетчер видит успешно закрытую заявку без проводок. Импортировать
+     * биллинг в заявки нельзя (DEV-07 §3), спросить через шину — можно.
+     */
+    this.bus.registerProbe<{ at?: string }, boolean>('billing.period_open', (q) =>
+      this.periodOpen(q?.at ? new Date(q.at) : new Date()),
+    );
+    this.bus.subscribe<OrderClosedEvent>('order.closed', (e, id) => this.onOrderClosed(e, id), 'billing.order_closed', { retry: true });
+    // Отмена заявки — тоже деньги (матрица ТЗ 4.4): ложный вызов клиенту,
+    // компенсация мастеру. Раньше на это событие не был подписан никто
+    this.bus.subscribe<OrderCancelledEvent>('order.cancelled', (e, id) => this.onOrderCancelled(e, id), 'billing.order_cancelled', { retry: true });
     // Склад: продажа мастеру — удержание из будущей выплаты (ТЗ 17.16)
     this.bus.subscribe<{ masterId: string; masterName: string; amountTiyin: number; itemName: string }>(
       'stock.sold_to_master',
-      (e) =>
-        this.post([
-          { type: 'stock.sale', debit: 'master_payable', credit: 'revenue', amountTiyin: e.amountTiyin, masterId: e.masterId, comment: `Продажа со склада: ${e.itemName} → ${e.masterName}` },
-        ]),
+      (e, id) =>
+        this.post(
+          [
+            { type: 'stock.sale', debit: 'master_payable', credit: 'revenue', amountTiyin: e.amountTiyin, masterId: e.masterId, comment: `Продажа со склада: ${e.itemName} → ${e.masterName}` },
+          ],
+          stableUuid(id),
+        ),
+      'billing.stock_sold',
+      { retry: true },
     );
     // Резервный фонд: выплата ущерба + регресс к мастеру ≤30% (ТЗ 17.7)
     this.bus.subscribe<{ caseId: string; amountTiyin: number; regressTiyin: number; masterId?: string; description: string }>(
       'damage.payout',
-      (e) => {
-        this.post([
-          { type: 'damage.payout', debit: 'reserve_fund', credit: 'settlement', amountTiyin: e.amountTiyin, comment: `Выплата ущерба: ${e.description}` },
-        ]);
+      (e, id) => {
+        // Две операции одного события: ключи производные от eventId, поэтому
+        // повтор попадает в те же самые, а не заводит третью и четвёртую
+        this.post(
+          [{ type: 'damage.payout', debit: 'reserve_fund', credit: 'settlement', amountTiyin: e.amountTiyin, comment: `Выплата ущерба: ${e.description}` }],
+          stableUuid(`${id}:payout`),
+        );
         if (e.regressTiyin > 0 && e.masterId) {
-          this.post([
-            { type: 'damage.regress', debit: 'master_payable', credit: 'reserve_fund', amountTiyin: e.regressTiyin, masterId: e.masterId, comment: `Регресс к мастеру по делу об ущербе` },
-          ]);
+          this.post(
+            [{ type: 'damage.regress', debit: 'master_payable', credit: 'reserve_fund', amountTiyin: e.regressTiyin, masterId: e.masterId, comment: `Регресс к мастеру по делу об ущербе` }],
+            stableUuid(`${id}:regress`),
+          );
         }
       },
+      'billing.damage_payout',
+      { retry: true },
     );
   }
 
@@ -156,9 +207,12 @@ export class BillingService implements OnModuleInit {
       }
       return {
         accounts: await tx.account.findMany({ where: { tenantId } }),
-        txs: await tx.transaction.findMany({ orderBy: { createdAt: 'asc' } }),
-        invoices: await tx.invoice.findMany({ orderBy: { createdAt: 'asc' } }),
-        periods: await tx.accountingPeriod.findMany(),
+        // Скоуп по тенанту обязателен: RLS на transaction/invoice нет (см. миграцию
+        // m40_rls_billing), и без where в память грузился журнал всех владельцев —
+        // а по нему считается ведомость и восстанавливается счётчик номеров счетов
+        txs: await tx.transaction.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } }),
+        invoices: await tx.invoice.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } }),
+        periods: await tx.accountingPeriod.findMany({ where: { tenantId } }),
       };
     });
     this.accountIds = new Map(d.accounts.map((a) => [a.code, a.id]));
@@ -340,16 +394,77 @@ export class BillingService implements OnModuleInit {
     return kind === 'asset' || kind === 'expense' ? dt - kt : kt - dt;
   }
 
+  /** Открыт ли период, в котором лежит эта дата. Спрашивают до необратимых действий */
+  periodOpen(at: Date = new Date()): boolean {
+    return !this.closedPeriods.has(at.toISOString().slice(0, 7));
+  }
+
+  /**
+   * Проверка суммы проводки.
+   *
+   * `<= 0` не отсеивает NaN: любое сравнение с NaN ложно, и проводка с NaN
+   * проходила насквозь. В памяти она оседала, а запись в базу падала на
+   * BigInt(NaN) — и падение гасилось в зеркале. Дальше баланс навсегда NaN, а
+   * сторно не лечит: сторно NaN — тоже NaN. Поэтому проверяем не знак, а то,
+   * что это вообще целое число тийинов.
+   */
+  private assertAmount(v: number): void {
+    if (!Number.isSafeInteger(v)) {
+      throw new BadRequestException({
+        code: 'AMOUNT_NOT_INTEGER',
+        message: 'Сумма проводки — целое число тийинов; дробь, NaN и бесконечность недопустимы',
+        value: String(v),
+      });
+    }
+    if (v <= 0) throw new BadRequestException({ code: 'AMOUNT_NOT_POSITIVE' });
+  }
+
   /** Единственный способ движения денег; Σ Дт = Σ Кт внутри операции по построению */
-  post(entries: Array<Omit<TxRec, 'id' | 'operationId' | 'isStorno' | 'createdAt'>>, operationId = uuidv7()): TxRec[] {
-    const month = new Date().toISOString().slice(0, 7);
+  post(entries: Array<Omit<TxRec, 'id' | 'operationId' | 'isStorno' | 'createdAt'>>, operationId = uuidv7(), at: Date = new Date()): TxRec[] {
+    /**
+     * Идемпотентность по идентификатору операции.
+     *
+     * `operationId` был просто меткой группировки со значением по умолчанию
+     * «новый uuid», и повторный вызов с тем же ключом проводил всё заново.
+     * Пока падение подписчика гасилось в console.error, это ничего не
+     * стоило — потеря была одна. С журналом доставки и повторами повтор стал
+     * настоящим: у закрытой заявки, чей обработчик упал на середине (закрытый
+     * период, NaN в сумме, неизвестный счёт), вторая попытка положила бы
+     * прошедшую до броска часть проводок второй раз — и дублями они бы даже
+     * не выглядели, у каждой был бы свой operationId.
+     *
+     * Теперь ключ проверяется: операция с таким id уже проведена — возвращаем
+     * её и ничего не пишем. Это же закрывает частичный сбой стартовых
+     * остатков: повтор не заводит первые шесть строк второй раз.
+     */
+    const already = this.txs.filter((t) => t.operationId === operationId);
+    if (already.length) return already;
+    /**
+     * Операция с таким идентификатором уже проведена — возвращаем её.
+     *
+     * Это то, что делает биллинг идемпотентным по-настоящему, а не на словах.
+     * Шина повторяет доставку до восьми раз, и без этой проверки каждая
+     * попытка создавала бы новую выручку, новую долю мастера и новое
+     * отчисление в резервный фонд — причём с разными `operationId`, то есть
+     * даже не похожие на дубли. Ключ приходит снаружи: подписчик берёт его из
+     * `eventId` события.
+     *
+     * Тем же закрывается частичный сбой стартовых остатков: повторный вызов
+     * с тем же ключом не заведёт проводки второй раз.
+     */
+    const existing = this.txs.filter((t) => t.operationId === operationId);
+    if (existing.length) return existing;
+    // Период берётся по дате операции, а не по сегодняшнему числу: проводка
+    // прошлого месяца, которую проводят сегодня, относится к своему периоду —
+    // иначе закрытие текущего месяца молча блокирует всё подряд
+    const month = at.toISOString().slice(0, 7);
     if (this.closedPeriods.has(month)) {
       throw new BadRequestException({ code: 'PERIOD_LOCKED', message: `Период ${month} закрыт — проводки невозможны (A-19); переоткройте период` });
     }
     for (const e of entries) {
-      if (e.amountTiyin <= 0) throw new BadRequestException({ code: 'AMOUNT_NOT_POSITIVE' });
+      this.assertAmount(e.amountTiyin);
       if (!ACCOUNTS.some((a) => a.code === e.debit) || !ACCOUNTS.some((a) => a.code === e.credit)) {
-        throw new BadRequestException({ code: 'ACCOUNT_UNKNOWN' });
+        throw new BadRequestException({ code: 'ACCOUNT_UNKNOWN', debit: e.debit, credit: e.credit });
       }
     }
     const created = entries.map((e) => ({
@@ -357,7 +472,7 @@ export class BillingService implements OnModuleInit {
       id: uuidv7(),
       operationId,
       isStorno: false,
-      createdAt: new Date().toISOString(),
+      createdAt: at.toISOString(),
     }));
     this.txs.push(...created);
     this.appendTxs(created);
@@ -365,13 +480,26 @@ export class BillingService implements OnModuleInit {
     return created;
   }
 
-  /** Сторно — единственный способ исправления (ТЗ 8.1) */
+  /**
+   * Сторно — единственный способ исправления (ТЗ 8.1).
+   *
+   * Раньше писалось в журнал напрямую, мимо post(): мимо закрытого периода,
+   * мимо плана счетов и мимо проверки суммы. То есть ровно то, ради запрета
+   * чего закрытие периода и заводилось, через сторно проходило свободно.
+   * Теперь проверки те же — отличается только направление и пометка.
+   */
   storno(txId: string, comment: string): TxRec {
     const src = this.txs.find((t) => t.id === txId);
     if (!src) throw new NotFoundException({ code: 'TX_NOT_FOUND' });
     if (this.txs.some((t) => t.reversedTxId === txId)) {
       throw new BadRequestException({ code: 'ALREADY_REVERSED' });
     }
+    const at = new Date();
+    const month = at.toISOString().slice(0, 7);
+    if (this.closedPeriods.has(month)) {
+      throw new BadRequestException({ code: 'PERIOD_LOCKED', message: `Период ${month} закрыт — сторно невозможно (A-19); переоткройте период` });
+    }
+    this.assertAmount(src.amountTiyin);
     const rec: TxRec = {
       id: uuidv7(),
       operationId: uuidv7(),
@@ -380,31 +508,60 @@ export class BillingService implements OnModuleInit {
       credit: src.debit,
       amountTiyin: src.amountTiyin,
       orderId: src.orderId,
+      // Ссылка на счёт копируется: без неё развёрнутая оплата не связана со
+      // счётом, и счёт остаётся «оплаченным» при отсутствии денег
+      invoiceId: src.invoiceId,
       masterId: src.masterId,
       isStorno: true,
       reversedTxId: txId,
       comment,
-      createdAt: new Date().toISOString(),
+      createdAt: at.toISOString(),
     };
     this.txs.push(rec);
     this.appendTxs([rec]);
+    // Сторнировали оплату — счёт снова не оплачен. Иначе он навсегда
+    // «оплачен» без денег: повторно отметить оплату нельзя (ALREADY_PAID)
+    if (src.type === 'invoice.paid' && src.invoiceId) {
+      const inv = this.invoices.find((i) => i.id === src.invoiceId);
+      if (inv && inv.status === 'paid') {
+        inv.status = 'issued';
+        inv.paidAt = undefined;
+        this.saveInvoice(inv);
+      }
+    }
     this.store.persist();
     return rec;
   }
 
   // ---------- Автопроводки закрытия заявки (PRD-05 §4.4) ----------
 
-  private onOrderClosed(e: OrderClosedEvent): void {
-    const op = uuidv7();
+  private onOrderClosed(e: OrderClosedEvent, eventId: string): void {
+    /**
+     * Ключ операции выводится из идентификатора события, а не берётся
+     * случайным: повтор доставки обязан попасть в ту же операцию, иначе он её
+     * удвоит. Через `stableUuid`, потому что колонка `operation_id` в базе —
+     * типа `uuid`, и строка вида «order.closed:<id>» роняет запись (молча, в
+     * зеркале).
+     */
+    const op = stableUuid(eventId);
     const work = e.totalWorkTiyin;
 
-    // Материалы отдельным счётом, если так записано в договоре (ТЗ 8.4).
-    // Делаем до проверки суммы работ: заявка могла быть только на материалы
-    if (e.organizationId && (e.materialsTiyin ?? 0) > 0) {
+    /**
+     * Материалы отдельным счётом, если так записано в договоре (ТЗ 8.4).
+     * Делаем до проверки суммы работ: заявка могла быть только на материалы.
+     *
+     * Счёт выставляется один раз на заявку. Проверяем по журналу проводок, а
+     * не по полю счёта: проводка `invoice.issued` несёт `orderId` и живёт в
+     * append-only журнале — то есть отвечает на вопрос «выставляли ли» точно и
+     * после рестарта. Раньше `try/catch` ловил только «организация удалена», а
+     * каждая повторная доставка события стоила клиенту ещё одного счёта.
+     */
+    const materialsIssued = this.txs.some((t) => t.orderId === e.orderId && t.type === 'invoice.issued');
+    if (e.organizationId && (e.materialsTiyin ?? 0) > 0 && !materialsIssued) {
       try {
         const org = this.crm.get(e.organizationId);
         if (org.terms.materialsSeparateInvoice) {
-          this.issueMaterialsInvoice(org.id, org.name, e.materialsTiyin!, e.number);
+          this.issueMaterialsInvoice(org.id, org.name, e.materialsTiyin!, e.number, e.orderId);
         }
       } catch {
         /* организация могла быть удалена — счёт не выставляем */
@@ -425,8 +582,33 @@ export class BillingService implements OnModuleInit {
       work > 0
     ) {
       const bps = BigInt(Math.min(e.serviceFeeBps!, Number(SERVICE_FEE_CAP_BPS)));
-      const fee = Number(serviceFee(BigInt(work), bps));
+      /**
+       * База сбора — работы ДО скидки, тот же принцип, что у доли мастера.
+       *
+       * Считалось от итога со скидкой, и это перекладывало маркетинговую акцию
+       * платформы на вознаграждение оператора: промокод давала платформа, а
+       * недополучал оператор объекта, который о промокоде не знает.
+       */
+      const feeBase = e.baseWorkTiyin || work;
+      const fee = Number(serviceFee(BigInt(feeBase), bps));
       if (fee > 0) {
+        // Обязательство перед оператором — проводкой, а не только событием:
+        // до этого в балансе и в разделе «Кому мы должны» его не было вовсе
+        this.post(
+          [
+            {
+              type: 'service_fee.accrued',
+              debit: 'service_fee_expense',
+              credit: 'operator_payable',
+              amountTiyin: fee,
+              orderId: e.orderId,
+              comment: `Сервисный сбор объекта по ${e.number} (${Number(bps) / 100}%)`,
+            },
+          ],
+          // Ключ производный: закрытие заявки порождает ДВЕ операции — сбор
+          // и сам расчёт, — и один общий идентификатор схлопнул бы вторую
+          stableUuid(`${op}:service_fee`),
+        );
         this.bus.publish('service_fee.accrued', {
           orderId: e.orderId,
           number: e.number,
@@ -448,7 +630,9 @@ export class BillingService implements OnModuleInit {
           debit: 'master_share_expense',
           credit: 'master_payable',
           // 55% строго от БАЗОВОЙ (до скидок клиенту), округление в пользу мастера (ТЗ 3.7)
-          amountTiyin: Number(masterShare(BigInt(e.baseWorkTiyin || work), 1000n, 550n)),
+          // Ставка приходит с событием: раньше здесь стоял литерал 550, и
+          // золотому мастеру приложение обещало 57%, а платили 55%
+          amountTiyin: Number(masterShare(BigInt(e.baseWorkTiyin || work), 1000n, BigInt(e.masterSharePermille ?? Number(MASTER_SHARE_DEFAULT_PERMILLE)))),
           orderId: e.orderId,
           masterId: e.masterId,
           comment: `Доля мастера ${e.masterName ?? ''} по ${e.number}`,
@@ -462,8 +646,42 @@ export class BillingService implements OnModuleInit {
           comment: `Резервный фонд по ${e.number}`,
         },
       ],
-      op,
+      stableUuid(`${op}:order`),
     );
+  }
+
+  /**
+   * Деньги при отмене (матрица ТЗ 4.4).
+   *
+   * Клиент платит стоимость ложного вызова, мастер получает компенсацию за
+   * выезд. Канал прихода — тот же, что у обычной заявки: B2B уходит в счёт
+   * (дебиторка), розница — в клиринг провайдера.
+   */
+  private onOrderCancelled(e: OrderCancelledEvent, eventId: string): void {
+    const op = stableUuid(eventId);
+    const entries: Array<Omit<TxRec, 'id' | 'operationId' | 'isStorno' | 'createdAt'>> = [];
+    if (e.clientPaysTiyin > 0) {
+      entries.push({
+        type: 'order.cancel_fee',
+        debit: e.organizationId ? 'ar' : 'clearing',
+        credit: 'revenue',
+        amountTiyin: e.clientPaysTiyin,
+        orderId: e.orderId,
+        comment: `Отмена ${e.number}: ${e.note}`,
+      });
+    }
+    if (e.masterCompTiyin > 0 && e.masterId) {
+      entries.push({
+        type: 'order.cancel_compensation',
+        debit: 'master_share_expense',
+        credit: 'master_payable',
+        amountTiyin: e.masterCompTiyin,
+        orderId: e.orderId,
+        masterId: e.masterId,
+        comment: `Компенсация выезда мастеру ${e.masterName ?? ''} по ${e.number}`.replace(/\s+/g, ' ').trim(),
+      });
+    }
+    if (entries.length) this.post(entries, op);
   }
 
   /**
@@ -505,13 +723,28 @@ export class BillingService implements OnModuleInit {
 
   // ---------- Кошельки мастеров / ведомость (A-17) ----------
 
+  /**
+   * Ведомость по мастерам.
+   *
+   * Считается по знаку проводки, а не по флагу «сторно», потому что сторно
+   * бывает двух разных смыслов: отменённое начисление и отменённая выплата.
+   * Раньше начисление брало только не-сторно проводки, а выплаченное — любые,
+   * и обратная проводка по ошибочной выплате уходила в никуда: исходная
+   * выплата оставалась в «выплачено», её сторно — нигде. Долг перед мастером
+   * занижался на всю сумму навсегда, а повторить выплату мешал NOTHING_DUE.
+   */
   payouts(): Array<{ masterId: string; masterName: string; accruedTiyin: number; paidTiyin: number; dueTiyin: number }> {
     const byMaster = new Map<string, { masterName: string; accrued: number; paid: number }>();
     for (const t of this.txs) {
       if (!t.masterId) continue;
+      if (t.debit !== 'master_payable' && t.credit !== 'master_payable') continue;
       const m = byMaster.get(t.masterId) ?? { masterName: t.comment?.match(/Доля мастера (.*?) по/)?.[1] ?? '', accrued: 0, paid: 0 };
-      if (t.credit === 'master_payable' && !t.isStorno) m.accrued += t.amountTiyin;
-      if (t.debit === 'master_payable') m.paid += t.amountTiyin;
+      if (!m.masterName) m.masterName = t.comment?.match(/Доля мастера (.*?) по/)?.[1] ?? '';
+      // +1 — кредиторка выросла (начислили), −1 — уменьшилась (выплатили/удержали)
+      const sign = t.credit === 'master_payable' ? 1 : -1;
+      const base = t.type.startsWith('storno:') ? t.type.slice('storno:'.length) : t.type;
+      if (base === 'payout') m.paid += -sign * t.amountTiyin;
+      else m.accrued += sign * t.amountTiyin;
       byMaster.set(t.masterId, m);
     }
     return [...byMaster.entries()].map(([masterId, m]) => ({
@@ -521,6 +754,22 @@ export class BillingService implements OnModuleInit {
       paidTiyin: m.paid,
       dueTiyin: m.accrued - m.paid,
     }));
+  }
+
+  /**
+   * Когда мастеру платили в последний раз.
+   *
+   * Нужно приложению мастера: «когда выплата» — вопрос номер один, а на
+   * экране кошелька не было ни даты, ни периода. Обещать дату вперёд нельзя
+   * (ведомость закрывает бухгалтер), поэтому отдаём факт: период выплат
+   * параметром и дату последней выплаты проводкой.
+   */
+  lastPayoutAt(masterId: string): string | undefined {
+    const dates = this.txs
+      .filter((t) => t.masterId === masterId && t.type === 'payout' && !t.isStorno)
+      .map((t) => t.createdAt)
+      .sort();
+    return dates.at(-1);
   }
 
   payOut(masterId: string): TxRec[] {
@@ -584,7 +833,10 @@ export class BillingService implements OnModuleInit {
    */
   penaltyFor(organizationId: string): {
     enabled: boolean;
+    /** К предъявлению сейчас: начислено минус уже выставленное отдельным счётом */
     amountTiyin: number;
+    accruedTiyin?: number;
+    alreadyChargedTiyin?: number;
     ratePercentPerDay: number;
     capPercent: number;
     graceDays: number;
@@ -602,8 +854,22 @@ export class BillingService implements OnModuleInit {
     const base = { enabled, ratePercentPerDay, capPercent, graceDays };
     if (!enabled) return { ...base, amountTiyin: 0, rows: [] };
 
+    /**
+     * Уже предъявленные пени по этой организации.
+     *
+     * Пени растут каждый день, поэтому запретить второй счёт нельзя — но и
+     * выставить те же самые сутки второй раз нельзя тоже. Предъявленное
+     * вычитается из начисленного: второе нажатие в тот же день даёт ноль,
+     * а через неделю — ровно прирост за неделю.
+     */
+    const alreadyCharged = this.invoices
+      .filter((i) => i.organizationId === organizationId && (i.kind === 'penalty' || i.kind === 'overlimit'))
+      .reduce((sum, i) => sum + i.amountTiyin, 0);
+
     const rows = this.invoices
-      .filter((i) => i.organizationId === organizationId && i.status === 'issued')
+      // Счёт на пени сам в базу расчёта не попадает: иначе через шесть дней
+      // он просрочится и на пени начнут начисляться пени
+      .filter((i) => i.organizationId === organizationId && i.status === 'issued' && i.kind !== 'penalty' && i.kind !== 'overlimit')
       .map((i) => {
         const days = Math.floor((Date.now() - new Date(i.issuedAt).getTime()) / 86_400_000) - graceDays;
         if (days <= 0) return null;
@@ -620,7 +886,8 @@ export class BillingService implements OnModuleInit {
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    return { ...base, amountTiyin: rows.reduce((s, r) => s + r.penaltyTiyin, 0), rows };
+    const accrued = rows.reduce((s, r) => s + r.penaltyTiyin, 0);
+    return { ...base, amountTiyin: Math.max(0, accrued - alreadyCharged), accruedTiyin: accrued, alreadyChargedTiyin: alreadyCharged, rows };
   }
 
   /**
@@ -636,7 +903,10 @@ export class BillingService implements OnModuleInit {
       throw new BadRequestException({ code: 'PENALTY_DISABLED', message: 'Пени не предусмотрены договором этой организации' });
     }
     if (penalty.amountTiyin <= 0) {
-      throw new BadRequestException({ code: 'NOTHING_OVERDUE', message: 'Просроченных счетов нет' });
+      throw new BadRequestException({
+        code: 'NOTHING_OVERDUE',
+        message: penalty.accruedTiyin ? 'Начисленные пени уже предъявлены счётом' : 'Просроченных счетов нет',
+      });
     }
     this.invoiceSeq += 1;
     const inv: InvoiceRec = {
@@ -644,7 +914,7 @@ export class BillingService implements OnModuleInit {
       number: `INV-${new Date().getFullYear()}-${String(this.invoiceSeq).padStart(5, '0')}`,
       organizationId,
       organizationName: org.name,
-      kind: 'overlimit',
+      kind: 'penalty',
       amountTiyin: penalty.amountTiyin,
       status: 'issued',
       issuedAt: new Date().toISOString(),
@@ -701,7 +971,7 @@ export class BillingService implements OnModuleInit {
    * нужно не из вредности — материалы у них проходят по другой статье расходов,
    * и сводить их с работами в одном документе значит ломать им учёт.
    */
-  issueMaterialsInvoice(organizationId: string, organizationName: string, amountTiyin: number, orderNumber: string): InvoiceRec {
+  issueMaterialsInvoice(organizationId: string, organizationName: string, amountTiyin: number, orderNumber: string, orderId?: string): InvoiceRec {
     if (amountTiyin <= 0) throw new BadRequestException({ code: 'AMOUNT_NOT_POSITIVE' });
     this.invoiceSeq += 1;
     const inv: InvoiceRec = {
@@ -725,6 +995,9 @@ export class BillingService implements OnModuleInit {
         credit: 'revenue',
         amountTiyin,
         invoiceId: inv.id,
+        // orderId — чтобы повторная доставка события закрытия увидела, что
+        // счёт по этой заявке уже есть
+        orderId,
         comment: `СФ ${inv.number}: материалы по ${orderNumber}`,
       },
     ]);
@@ -809,7 +1082,11 @@ export class BillingService implements OnModuleInit {
       month: month ?? 'все периоды',
       invoicesRegister: this.invoices.filter((i) => inMonth(i.issuedAt)).map((i) => ({
         number: i.number, organization: i.organizationName, kind: i.kind, amountTiyin: i.amountTiyin,
-        vatTiyin: Math.round((i.amountTiyin / 1.12) * 0.12), // НДС 12% изнутри; ставку подтверждает бухгалтер
+        // НДС берётся зафиксированным при выставлении, а не считается заново:
+        // у организации-неплательщика он ноль, и пересчёт по литералу 12%
+        // рисовал в реестре налог, которого в первичке нет
+        vatTiyin: i.vatTiyin,
+        vatRatePercent: i.vatRatePercent,
         status: i.status, issuedAt: i.issuedAt,
       })),
       receiptsRegister: this.txs.filter((t) => t.type === 'order.revenue' && inMonth(t.createdAt) && !t.isStorno).map((t) => ({
@@ -828,16 +1105,22 @@ export class BillingService implements OnModuleInit {
   openingBalances(entries: Array<{ account: string; side: 'debit' | 'credit'; amountTiyin: number; comment?: string }>) {
     if (this.openingDone) throw new BadRequestException({ code: 'OPENING_ALREADY_DONE', message: 'Стартовые остатки уже внесены (идемпотентность A-32)' });
     const op = uuidv7();
-    for (const e of entries) {
-      this.post(
-        [
-          e.side === 'debit'
-            ? { type: 'opening', debit: e.account, credit: 'opening', amountTiyin: e.amountTiyin, comment: e.comment ?? 'Стартовый остаток' }
-            : { type: 'opening', debit: 'opening', credit: e.account, amountTiyin: e.amountTiyin, comment: e.comment ?? 'Стартовый остаток' },
-        ],
-        op,
-      );
-    }
+    /**
+     * Все строки одним вызовом post(), а не по одной в цикле.
+     *
+     * Раньше флаг «сделано» ставился после цикла: ошибка на седьмой строке
+     * оставляла шесть проводок в журнале и флаг снятым — повторный вызов
+     * заводил те же шесть второй раз. Один вызов проверяет весь набор до
+     * записи, и частичного результата не бывает.
+     */
+    this.post(
+      entries.map((e) =>
+        e.side === 'debit'
+          ? { type: 'opening', debit: e.account, credit: 'opening', amountTiyin: e.amountTiyin, comment: e.comment ?? 'Стартовый остаток' }
+          : { type: 'opening', debit: 'opening', credit: e.account, amountTiyin: e.amountTiyin, comment: e.comment ?? 'Стартовый остаток' },
+      ),
+      op,
+    );
     this.openingDone = true;
     this.store.persist();
     return { operationId: op, entries: entries.length, balanceCheck: this.balanceCheck() };
@@ -857,12 +1140,24 @@ export class BillingService implements OnModuleInit {
   settleClearing(commissionPermille: number) {
     const pending = this.clearingState().pendingTiyin;
     if (pending <= 0) throw new BadRequestException({ code: 'NOTHING_TO_SETTLE' });
+    // Комиссия приходит числом из формы, и до сих пор никак не проверялась:
+    // 0 давал вторую проводку на ноль и ронял всё зачисление, хотя деньги
+    // пришли; 1200 промилле давали отрицательную проводку и немой 400
+    if (!Number.isFinite(commissionPermille) || commissionPermille < 0 || commissionPermille >= 1000) {
+      throw new BadRequestException({
+        code: 'COMMISSION_OUT_OF_RANGE',
+        message: 'Комиссия провайдера — от 0 до 999 промилле (0–99,9%)',
+      });
+    }
     const fee = Math.floor((pending * commissionPermille) / 1000);
     const op = uuidv7();
     this.post(
       [
         { type: 'clearing.settle', debit: 'settlement', credit: 'clearing', amountTiyin: pending - fee, comment: `Клиринг: зачисление минус комиссия` },
-        { type: 'clearing.fee', debit: 'provider_fees', credit: 'clearing', amountTiyin: fee, comment: `Комиссия провайдера ${(commissionPermille / 10).toFixed(1)}%` },
+        // Нулевая комиссия — не проводка: сумма проводки всегда положительна
+        ...(fee > 0
+          ? [{ type: 'clearing.fee', debit: 'provider_fees', credit: 'clearing', amountTiyin: fee, comment: `Комиссия провайдера ${(commissionPermille / 10).toFixed(1)}%` }]
+          : []),
       ],
       op,
     );
@@ -871,20 +1166,65 @@ export class BillingService implements OnModuleInit {
 
   // ---------- Баланс-чекер (A-22, ТЗ 8.8) ----------
 
+  /**
+   * Баланс-чекер.
+   *
+   * Раньше он считал `активы + расходы − обязательства − доходы` и был
+   * тождественно равен нулю: у каждой проводки дебетуемый счёт вносит +a, а
+   * кредитуемый −a, независимо от вида счёта. Проверка не могла покраснеть от
+   * потерянной проводки или неверной пары счетов — то есть ровно от того,
+   * ради чего писалась. Единственное, что её действительно красило, — мусорные
+   * коды счетов у кросс-тенантных строк.
+   *
+   * Поэтому здесь проверяется то, что в этом журнале ломается на самом деле:
+   * коды счетов, целостность сумм, парность сторно и совпадение по операциям.
+   * Балансовое уравнение остаётся справочной строкой — как напоминание, а не
+   * как проверка.
+   */
   balanceCheck() {
+    const problems: Array<{ kind: string; txId: string; detail: string }> = [];
+    const known = new Set(ACCOUNTS.map((a) => a.code));
+    const byOperation = new Map<string, number>();
+    for (const t of this.txs) {
+      if (!known.has(t.debit) || !known.has(t.credit)) {
+        problems.push({ kind: 'ACCOUNT_UNKNOWN', txId: t.id, detail: `${t.debit} / ${t.credit}` });
+      }
+      if (t.debit === t.credit) {
+        problems.push({ kind: 'SELF_TRANSFER', txId: t.id, detail: t.debit });
+      }
+      if (!Number.isSafeInteger(t.amountTiyin) || t.amountTiyin <= 0) {
+        problems.push({ kind: 'AMOUNT_BROKEN', txId: t.id, detail: String(t.amountTiyin) });
+      }
+      if (t.isStorno && !this.txs.some((x) => x.id === t.reversedTxId)) {
+        problems.push({ kind: 'STORNO_ORPHAN', txId: t.id, detail: t.reversedTxId ?? '—' });
+      }
+      byOperation.set(t.operationId, (byOperation.get(t.operationId) ?? 0) + t.amountTiyin);
+    }
+    // Сторно должно быть одно на проводку: два разворота удваивают отмену
+    const reversedTwice = new Map<string, number>();
+    for (const t of this.txs) {
+      if (!t.reversedTxId) continue;
+      reversedTwice.set(t.reversedTxId, (reversedTwice.get(t.reversedTxId) ?? 0) + 1);
+    }
+    for (const [txId, n] of reversedTwice) {
+      if (n > 1) problems.push({ kind: 'STORNO_DUPLICATE', txId, detail: `разворотов: ${n}` });
+    }
+
     const totalDebit = this.txs.reduce((s, t) => s + t.amountTiyin, 0);
-    const totalCredit = totalDebit; // двойная запись по построению: одна проводка = Дт и Кт
     const assets = ACCOUNTS.filter((a) => a.kind === 'asset').reduce((s, a) => s + this.balance(a.code), 0);
     const liabilities = ACCOUNTS.filter((a) => a.kind === 'liability').reduce((s, a) => s + this.balance(a.code), 0);
     const income = ACCOUNTS.filter((a) => a.kind === 'income').reduce((s, a) => s + this.balance(a.code), 0);
     const expense = ACCOUNTS.filter((a) => a.kind === 'expense').reduce((s, a) => s + this.balance(a.code), 0);
-    const discrepancyTiyin = assets + expense - liabilities - income; // балансовое уравнение
     return {
-      ok: discrepancyTiyin === 0,
-      discrepancyTiyin,
+      ok: problems.length === 0,
+      problems,
+      // Тождественный ноль по построению — оставлен как справка, не как проверка
+      equationTiyin: assets + expense - liabilities - income,
+      discrepancyTiyin: problems.length,
       totalDebitTiyin: totalDebit,
-      totalCreditTiyin: totalCredit,
+      totalCreditTiyin: totalDebit, // двойная запись: одна проводка = Дт и Кт
       txCount: this.txs.length,
+      operationCount: byOperation.size,
       checkedAt: new Date().toISOString(),
     };
   }

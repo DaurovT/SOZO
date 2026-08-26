@@ -7,6 +7,7 @@ import { CrmModule } from '../crm/crm.module';
 import { OrdersModule } from '../orders/orders.module';
 import { PlatformModule } from '../platform/platform.module';
 import type { JwtClaims } from '../../common/jwt';
+import { SlaModule } from '../sla/sla.module';
 
 /** Экран «Планировщик» (A-34): состояние движка, история срабатываний, ручной прогон */
 @Controller('admin/scheduler')
@@ -32,14 +33,25 @@ class SchedulerController {
     return runs;
   }
 
-  /** Dev: прогон N дней вперёд (проверка месячного цикла, дунинга, эскалаций) */
+  /**
+   * Прогон N дней вперёд — сухой: считает, что случилось бы, и ничего не
+   * делает. Ни счетов, ни авто-отмен, ни приостановок, ни уведомлений.
+   */
   @Post('simulate')
   @Roles('admin')
-  async simulate(@Body() body: { days?: number }, @Req() req: { auth: JwtClaims }) {
+  async simulate(@Body() body: { days?: number; apply?: boolean }, @Req() req: { auth: JwtClaims }) {
     const days = Math.max(1, Math.min(Number(body?.days) || 1, 60));
-    const runs = await this.scheduler.simulateDays(days);
-    this.audit.write({ actorPhone: req.auth.phone, action: 'scheduler.simulate', entity: 'Scheduler', payload: { days } });
-    return { days, runs: runs.slice(-40) };
+    const apply = body?.apply === true;
+    const runs = await this.scheduler.simulateDays(days, { apply });
+    this.audit.write({ actorPhone: req.auth.phone, action: apply ? 'scheduler.simulate_applied' : 'scheduler.simulate', entity: 'Scheduler', payload: { days, apply } });
+    return {
+      days,
+      dryRun: !apply,
+      note: apply
+        ? 'Прогон С ПРИМЕНЕНИЕМ: счета выставлены, заявки отменены, уведомления отправлены'
+        : 'Сухой прогон: счета не выставлены, заявки не отменены, уведомления не отправлены',
+      runs: runs.slice(-40),
+    };
   }
 
   @Post('reset-clock')
@@ -49,10 +61,29 @@ class SchedulerController {
     this.audit.write({ actorPhone: req.auth.phone, action: 'scheduler.reset_clock', entity: 'Scheduler' });
     return this.scheduler.state();
   }
+
+  /**
+   * Снять отметки об отправленном.
+   *
+   * Раньше это делал сброс часов заодно — и следующий тик считал, что
+   * напоминаний не было никогда: заново уходили все напоминания об оплате,
+   * все этапы дунинга и заново выставлялись счета. Теперь отдельной кнопкой
+   * и с предупреждением в ответе, чтобы её нажимали осознанно.
+   */
+  @Post('clear-delivery-marks')
+  @Roles('admin')
+  clearMarks(@Req() req: { auth: JwtClaims }) {
+    const res = this.scheduler.clearDeliveryMarks();
+    this.audit.write({ actorPhone: req.auth.phone, action: 'scheduler.clear_delivery_marks', entity: 'Scheduler', payload: res });
+    return {
+      ...res,
+      warning: 'Следующий тик отправит напоминания заново по всем подходящим заявкам и счетам',
+    };
+  }
 }
 
 @Module({
-  imports: [BillingModule, CrmModule, OrdersModule, PlatformModule],
+  imports: [BillingModule, CrmModule, OrdersModule, PlatformModule, SlaModule],
   controllers: [SchedulerController],
   providers: [SchedulerService],
   exports: [SchedulerService],

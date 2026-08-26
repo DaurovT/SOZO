@@ -114,7 +114,15 @@ export class ClientApiController {
 
     // Заявки из принятых позиций — граф from_defect, стартуют сразу «Утверждена»
     const created: string[] = [];
+    // Позиции, которые нельзя оценить на месте: заявку по ним заводит офис.
+    // Молча пропустить их нельзя — человек должен знать, что решение принято,
+    // а работа ещё не поехала
+    const pendingPricing: Array<{ itemId: string; description: string }> = [];
     for (const item of this.field.acceptedPending(id)) {
+      if (item.estimateTiyin === null) {
+        pendingPricing.push({ itemId: item.id, description: `${item.category}: ${item.description}` });
+        continue;
+      }
       const order = await this.orders.create(
         't0',
         {
@@ -127,14 +135,36 @@ export class ClientApiController {
           organizationId: site.org.id,
           locationId: site.loc.id,
           source: 'app',
-          fromDefect: { actId: id, itemId: item.id },
+          /**
+           * Цена и дата оценки едут из самой позиции акта.
+           *
+           * Без цены заявка создавалась с нулевой сметой, а граф from_defect
+           * не содержит ни составления, ни подтверждения сметы — проставить
+           * её потом было нечем, и каждая заявка из подписанного акта
+           * выполнялась бесплатно. Без даты не работал единственный guard
+           * этого графа: свежесть оценки жёстко проставлялась как true, и
+           * заявка по акту годичной давности уходила в работу по старым ценам.
+           */
+          fromDefect: {
+            actId: id,
+            itemId: item.id,
+            estimatedAt: act.createdAt,
+            estimateTiyin: item.estimateTiyin,
+          },
         },
         by.phone,
       );
       this.field.linkOrder(id, item.id, order.id);
       created.push(order.number);
     }
-    return { act: this.field.get(id), createdOrders: created };
+    return {
+      act: this.field.get(id),
+      createdOrders: created,
+      pendingPricing,
+      note: pendingPricing.length
+        ? `${pendingPricing.length} позиций без оценки на месте — их посчитает офис и заведёт заявки отдельно`
+        : undefined,
+    };
   }
 
   // ---------- Заявки и приёмка ----------

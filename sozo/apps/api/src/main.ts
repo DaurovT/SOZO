@@ -6,6 +6,7 @@ import { localeOf, runWithLocale } from './common/locale';
 import { I18nExceptionFilter, I18nInterceptor } from './common/i18n.interceptor';
 import { DEFAULT_TENANT, runWithDbContext, type DbContext } from './common/db-context';
 import { BuildingsService } from './modules/buildings/buildings.service';
+import { BodySanityPipe } from './common/body-sanity.pipe';
 
 /**
  * Роль запроса в терминах политик базы.
@@ -64,6 +65,11 @@ async function bootstrap() {
   } else {
     app.enableCors({ origin: true }); // dev: админка на vite (5173)
   }
+  /**
+   * Общая проверка тела: NaN, бесконечность и небезопасные целые дальше не
+   * идут. Точечные проверки в модулях остаются — это второй слой, не замена
+   */
+  app.useGlobalPipes(new BodySanityPipe());
   app.useBodyParser('json', { limit: '10mb' }); // загрузка фото dataURL (PRD-05 §9)
   // Веб-карточка заявки работает на обычных формах, без JS: браузер шлёт
   // urlencoded, и без этого разбора «Согласен» на слабом телефоне не нажмётся

@@ -11,6 +11,7 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 import { SchedulingService } from '../scheduling/scheduling.service';
 import { AuditService } from '../platform/audit.service';
 import type { JwtClaims } from '../../common/jwt';
+import { localDateKey } from '../../common/tz';
 
 /**
  * Авто-распределение (ТЗ 7.3, PRD-05 §3).
@@ -39,6 +40,23 @@ export class AssignmentService {
     private readonly crm: CrmService,
     private readonly sched: SchedulingService,
   ) {}
+
+  /**
+   * Нормо-часы заявки по позициям прайса.
+   *
+   * Нужны брони: без длительности слот не посчитать. Позиция без нормы —
+   * час по умолчанию: занять час и ошибиться лучше, чем не занять ничего.
+   */
+  async normHoursFor(orderId: string): Promise<number> {
+    const order = await this.orders.get('t0', orderId);
+    const release = this.pricing.get(order.priceListReleaseId);
+    let sum = 0;
+    for (const line of order.lines) {
+      const item = release.items.find((i) => i.id === line.priceItemId);
+      sum += (item?.normHours ?? 1) * (line.qty || 1);
+    }
+    return sum > 0 ? sum : 1;
+  }
 
   async candidates(orderId: string, date: string): Promise<{ order: { number: string; requiredSkills: string[]; requiresEquipment: boolean; isPaired: boolean }; candidates: Candidate[]; rejected: Candidate[] }> {
     const order = await this.orders.get('t0', orderId);
@@ -160,19 +178,30 @@ class AssignmentController {
     private readonly svc: AssignmentService,
     private readonly orders: OrdersService,
     private readonly audit: AuditService,
+    private readonly sched: SchedulingService,
   ) {}
 
   /** Подбор кандидатов с обоснованием (ручное назначение приоритетнее автоматики, ТЗ 7.3) */
   @Get('candidates')
   candidates(@Query('orderId') orderId: string, @Query('date') date?: string) {
     if (!orderId) throw new BadRequestException({ code: 'ORDER_REQUIRED' });
-    return this.svc.candidates(orderId, date ?? new Date().toISOString().slice(0, 10));
+    return this.svc.candidates(orderId, date ?? localDateKey());
   }
 
-  /** Авто-назначение: берёт лучшего кандидата и выполняет переход assign */
+  /**
+   * Авто-назначение: берёт лучшего кандидата, выполняет переход assign и
+   * ЗАНИМАЕТ его ёмкость.
+   *
+   * Брони не создавалось никогда: единственным вызывающим `book()` во всём
+   * коде был контроллер ручного бронирования. При этом отсев кандидатов
+   * построен именно на загрузке ленты — значит десять авто-назначений
+   * подряд выбирали одного и того же мастера и ставили его на десять заявок
+   * на одно время. Инварианты «не более 80% плана дня» и «нет пересечений»
+   * не срабатывали вовсе.
+   */
   @Post('auto-assign')
   async autoAssign(@Body() b: { orderId: string; date?: string }, @Req() req: { auth: JwtClaims }) {
-    const date = b.date ?? new Date().toISOString().slice(0, 10);
+    const date = b.date ?? localDateKey();
     const res = await this.svc.candidates(b.orderId, date);
     const best = res.candidates[0];
     if (!best) {
@@ -186,18 +215,47 @@ class AssignmentController {
     await this.orders.transition(
       't0',
       b.orderId,
-      { action: 'assign', version: order.version, payload: { withinOrderLimit: true, monthlyLimitOk: true, prepaymentMarked: true } },
+      { action: 'assign', version: order.version },
       req.auth.phone,
-      { masterId: best.masterId, masterName: best.masterName },
+      { masterId: best.masterId, masterName: best.masterName, roles: req.auth.roles },
     );
+
+    /**
+     * Ёмкость занимается сразу после назначения.
+     *
+     * Не получилось — назначение остаётся, но об этом говорим вслух: заявка
+     * без брони видна диспетчеру как «мастер назначен, окно не занято», и
+     * это лучше, чем откатывать назначение или молчать. Молча — это ровно
+     * то, что было.
+     */
+    let booking: unknown = null;
+    let bookingError: string | null = null;
+    try {
+      const normHours = await this.svc.normHoursFor(b.orderId);
+      const startMin = this.sched.firstFreeSlot(best.masterId, date, normHours);
+      if (startMin === null) {
+        bookingError = 'Свободного слота у мастера на эту дату нет — поставьте бронь вручную';
+      } else {
+        booking = this.sched.book({
+          masterId: best.masterId,
+          date,
+          startMin,
+          orderId: order.id,
+          orderNumber: order.number,
+          normHours,
+        });
+      }
+    } catch (e) {
+      bookingError = e instanceof Error ? e.message : String(e);
+    }
     this.audit.write({
       actorPhone: req.auth.phone,
       action: 'order.auto_assigned',
       entity: 'Order',
       entityId: b.orderId,
-      payload: { master: best.masterName, score: best.score, reasons: best.reasons },
+      payload: { master: best.masterName, score: best.score, reasons: best.reasons, booked: !!booking, bookingError },
     });
-    return { assigned: best, alternatives: res.candidates.slice(1, 4) };
+    return { assigned: best, booking, bookingError, alternatives: res.candidates.slice(1, 4) };
   }
 }
 

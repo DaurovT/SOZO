@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { OperatorApiController } from './operator-api.controller';
+import { OperatorScopeGuard } from './operator-scope.guard';
 import { BuildingsModule } from '../buildings/buildings.module';
 import { AccessModule } from '../access/access.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
@@ -14,5 +15,6 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 @Module({
   imports: [BuildingsModule, AccessModule, SubscriptionsModule, OrdersModule, MastersModule, SchedulingModule],
   controllers: [OperatorApiController],
+  providers: [OperatorScopeGuard],
 })
 export class OperatorApiModule {}

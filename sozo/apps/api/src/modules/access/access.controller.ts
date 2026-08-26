@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { permitTransitionSchema } from '@sozo/contracts';
 import { AuthGuard } from '../identity/auth.guard';
+import { AccessScopeGuard } from './access-scope.guard';
 import { AccessService, type CreatePermitDto } from './access.service';
 import type { JwtClaims } from '../../common/jwt';
 
@@ -9,7 +10,7 @@ import type { JwtClaims } from '../../common/jwt';
  * AccessService; контроллер только валидирует вход и подставляет актора.
  */
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, AccessScopeGuard)
 export class AccessController {
   constructor(private readonly access: AccessService) {}
 
@@ -38,8 +39,13 @@ export class AccessController {
       phone: req.auth.phone,
       // роль «согласующий доступ» намеренно узкая (DEV-15 §10.1); head/admin оператора её включают
       isApprover: roles.some((r) => ['approver', 'head', 'admin'].includes(r)),
+      // Принадлежность к объекту проверяет сервис по штату дома: здесь мы
+      // лишь сообщаем, что маршрут пришёл из кабинета, а не из публичной
+      // страницы согласования. Раньше стояло безусловное true, и согласующий
+      // любого оператора подписывал наряд в любом доме
       scopedToBuilding: true,
-      isDispatcher: roles.includes('dispatcher'),
+      isDispatcher: roles.some((r) => r === 'dispatcher' || r === 'admin'),
+      isClient: roles.includes('client'),
     });
   }
 

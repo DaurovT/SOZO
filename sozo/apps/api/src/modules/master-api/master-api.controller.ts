@@ -3,6 +3,7 @@ import { zoneLabel, resourceLabelLower } from '@sozo/contracts';
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -16,6 +17,8 @@ import {
 import { masterShare, uuidv7 } from '@sozo/kernel';
 import { MasterGuard, type MasterRequest } from './master.guard';
 import { MasterWalkthroughController } from './master-walkthrough.controller';
+import { MasterOpsController } from './master-ops.controller';
+import { SyncLogService } from './sync-log.service';
 import { MasterOffersService, DECLINE_REASONS, OFFER_TTL_SECONDS } from './offers.service';
 import { MasterPhotoService } from './photo.service';
 import { NotificationsService } from './notifications.service';
@@ -30,6 +33,7 @@ import { CrmService } from '../crm/crm.service';
 import { MasterOpsService } from './master-ops.service';
 import { FieldService } from '../field/field.service';
 import { tr } from '../../common/locale';
+import { localDateKey } from '../../common/tz';
 
 
 /** Действия, доступные мастеру. Всё остальное — диспетчер и система (PRD-02 §4) */
@@ -104,6 +108,8 @@ export class MasterApiController {
     private readonly crm: CrmService,
     private readonly access: AccessService,
     private readonly walkthrough: MasterWalkthroughController,
+    private readonly opsCtrl: MasterOpsController,
+    private readonly syncLog: SyncLogService,
   ) {}
 
   // ---------- Профиль и смена (M-01, M-02, M-33) ----------
@@ -164,7 +170,7 @@ export class MasterApiController {
   @Get('today')
   async today(@Query('date') date: string | undefined, @Req() req: MasterRequest) {
     const m = req.master!;
-    const day = date ?? new Date().toISOString().slice(0, 10);
+    const day = date ?? localDateKey();
     const all = await this.orders.list('t0');
     const mine = all.filter((o) => (o.masterId === m.id || o.helperId === m.id) && ACTIVE_STATUSES.includes(o.status));
     const lane = this.scheduling.lane(m.id, day);
@@ -177,7 +183,7 @@ export class MasterApiController {
     const closedToday = all.filter(
       (o) => o.masterId === m.id && ['closed', 'rated'].includes(o.status) && (o.statusLog.find((l) => l.to === 'closed')?.at.toString().slice(0, 10) ?? '') === day,
     );
-    const dayEarnedTiyin = closedToday.reduce((s, o) => s + Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, 550n)), 0);
+    const dayEarnedTiyin = closedToday.reduce((s, o) => s + Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(o)))), 0);
 
     // Долг по наличным сверх лимита снимает с линии — единственное действие тогда «Внести» (ТЗ 8.2)
     const cashLimitTiyin = 200_000_000;
@@ -247,6 +253,24 @@ export class MasterApiController {
   @Post('offers/:id/accept')
   async acceptOffer(@Param('id') id: string, @Body() b: { lat?: number; lng?: number }, @Req() req: MasterRequest) {
     const m = req.master!;
+    /**
+     * Заявку мог назначить диспетчер, пока оффер висел у мастера.
+     *
+     * Гонка двух офферов между собой закрыта, а вот проверки «заявку уже
+     * назначили вручную» не было: условие `allowedActions.includes('assign')`
+     * просто не выполнялось, ошибка не возвращалась, и метод отдавал полную
+     * карточку. Мастер B жал «Принять», получал 200, адрес и телефон клиента
+     * чужой заявки — и ехал на тот же адрес.
+     */
+    const pending = this.offersSvc.get(id);
+    const before = await this.orders.record('t0', pending.orderId).catch(() => null);
+    if (before?.masterId && before.masterId !== m.id) {
+      this.offersSvc.revokeOffer(id, 'Заявку назначил диспетчер');
+      throw new ConflictException({
+        code: 'ORDER_ALREADY_ASSIGNED',
+        message: 'Заявку уже назначили другому мастеру — оффер снят',
+      });
+    }
     const offer = this.offersSvc.accept(id, m.id);
     const order = await this.orders.get('t0', offer.orderId);
     // Назначение проводим по графу — assign валиден из estimated/approved/new в зависимости от типа
@@ -330,6 +354,9 @@ export class MasterApiController {
       id,
       { action, version: b?.version ?? order.version, reason: b?.reason, clientOpUuid: b?.clientOpUuid, payload } as never,
       m.phone,
+      // Мастер сообщает факты с объекта (чек-лист, представитель, отказ от
+      // восстановления). Санкции диспетчера и модерация ему недоступны
+      { roles: ['master'] },
     );
 
     // Пауза — суб-состояние: статус не меняется, фиксируем причину и время
@@ -374,7 +401,7 @@ export class MasterApiController {
   @Post('orders/:id/photos')
   async photo(
     @Param('id') id: string,
-    @Body() b: { stage?: string; dataUrl?: string; lat?: number; lng?: number; note?: string; clientOpUuid?: string },
+    @Body() b: { stage?: string; dataUrl?: string; data?: string; lat?: number; lng?: number; note?: string; clientOpUuid?: string },
     @Req() req: MasterRequest,
   ) {
     const m = req.master!;
@@ -383,16 +410,33 @@ export class MasterApiController {
     const r = await this.photos.save(order, {
       stage: b?.stage ?? 'before',
       dataUrl: b?.dataUrl,
+      data: b?.data,
       note: b?.note,
       geo,
       clientOpUuid: b?.clientOpUuid,
       masterName: m.fullName,
     });
     if (!r.duplicate) this.offersSvc.trackGeo(m.id, `photo.${r.stage}`, geo, order.id);
-    return { ok: true, duplicate: r.duplicate, stage: r.stage, count: r.count, geoMissing: r.geoMissing };
+    // `id` и `photoId` — одно и то же поле под двумя именами: приложение
+    // читает `id`, наряд ссылается на `photoId`, и обоих в ответе не было
+    return { ok: true, id: r.id, photoId: r.id, duplicate: r.duplicate, stage: r.stage, count: r.count, geoMissing: r.geoMissing };
   }
 
-  /** M-14/M-15 смета: позиции из активного релиза, цена не редактируется вручную (ТЗ 3.7) */
+  /**
+   * M-14/M-15 смета: позиции из релиза заявки, цена не редактируется вручную (ТЗ 3.7).
+   *
+   * Три вещи здесь были неправильны и все три про деньги:
+   *
+   *   · принадлежность проверялась, а статус — нет: смету можно было
+   *     переписать на уже закрытой заявке;
+   *   · релиз брался АКТИВНЫЙ и присваивался заявке, уничтожая заморозку цен
+   *     годового договора — организация подписывала фиксированный прайс и
+   *     получала пересчёт по текущему;
+   *   · наценка «срочно» была захардкожена как 1.3 мимо параметра и, главное,
+   *     записывалась в БАЗУ. Основной сервис намеренно держит базу без
+   *     наценки — иначе она молча увеличивает и долю мастера, а это отдельное
+   *     решение владельца, а не следствие галочки в приложении.
+   */
   @Post('orders/:id/quote')
   async quote(
     @Param('id') id: string,
@@ -401,7 +445,20 @@ export class MasterApiController {
   ) {
     const m = req.master!;
     const order = await this.mineOrThrow(id, m.id);
-    const release = this.pricing.active();
+    const QUOTABLE = ['assigned', 'master_departed', 'in_progress', 'addwork_approval', 'estimated', 'new'];
+    if (!QUOTABLE.includes(order.status)) {
+      throw new BadRequestException({
+        code: 'QUOTE_STAGE_INVALID',
+        message: `Смету составляют до завершения работ; заявка в статусе «${order.status}»`,
+      });
+    }
+    // Релиз заявки, а не текущий: у годового договора цены заморожены
+    let release;
+    try {
+      release = this.pricing.get(order.priceListReleaseId);
+    } catch {
+      release = this.pricing.active();
+    }
     const lines = (b?.lines ?? []).map((l) => {
       const item = release.items.find((i) => i.id === l.priceItemId);
       if (!item) throw new BadRequestException({ code: 'PRICE_ITEM_UNKNOWN', message: 'Позиция отсутствует в активном релизе прайса' });
@@ -425,19 +482,25 @@ export class MasterApiController {
     });
     if (!lines.length) throw new BadRequestException({ code: 'LINES_REQUIRED', message: 'Добавьте хотя бы одну позицию' });
 
-    const surcharge = b?.urgent ? 1.3 : 1; // «Срочно» +30% (параметр каталога)
-    const from = Math.round(lines.reduce((s, l) => s + l.priceFromTiyin * l.qty, 0) * surcharge);
-    const to = Math.round(lines.reduce((s, l) => s + l.priceToTiyin * l.qty, 0) * surcharge);
+    // Наценка «Срочно» — из параметра, а не из литерала, и только к итогу
+    const urgentPercent = b?.urgent ? this.orders.urgentSurchargePercent() : 0;
+    const baseFrom = lines.reduce((s, l) => s + l.priceFromTiyin * l.qty, 0);
+    const baseTo = lines.reduce((s, l) => s + l.priceToTiyin * l.qty, 0);
+    const withUrgency = (v: number) => v + Math.floor((v * urgentPercent) / 100);
+    const from = withUrgency(baseFrom);
+    const to = withUrgency(baseTo);
     order.lines = lines;
-    order.baseFromTiyin = from;
-    order.baseToTiyin = to;
+    // База — без наценки: от неё считается доля мастера, и наценка не должна
+    // молча её увеличивать
+    order.baseFromTiyin = baseFrom;
+    order.baseToTiyin = baseTo;
     order.totalFromTiyin = from;
     order.totalToTiyin = to;
-    order.priceListReleaseId = release.id;
+    order.urgentSurchargePercent = urgentPercent || undefined;
     order.quotes.push({
       kind: 'initial',
       amountTiyin: from,
-      note: `Смета мастера${b?.urgent ? ' · срочно +30%' : ''}${b?.note ? ` · ${b.note}` : ''}`,
+      note: `Смета мастера${urgentPercent ? ` · срочно +${urgentPercent}%` : ''}${b?.note ? ` · ${b.note}` : ''}`,
       at: new Date().toISOString(),
     });
     this.orders.touchOrder();
@@ -446,7 +509,7 @@ export class MasterApiController {
       lines,
       totalFromTiyin: from,
       totalToTiyin: to,
-      masterShareFromTiyin: Number(masterShare(BigInt(from), 1000n, 550n)),
+      masterShareFromTiyin: Number(masterShare(BigInt(baseFrom), 1000n, BigInt(this.orders.masterSharePermilleFor(order)))),
       next: 'Отправьте смету клиенту: подтверждение в приложении, звонком диспетчера или подписью офлайн',
     };
   }
@@ -583,7 +646,7 @@ export class MasterApiController {
     const startOfWeek = new Date();
     startOfWeek.setHours(0, 0, 0, 0);
     startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7));
-    const shareOf = (o: OrderRecord) => Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, 550n));
+    const shareOf = (o: OrderRecord) => Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(o))));
     const week = mine.filter((o) => new Date(o.createdAt).getTime() >= startOfWeek.getTime());
     return {
       accruedTiyin: payout?.accruedTiyin ?? 0,
@@ -633,9 +696,76 @@ export class MasterApiController {
   }
 
   /**
-   * M-40 выгрузка офлайн-очереди. Операции применяются строго по порядку;
-   * первая упавшая останавливает цепочку по своей заявке — иначе фото «после»
-   * прилетит раньше начала работ. Идемпотентность — по clientOpUuid.
+   * Список видов, которые умеет применять сервер.
+   *
+   * Нужен прогону: он читает виды прямо из исходников приложения и сверяет с
+   * этим списком. Расхождение здесь — это потерянная работа мастера, и
+   * поймать его тестом дешевле, чем письмом из поля.
+   */
+  @Get('sync-kinds')
+  syncKinds() {
+    return { kinds: MasterApiController.SYNC_KINDS };
+  }
+
+  /**
+   * Виды операций офлайн-очереди, которые умеет применять сервер.
+   *
+   * Отдаётся наружу ради прогона, который читает виды прямо из исходников
+   * приложения и сверяет с этим списком. Ровно такой пятистрочной проверки не
+   * было — и из-за этого больше половины видов очереди сервер не знал вовсе:
+   * `addwork`, `conservation`, `delay`, `spare_tiers`, `recommendation`,
+   * `asset`, `shopping_list`, `payment`, `permit_*`, `shutdown_*`, `branch_*`
+   * получали `KIND_UNKNOWN`. Мастер вносил доп-работу в подвале, видел
+   * «уйдёт при связи», а при появлении сети операция вставала с ошибкой — и
+   * единственной кнопкой в интерфейсе было «убрать из очереди», то есть
+   * удалить собственную работу за день.
+   */
+  static readonly SYNC_KINDS = [
+    'photo',
+    'action',
+    'quote',
+    'material',
+    'acceptance',
+    'observation',
+    'walk_zone',
+    'walk_finish',
+    'addwork',
+    'conservation',
+    'delay',
+    'spare_tiers',
+    'recommendation',
+    'asset',
+    'shopping_list',
+    'payment',
+    /**
+     * «Нет доступа» приходит под двумя именами, и оба живут.
+     *
+     * Экран ветвлений собирает вид интерполяцией — `branch_${kind.name}`, — а
+     * `BranchKind.noAccess` даёт `branch_noAccess`. Онлайн-метод при этом
+     * называется `noAccess`, и по нему вид ошибочно назвали `no_access`.
+     * Переименовать в приложении нельзя: очереди с этим именем уже лежат на
+     * телефонах у мастеров, и обновление сделало бы их операции неизвестными
+     * задним числом — ровно та потеря данных, ради устранения которой всё это
+     * и делается. Принимаем оба.
+     */
+    'no_access',
+    'branch_noAccess',
+    'branch_clientUnavailable',
+    'branch_unsafe',
+    'branch_cantGo',
+    'permit_open',
+    'permit_close',
+    'shutdown_start',
+    'shutdown_restore',
+  ] as const;
+
+  /**
+   * M-40 выгрузка офлайн-очереди.
+   *
+   * Операции применяются строго по порядку; первая упавшая останавливает
+   * цепочку по своей заявке — иначе фото «после» прилетит раньше начала
+   * работ. Идемпотентность — по `clientOpUuid`, и теперь для всех видов
+   * сразу (см. SyncLogService), а не только для фото и действий.
    */
   @Post('sync')
   async sync(
@@ -657,46 +787,33 @@ export class MasterApiController {
         results.push({ clientOpUuid: op.clientOpUuid, status: 'skipped', code: 'CHAIN_BLOCKED', message: 'Предыдущая операция по заявке не прошла' });
         continue;
       }
+      // Тот же ключ — тот же результат. Приложение, потеряв ответ, обязано
+      // отправить пакет заново, и второй материал заводиться не должен
+      const seen = this.syncLog.seen(m.id, op.clientOpUuid);
+      if (seen) {
+        results.push({ clientOpUuid: op.clientOpUuid, status: 'duplicate', code: seen.code, message: seen.message });
+        continue;
+      }
       const body = { ...(op.payload ?? {}), clientOpUuid: op.clientOpUuid };
       try {
-        if (op.kind === 'photo') {
-          const r = await this.photo(op.orderId, body as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: (r as { duplicate?: boolean }).duplicate ? 'duplicate' : 'applied' });
-        } else if (op.kind === 'action') {
-          await this.act(op.orderId, body as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'quote') {
-          await this.quote(op.orderId, op.payload as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'material') {
-          await this.material(op.orderId, op.payload as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'acceptance') {
-          await this.acceptance(op.orderId, op.payload as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'observation') {
-          // orderId в этих операциях несёт объект: обход не привязан к заявке
-          await this.walkthrough.addObservation(op.orderId, op.payload as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'walk_zone') {
-          this.walkthrough.passZone((op.payload as { walkId: string }).walkId, op.payload as never, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else if (op.kind === 'walk_finish') {
-          this.walkthrough.finishWalk((op.payload as { walkId: string }).walkId, req);
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
-        } else {
-          results.push({ clientOpUuid: op.clientOpUuid, status: 'failed', code: 'KIND_UNKNOWN' });
-          blocked.add(chainKey);
-        }
+        await this.applySyncOp(op, body, req);
+        results.push({ clientOpUuid: op.clientOpUuid, status: 'applied' });
+        this.syncLog.remember({ clientOpUuid: op.clientOpUuid, masterId: m.id, kind: op.kind, orderId: op.orderId, at: new Date().toISOString(), status: 'applied' });
       } catch (e) {
         const err = e as { response?: { code?: string; message?: string }; message?: string };
-        results.push({
-          clientOpUuid: op.clientOpUuid,
-          status: 'failed',
-          code: err.response?.code ?? 'ERROR',
-          message: err.response?.message ?? err.message,
-        });
+        const code = err.response?.code ?? 'ERROR';
+        const message = err.response?.message ?? err.message;
+        results.push({ clientOpUuid: op.clientOpUuid, status: 'failed', code, message });
         blocked.add(chainKey);
+        /**
+         * Неприменимую операцию запоминаем тоже, но только ту, повтор которой
+         * ничего не изменит: неизвестный вид или несуществующая заявка. Отказ
+         * по состоянию (не тот статус, не хватает фото) не запоминаем — такой
+         * повтор как раз имеет смысл.
+         */
+        if (code === 'KIND_UNKNOWN' || code === 'ORDER_NOT_FOUND') {
+          this.syncLog.remember({ clientOpUuid: op.clientOpUuid, masterId: m.id, kind: op.kind, orderId: op.orderId, at: new Date().toISOString(), status: 'failed', code, message });
+        }
       }
     }
     this.audit.write({
@@ -707,6 +824,132 @@ export class MasterApiController {
       payload: { total: ops.length, applied: results.filter((r) => r.status === 'applied').length, failed: results.filter((r) => r.status === 'failed').length },
     });
     return { results, serverTime: new Date().toISOString() };
+  }
+
+  /**
+   * Применение одной операции очереди.
+   *
+   * Маршруты один в один с онлайн-путями экранов: очередь — это тот же
+   * запрос, только отложенный, и расхождение между «сделал при связи» и
+   * «сделал в подвале» недопустимо по определению.
+   */
+  private async applySyncOp(
+    op: { clientOpUuid: string; orderId: string; kind: string; payload: Record<string, unknown> },
+    body: Record<string, unknown>,
+    req: MasterRequest,
+  ): Promise<void> {
+    const p = (op.payload ?? {}) as Record<string, unknown>;
+    switch (op.kind) {
+      case 'photo':
+        await this.photo(op.orderId, body as never, req);
+        return;
+      case 'action': {
+        /**
+         * Версия перебазируется на текущую.
+         *
+         * Приложение кладёт в payload версию заявки на момент постановки в
+         * очередь и офлайн обновить её не может — ответа нет. Поэтому все
+         * накопленные действия несут ОДИН номер: применялось первое, второе
+         * падало конфликтом версий, третье пропускалось как заблокированное,
+         * и работа мастера за день не доезжала.
+         *
+         * Внутри очереди оптимистическая блокировка не нужна и вредна:
+         * порядок операций по заявке строгий, повтор ловится ключом
+         * операции, а конкурировать здесь не с кем — это одна и та же лента
+         * одного и того же мастера. Строгая сверка версии остаётся на
+         * онлайн-переходах, где карточка у мастера свежая.
+         */
+        const order = await this.mineOrThrow(op.orderId, req.master!.id);
+        await this.act(op.orderId, { ...body, version: order.version } as never, req);
+        return;
+      }
+      case 'quote':
+        await this.quote(op.orderId, op.payload as never, req);
+        return;
+      case 'material':
+        await this.material(op.orderId, body as never, req);
+        return;
+      case 'acceptance':
+        await this.acceptance(op.orderId, op.payload as never, req);
+        return;
+      case 'observation':
+        // orderId в этих операциях несёт объект: обход не привязан к заявке
+        await this.walkthrough.addObservation(op.orderId, op.payload as never, req);
+        return;
+      case 'walk_zone':
+        this.walkthrough.passZone((op.payload as { walkId: string }).walkId, op.payload as never, req);
+        return;
+      case 'walk_finish':
+        this.walkthrough.finishWalk((op.payload as { walkId: string }).walkId, req);
+        return;
+
+      // ---- виды, которых сервер не знал вовсе (находка M1) ----
+      case 'addwork':
+        await this.opsCtrl.addwork(op.orderId, op.payload as never, req);
+        return;
+      case 'conservation':
+        await this.opsCtrl.conservation(op.orderId, op.payload as never, req);
+        return;
+      case 'delay':
+        await this.opsCtrl.delay(op.orderId, op.payload as never, req);
+        return;
+      case 'no_access':
+      case 'branch_noAccess':
+        await this.opsCtrl.noAccess(op.orderId, op.payload as never, req);
+        return;
+      case 'spare_tiers':
+        await this.opsCtrl.spareTiers(op.orderId, op.payload as never, req);
+        return;
+      case 'recommendation':
+        await this.opsCtrl.recommend(op.orderId, op.payload as never, req);
+        return;
+      case 'asset':
+        await this.opsCtrl.addAsset(op.orderId, op.payload as never, req);
+        return;
+      case 'shopping_list':
+        await this.opsCtrl.shoppingList(op.orderId, op.payload as never, req);
+        return;
+      case 'payment':
+        await this.opsCtrl.payment(op.orderId, op.payload as never, req);
+        return;
+      case 'branch_clientUnavailable':
+        await this.opsCtrl.clientUnavailable(op.orderId, op.payload as never, req);
+        return;
+      case 'branch_unsafe':
+        await this.opsCtrl.abortUnsafe(op.orderId, op.payload as never, req);
+        return;
+      case 'branch_cantGo':
+        await this.opsCtrl.cantGo(op.orderId, op.payload as never, req);
+        return;
+      case 'permit_open':
+      case 'permit_close': {
+        const permitId = String(p.permitId ?? '');
+        if (!permitId) throw new BadRequestException({ code: 'PERMIT_REQUIRED', message: 'В операции наряда нет идентификатора' });
+        this.access.transition(
+          't0',
+          permitId,
+          {
+            action: op.kind === 'permit_open' ? 'open' : 'close',
+            clientOpUuid: op.clientOpUuid,
+            photoId: typeof p.photoId === 'string' ? p.photoId : undefined,
+            zoneSecured: p.zoneSecured === true,
+          },
+          { phone: req.master!.phone, isApprover: false, scopedToBuilding: true },
+        );
+        return;
+      }
+      case 'shutdown_start':
+        this.access.startShutdown('t0', String(p.shutdownId ?? ''));
+        return;
+      case 'shutdown_restore':
+        this.access.restoreShutdown('t0', String(p.shutdownId ?? ''));
+        return;
+      default:
+        throw new BadRequestException({
+          code: 'KIND_UNKNOWN',
+          message: `Сервер не знает вид операции «${op.kind}» — обновите приложение`,
+        });
+    }
   }
 
   // ---------- Внутреннее ----------
@@ -798,7 +1041,7 @@ export class MasterApiController {
       description: o.description,
       totalFromTiyin: o.totalFromTiyin,
       totalToTiyin: o.totalToTiyin,
-      myShareTiyin: Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, 550n)),
+      myShareTiyin: Number(masterShare(BigInt(o.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(o)))),
       role: o.helperId === masterId ? 'helper' : 'lead',
       arrivedAt: o.arrivedAt,
       paused: !!o.pause,

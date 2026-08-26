@@ -11,6 +11,7 @@ import { MasterWalkthroughController } from './master-walkthrough.controller';
 import { MasterOutputController } from './master-output.controller';
 import { MasterMaintenanceController } from './master-maintenance.controller';
 import { MasterOpsController } from './master-ops.controller';
+import { SyncLogService } from './sync-log.service';
 import { MasterOpsService } from './master-ops.service';
 import { MasterPhotoService } from './photo.service';
 import { MasterResourcesController } from './master-resources.controller';
@@ -88,7 +89,7 @@ class DispatchOffersController {
           urgency: order.urgency,
           estimateFromTiyin: order.totalFromTiyin,
           estimateToTiyin: order.totalToTiyin,
-          masterShareFromTiyin: Number(masterShare(BigInt(order.baseFromTiyin || 0), 1000n, 550n)),
+          masterShareFromTiyin: Number(masterShare(BigInt(order.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(order)))),
           isPaired: !!order.helperId,
           kind: 'express',
           ttlSeconds: EXPRESS_TTL_SECONDS,
@@ -120,7 +121,7 @@ class DispatchOffersController {
         urgency: order.urgency,
         estimateFromTiyin: order.totalFromTiyin,
         estimateToTiyin: order.totalToTiyin,
-        masterShareFromTiyin: Number(masterShare(BigInt(order.baseFromTiyin || 0), 1000n, 550n)),
+        masterShareFromTiyin: Number(masterShare(BigInt(order.baseFromTiyin || 0), 1000n, BigInt(this.orders.masterSharePermilleFor(order)))),
         isPaired: !!order.helperId,
         kind: 'personal',
         ttlSeconds: OFFER_TTL_SECONDS,
@@ -140,7 +141,7 @@ class DispatchOffersController {
   ],
   controllers: [AdminMasterOpsController, MasterApiController, MasterWalkthroughController, MasterOpsController, OnboardingController, AdminOnboardingController, AdminReferralsController, MasterResourcesController, DispatchOffersController, MasterOutputController, MasterMaintenanceController,
   ],
-  providers: [MasterWalkthroughController, MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
+  providers: [MasterWalkthroughController, MasterOpsController, SyncLogService, MasterOffersService, MasterOpsService, MasterPhotoService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService, MasterGuard, OnboardingGuard],
   exports: [MasterOffersService, MasterOpsService, OnboardingService, ResourcesService, RatingService, NotificationsService, ReferralsService],
 })
 export class MasterApiModule {}

@@ -34,6 +34,18 @@ export interface PriceItemRec {
 
 export interface ReleaseRec {
   id: string;
+  /**
+   * Владелец релиза.
+   *
+   * Записи проставляли `tenantId`, а чтения — нет: `get`, `list`, `active` и
+   * `syncCatalogNames` ходили по плоскому списку без фильтра. `active()`
+   * возвращал первый релиз со статусом active любого владельца, а
+   * `activate()` архивировал чужой активный релиз — после чего у соседа
+   * NO_ACTIVE_RELEASE на создании заявок, а созданные до этого заявки
+   * посчитаны по чужим ценам. RLS на price_list_release и price_item тоже
+   * нет (см. миграцию m40_rls_billing), так что прикрыть это было нечем.
+   */
+  tenantId: string;
   number: number;
   status: 'draft' | 'scheduled' | 'active' | 'archived';
   coeffs: Record<string, unknown>;
@@ -70,6 +82,7 @@ export class PricingService implements OnModuleInit {
     // Релиз №1 — импорт из «Каталог_услуг_и_прайсы_v33.xlsx» (M0-E3-S4)
     this.releases.push({
       id: uuidv7(),
+      tenantId: systemContext().tenantId,
       number: 1,
       status: 'active',
       coeffs: catalog.coeffs as Record<string, unknown>,
@@ -95,8 +108,11 @@ export class PricingService implements OnModuleInit {
           this.releases.length = 0;
           // Позиции, заведённые до появления колонки, приходят без неё
           this.releases.push(
+            // Релизы, записанные до появления владельца, достаются системному:
+            // так они остаются видимыми, а не исчезают из всех выборок разом
             ...((d ?? []) as ReleaseRec[]).map((r) => ({
               ...r,
+              tenantId: r.tenantId ?? systemContext().tenantId,
               items: r.items.map((i) => ({ ...i, nameUz: i.nameUz ?? null })),
             })),
           );
@@ -108,6 +124,17 @@ export class PricingService implements OnModuleInit {
 
   /** До первой загрузки в памяти лежит сид из конструктора, а не данные базы */
   private loaded = false;
+
+  /** Владелец текущего запроса. Вне запроса — системный контекст */
+  private tenant(): string {
+    return (currentDbContext() ?? systemContext()).tenantId;
+  }
+
+  /** Релизы этого владельца — единственный список, по которому вообще можно искать */
+  private own(): ReleaseRec[] {
+    const t = this.tenant();
+    return this.releases.filter((r) => r.tenantId === t);
+  }
 
   async onModuleInit(): Promise<void> {
     if (!this.prisma.enabled) {
@@ -129,6 +156,7 @@ export class PricingService implements OnModuleInit {
     for (const r of rows) {
       this.releases.push({
         id: r.id,
+        tenantId: r.tenantId,
         number: r.number,
         status: r.status as ReleaseRec['status'],
         coeffs: (r.coeffsJson ?? {}) as Record<string, unknown>,
@@ -183,7 +211,10 @@ export class PricingService implements OnModuleInit {
    * потерянную или задвоенную строку прайса.
    */
   private async saveRelease(r: ReleaseRec): Promise<void> {
-    const tenantId = (currentDbContext() ?? systemContext()).tenantId;
+    // Владелец берётся из самой записи, а не из окружения запроса: релиз
+    // может сохраняться фоном (активация по расписанию, перенос состояния),
+    // и тогда окружение принадлежит уже не ему
+    const tenantId = r.tenantId || (currentDbContext() ?? systemContext()).tenantId;
     await this.prisma.withContext(async (tx) => {
       await tx.priceListRelease.upsert({
         where: { id: r.id },
@@ -264,30 +295,33 @@ export class PricingService implements OnModuleInit {
   }
 
   list() {
-    return this.releases.map(({ items, ...r }) => ({ ...r, itemsCount: items.length }));
+    return this.own().map(({ items, ...r }) => ({ ...r, itemsCount: items.length }));
   }
 
   get(id: string): ReleaseRec {
-    const r = this.releases.find((x) => x.id === id);
+    const r = this.own().find((x) => x.id === id);
     if (!r) throw new NotFoundException({ code: 'RELEASE_NOT_FOUND' });
     return r;
   }
 
   active(): ReleaseRec {
-    const r = this.releases.find((x) => x.status === 'active');
+    const r = this.own().find((x) => x.status === 'active');
     if (!r) throw new NotFoundException({ code: 'NO_ACTIVE_RELEASE' });
     return r;
   }
 
   /** Новый черновик — всегда копия активного релиза (включая откат, ТЗ 3.7) */
   createDraft(): ReleaseRec {
-    if (this.releases.some((r) => r.status === 'draft')) {
+    if (this.own().some((r) => r.status === 'draft')) {
       throw new BadRequestException({ code: 'DRAFT_EXISTS', message: 'Черновик уже существует — активируйте или удалите его' });
     }
     const src = this.active();
     const draft: ReleaseRec = {
       id: uuidv7(),
-      number: Math.max(...this.releases.map((r) => r.number)) + 1,
+      tenantId: this.tenant(),
+      // Номер — по своим релизам: сквозная нумерация через владельцев
+      // означала бы, что сосед видит, сколько релизов выпустили не у него
+      number: Math.max(0, ...this.own().map((r) => r.number)) + 1,
       status: 'draft',
       coeffs: { ...src.coeffs },
       items: src.items.map((i) => ({ ...i, id: uuidv7() })),
@@ -311,13 +345,27 @@ export class PricingService implements OnModuleInit {
       const name = String(raw.name ?? raw['Услуга'] ?? '').trim();
       const from = Number(raw.priceFromSoums ?? raw['B2C от'] ?? raw['B2C от (сум)']);
       const to = Number(raw.priceToSoums ?? raw['B2C до'] ?? raw['B2C до (сум)'] ?? from);
+      /**
+       * Сумы → тийины без плавающей точки и без верхней границы.
+       *
+       * `Math.round(x * 100)` на строке «1e400» даёт Infinity, которая
+       * доходила до `BigInt()` при записи, ошибка гасилась в зеркале, и
+       * черновик расходился с базой молча. Потолок в миллиард сумов —
+       * заведомо выше любой позиции прайса и заведомо ниже переполнения.
+       */
+      const MAX_SOUMS = 1_000_000_000;
+      const toTiyin = (v: number) => Math.round(v * 100);
       const normHours = raw.normHours == null || raw.normHours === '' ? null : Number(raw.normHours);
       if (!name) {
         errors.push({ row: idx + 1, reason: 'пустое наименование' });
         return;
       }
-      if (!Number.isFinite(from) || from <= 0) {
+      if (!Number.isFinite(from) || from <= 0 || from > MAX_SOUMS) {
         errors.push({ row: idx + 1, reason: `цена «от» некорректна: ${String(raw.priceFromSoums ?? raw['B2C от'])}` });
+        return;
+      }
+      if (Number.isFinite(to) && to > MAX_SOUMS) {
+        errors.push({ row: idx + 1, reason: `цена «до» выше допустимой: ${String(raw.priceToSoums ?? raw['B2C до'])}` });
         return;
       }
       if (Number.isFinite(to) && to < from) {
@@ -326,8 +374,8 @@ export class PricingService implements OnModuleInit {
       }
       const existing = Number.isFinite(num) ? draft.items.find((i) => i.num === num) : draft.items.find((i) => i.name === name);
       if (existing) {
-        existing.priceFromTiyin = Math.round(from * 100);
-        existing.priceToTiyin = Math.round((Number.isFinite(to) ? to : from) * 100);
+        existing.priceFromTiyin = toTiyin(from);
+        existing.priceToTiyin = toTiyin(Number.isFinite(to) ? to : from);
         if (normHours !== null && Number.isFinite(normHours)) existing.normHours = normHours;
         if (raw.category) existing.category = String(raw.category);
       } else {
@@ -341,8 +389,8 @@ export class PricingService implements OnModuleInit {
           // вместо честного «не переведено»
           nameUz: raw.nameUz ? String(raw.nameUz).trim() : null,
           unit: String(raw.unit ?? raw['Ед. изм.'] ?? 'шт'),
-          priceFromTiyin: Math.round(from * 100),
-          priceToTiyin: Math.round((Number.isFinite(to) ? to : from) * 100),
+          priceFromTiyin: toTiyin(from),
+          priceToTiyin: toTiyin(Number.isFinite(to) ? to : from),
           normHours: normHours !== null && Number.isFinite(normHours) ? normHours : null,
           requiredSkills: [],
           requiresEquipment: false,
@@ -389,7 +437,7 @@ export class PricingService implements OnModuleInit {
 
   /** Отдаём переводы активного релиза слою локализации */
   syncCatalogNames(): void {
-    const act = this.releases.find((r) => r.status === 'active');
+    const act = this.own().find((r) => r.status === 'active');
     registerCatalogNames((act?.items ?? []).filter((i) => !!i.nameUz).map((i) => [i.name, i.nameUz!] as [string, string]));
   }
 

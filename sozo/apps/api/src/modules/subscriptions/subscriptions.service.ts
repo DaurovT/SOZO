@@ -5,6 +5,7 @@ import { StateStore } from '../../common/state-store';
 import { PrismaService } from '../../common/prisma.service';
 import { PgMirror, APP_TENANT } from '../../common/pg-mirror';
 import { EventBus } from '../../common/event-bus';
+import { localMonthKey } from '../../common/tz';
 
 export interface SubscriptionRecord {
   id: string;
@@ -29,6 +30,15 @@ export interface OperatorLedgerRow {
   kind: 'subscription' | 'claim' | 'service_fee';
   amountTiyin: number;
   note: string;
+  /**
+   * Период, за который начислено — «YYYY-MM».
+   *
+   * Начисление подписки было чистым «посчитать и записать»: ни проверки «за
+   * этот период уже начислено», ни продвижения периода, ни ключа
+   * идемпотентности. Двойной вызов давал две строки по 300 000 000 тийин, а
+   * реестр append-only — откатить нечем.
+   */
+  period?: string;
   at: string;
 }
 
@@ -144,6 +154,8 @@ export class SubscriptionsService implements OnModuleInit {
       (e) => {
         this.addLedger('t0', e.operatorOrgId, 'service_fee', e.amountTiyin, `Сбор по заявке ${e.number} (${e.bps / 100}%)`);
       },
+      'subscriptions.service_fee',
+      { retry: true },
     );
   }
 
@@ -195,16 +207,27 @@ export class SubscriptionsService implements OnModuleInit {
     return rec;
   }
 
-  /** Начисление за период. Free не начисляется. */
-  charge(tenantId: string, operatorOrgId: string): number {
+  /**
+   * Начисление за период. Free не начисляется.
+   *
+   * Идемпотентно по периоду: повторный вызов за тот же месяц возвращает уже
+   * начисленную сумму и второй строки не создаёт. Реестр append-only —
+   * ошибиться в нём дороже, чем в чём угодно другом: откатить нечем.
+   */
+  charge(tenantId: string, operatorOrgId: string, period?: string): number {
     const sub = this.get(tenantId, operatorOrgId);
     if (!sub) throw new NotFoundException('Подписка не найдена');
     if (sub.plan === 'free') return 0;
+    const key = period ?? localMonthKey();
+    const already = this.ledger.find(
+      (r) => r.operatorOrgId === operatorOrgId && r.kind === 'subscription' && r.period === key,
+    );
+    if (already) return already.amountTiyin;
     const amount = Number(
       subscriptionCharge(sub.billingUnit, BigInt(sub.priceTiyin), BigInt(sub.unitsBilled)),
     );
-    this.addLedger(tenantId, operatorOrgId, 'subscription', amount, `Подписка ${sub.plan}, ${sub.billingUnit}`);
-    this.bus.publish('subscription.charged', { operatorOrgId, amountTiyin: amount });
+    this.addLedger(tenantId, operatorOrgId, 'subscription', amount, `Подписка ${sub.plan}, ${sub.billingUnit} за ${key}`, key);
+    this.bus.publish('subscription.charged', { operatorOrgId, amountTiyin: amount, period: key });
     return amount;
   }
 
@@ -232,6 +255,7 @@ export class SubscriptionsService implements OnModuleInit {
     kind: OperatorLedgerRow['kind'],
     amountTiyin: number,
     note: string,
+    period?: string,
   ): OperatorLedgerRow {
     const row: OperatorLedgerRow = {
       id: uuidv7(),
@@ -240,6 +264,7 @@ export class SubscriptionsService implements OnModuleInit {
       kind,
       amountTiyin,
       note,
+      period,
       at: new Date().toISOString(),
     };
     this.ledger.push(row);

@@ -28,7 +28,7 @@ const ROOT = `http://localhost:${PORT}`;
 // вход с настоящим SMS, а общий сервер прогона работает на журнальном
 // отправителе. Держать оба режима в одном процессе нельзя — поставщик
 // выбирается один раз при старте.
-const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'platform', 'operator-masters', 'dispatch-screens', 'otp-sms', 'push'];
+const ALL = ['home-contour', 'web-card', 'b2b', 'b2b-access', 'client-app', 'locale', 'scheduling', 'platform', 'operator-masters', 'master-access', 'dispatch-screens', 'master-sync', 'otp-sms', 'push'];
 const suites = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 
 /** Свободен ли порт: занятый означает забытый сервер от прошлого прогона */
@@ -240,6 +240,11 @@ try {
    * нарядами-допусками — восемь строк не записались, а 244 проверки прошли.
    * Поэтому лог сервера проверяется отдельно.
    */
+  // Полный журнал сервера по требованию: без него причина падения набора
+  // остаётся за кадром, а «Прогон упал: fetch failed» не объясняет ничего
+  if (process.env.E2E_API_LOG === '1') {
+    console.log('\n————— журнал API —————\n' + apiLog);
+  }
   const writeFailures = [...apiLog.matchAll(/\[(\w+)\] запись в базу не удалась/g)].map((m) => m[1]);
   if (writeFailures.length) {
     const byModule = [...new Set(writeFailures)].map((m) => `${m}: ${writeFailures.filter((x) => x === m).length}`);
